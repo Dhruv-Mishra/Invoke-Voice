@@ -1,0 +1,23 @@
+{
+  "name": "voice-work-supervisor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env src/server.mjs",
+    "test": "node --test test/*.test.mjs",
+    "desktop": "electron desktop.cjs",
+    "models": "node --env-file-if-exists=.env scripts/models.mjs"
+  },
+  "dependencies": {
+    "@google/genai": "^2.21.0",
+    "lucide": "^1.42.0",
+    "ws": "^8.21.3"
+  },
+  "devDependencies": {
+    "electron": "^45.0.0-alpha.5"
+  }
+}

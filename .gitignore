@@ -1,0 +1,9 @@
+node_modules/
+.env
+.env.*
+!example.env
+.venv/
+models/
+runtimes/
+*.log
+__pycache__/

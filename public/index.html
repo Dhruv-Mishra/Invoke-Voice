@@ -1,0 +1,802 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Voice Work Supervisor</title>
+  <script>
+    (() => {
+      const param = new URLSearchParams(window.location.search).get("scoutTheme");
+      const theme =
+        param || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+      document.documentElement.setAttribute("data-theme", theme);
+    })();
+  </script>
+  <style>
+    :root {
+      color-scheme: light;
+      --cp-bg: #f7f4ef;
+      --cp-bg-elevated: #fcfbf8;
+      --cp-surface: #ffffff;
+      --cp-surface-soft: #f5f5f5;
+      --cp-border: #dedede;
+      --cp-border-strong: #919191;
+      --cp-text: #242424;
+      --cp-text-muted: #5c5c5c;
+      --cp-text-soft: #6f6f6f;
+      --cp-accent: #b11f4b;
+      --cp-accent-hover: #9a1a41;
+      --cp-accent-soft: rgba(177, 31, 75, 0.08);
+      --cp-accent-fg: #ffffff;
+      --cp-success: #16a34a;
+      --cp-danger: #dc2626;
+      --cp-warning: #f59e0b;
+      --cp-link: #0078d4;
+      --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.12);
+      --cp-overlay: rgba(255, 255, 255, 0.8);
+      --cp-panel: rgba(255, 255, 255, 0.86);
+      --cp-panel-strong: rgba(255, 255, 255, 0.96);
+      --cp-sheen: rgba(255, 255, 255, 0.55);
+      --cp-highlight: rgba(177, 31, 75, 0.12);
+    }
+    html[data-theme="dark"] {
+      color-scheme: dark;
+      --cp-bg: #3d3b3a;
+      --cp-bg-elevated: #343231;
+      --cp-surface: #292929;
+      --cp-surface-soft: #2e2e2e;
+      --cp-border: #474747;
+      --cp-border-strong: #5f5f5f;
+      --cp-text: #dedede;
+      --cp-text-muted: #919191;
+      --cp-text-soft: #b0b0b0;
+      --cp-accent: #fd8ea1;
+      --cp-accent-hover: #fb7b91;
+      --cp-accent-soft: rgba(253, 142, 161, 0.14);
+      --cp-accent-fg: #1a1a1a;
+      --cp-success: #4ade80;
+      --cp-danger: #f87171;
+      --cp-warning: #fbbf24;
+      --cp-link: #4da6ff;
+      --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.32);
+      --cp-overlay: rgba(41, 41, 41, 0.88);
+      --cp-panel: rgba(41, 41, 41, 0.72);
+      --cp-panel-strong: rgba(41, 41, 41, 0.96);
+      --cp-sheen: rgba(255, 255, 255, 0.04);
+      --cp-highlight: rgba(253, 142, 161, 0.12);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background: var(--cp-bg);
+      color: var(--cp-text);
+      font-family: "Segoe UI", Aptos, Calibri, -apple-system, BlinkMacSystemFont, sans-serif;
+      font-size: 13px;
+      line-height: 1.45;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    code, pre, .mono {
+      font-family: Consolas, "Courier New", Courier, monospace;
+    }
+
+    /* Utilitarian Header */
+    header.top-bar {
+      background: var(--cp-bg-elevated);
+      border-bottom: 1px solid var(--cp-border);
+      padding: 8px 14px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 12px;
+      justify-content: space-between;
+      flex-shrink: 0;
+    }
+
+    .brand-title {
+      font-weight: 600;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      letter-spacing: 0;
+    }
+
+    .header-controls {
+      display: flex;
+      max-width: 100%;
+      min-width: 0;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .control-group {
+      display: inline-flex;
+      max-width: 100%;
+      min-width: 0;
+      align-items: center;
+      gap: 4px;
+    }
+
+    label.control-label {
+      font-size: 11px;
+      color: var(--cp-text-muted);
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+
+    select, input[type="text"], textarea {
+      min-width: 0;
+      max-width: 100%;
+      background: var(--cp-surface);
+      color: var(--cp-text);
+      border: 1px solid var(--cp-border);
+      border-radius: 0.625rem;
+      padding: 4px 8px;
+      font-family: inherit;
+      font-size: 12px;
+      outline: none;
+    }
+
+    select:focus, input[type="text"]:focus, textarea:focus {
+      border-color: var(--cp-border-strong);
+      box-shadow: 0 0 0 1px var(--cp-border-strong);
+    }
+
+    .btn {
+      background: var(--cp-surface);
+      color: var(--cp-text);
+      border: 1px solid var(--cp-border);
+      border-radius: 0.625rem;
+      padding: 4px 10px;
+      font-family: inherit;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      transition: background 0.15s ease, border-color 0.15s ease;
+      white-space: nowrap;
+    }
+
+    .btn:hover:not(:disabled) {
+      background: var(--cp-surface-soft);
+      border-color: var(--cp-border-strong);
+    }
+
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .btn-accent {
+      background: var(--cp-accent);
+      color: var(--cp-accent-fg);
+      border-color: var(--cp-accent);
+    }
+
+    .btn-accent:hover:not(:disabled) {
+      background: var(--cp-accent-hover);
+      border-color: var(--cp-accent-hover);
+    }
+
+    .btn-danger {
+      background: var(--cp-surface);
+      color: var(--cp-danger);
+      border-color: var(--cp-danger);
+    }
+
+    .btn-danger:hover:not(:disabled) {
+      background: var(--cp-surface-soft);
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 6px;
+      border-radius: 0.625rem;
+      font-size: 11px;
+      font-weight: 600;
+      border: 1px solid var(--cp-border);
+      background: var(--cp-surface-soft);
+      color: var(--cp-text);
+    }
+
+    .badge-success {
+      background: var(--cp-surface);
+      color: var(--cp-success);
+      border-color: var(--cp-success);
+    }
+
+    .badge-warning {
+      background: var(--cp-surface);
+      color: var(--cp-warning);
+      border-color: var(--cp-warning);
+    }
+
+    .badge-danger {
+      background: var(--cp-surface);
+      color: var(--cp-danger);
+      border-color: var(--cp-danger);
+    }
+
+    .badge-accent {
+      background: var(--cp-accent-soft);
+      color: var(--cp-accent);
+      border-color: var(--cp-accent);
+    }
+
+    /* Layout Split */
+    .workspace-body {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    /* Left Sidebar: Areas */
+    aside.sidebar {
+      width: 280px;
+      flex-shrink: 0;
+      background: var(--cp-surface);
+      border-right: 1px solid var(--cp-border);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .section-header {
+      padding: 8px 12px;
+      background: var(--cp-surface-soft);
+      border-bottom: 1px solid var(--cp-border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .section-title {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0;
+      color: var(--cp-text-muted);
+    }
+
+    .scroll-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .item-row {
+      background: var(--cp-bg-elevated);
+      border: 1px solid var(--cp-border);
+      border-radius: 0.625rem;
+      padding: 8px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      cursor: pointer;
+      box-shadow: 0 0 2px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.14);
+    }
+
+    .item-row:hover {
+      border-color: var(--cp-border-strong);
+    }
+
+    .item-title-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+    }
+
+    .item-name {
+      font-weight: 600;
+      color: var(--cp-text);
+      word-break: break-all;
+    }
+
+    .item-meta {
+      font-size: 11px;
+      color: var(--cp-text-muted);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    /* Central Pane: Tasks */
+    main.center-pane {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      background: var(--cp-bg);
+      border-right: 1px solid var(--cp-border);
+    }
+
+    .task-table-wrapper {
+      flex: 1;
+      overflow-y: auto;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .task-card {
+      background: var(--cp-surface);
+      border: 1px solid var(--cp-border);
+      border-radius: 0.625rem;
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      box-shadow: 0 0 2px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.14);
+    }
+
+    .task-card.stale {
+      border-left: 4px solid var(--cp-warning);
+    }
+
+    .task-card.state-running {
+      border-left: 4px solid var(--cp-link);
+    }
+
+    .task-card.state-completed {
+      border-left: 4px solid var(--cp-success);
+    }
+
+    .task-card.state-failed {
+      border-left: 4px solid var(--cp-danger);
+    }
+
+    .task-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .task-title {
+      font-weight: 600;
+      font-size: 13px;
+      color: var(--cp-text);
+    }
+
+    .task-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .task-summary {
+      font-size: 12px;
+      color: var(--cp-text-soft);
+      line-height: 1.4;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .task-footer {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 11px;
+      color: var(--cp-text-muted);
+      border-top: 1px solid var(--cp-surface-soft);
+      padding-top: 6px;
+    }
+
+    /* Bottom Conversation & Logs */
+    section.conversation-pane {
+      height: 240px;
+      flex-shrink: 0;
+      background: var(--cp-surface);
+      border-top: 1px solid var(--cp-border);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .chat-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .chat-bubble {
+      max-width: 85%;
+      padding: 6px 10px;
+      border-radius: 0.625rem;
+      font-size: 12px;
+      word-break: break-word;
+      white-space: pre-wrap;
+    }
+
+    .chat-bubble.user {
+      align-self: flex-end;
+      background: var(--cp-accent-soft);
+      border: 1px solid var(--cp-accent);
+      color: var(--cp-text);
+    }
+
+    .chat-bubble.assistant {
+      align-self: flex-start;
+      background: var(--cp-surface-soft);
+      border: 1px solid var(--cp-border);
+      color: var(--cp-text);
+    }
+
+    .chat-bubble.tool {
+      align-self: flex-start;
+      background: var(--cp-bg-elevated);
+      border: 1px dashed var(--cp-border-strong);
+      color: var(--cp-text-muted);
+      font-size: 11px;
+    }
+
+    .chat-bubble.system {
+      align-self: center;
+      background: transparent;
+      border: none;
+      color: var(--cp-text-muted);
+      font-style: italic;
+      font-size: 11px;
+    }
+
+    .partial-line {
+      font-style: italic;
+      color: var(--cp-text-muted);
+      font-size: 12px;
+      padding: 2px 12px;
+    }
+
+    .chat-input-bar {
+      padding: 6px 12px;
+      border-top: 1px solid var(--cp-border);
+      background: var(--cp-bg-elevated);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .chat-input-bar input {
+      flex: 1;
+    }
+
+    /* Modal Dialogs */
+    dialog {
+      background: var(--cp-surface);
+      color: var(--cp-text);
+      border: 1px solid var(--cp-border-strong);
+      border-radius: 16px;
+      box-shadow: var(--cp-shadow);
+      padding: 18px;
+      max-width: 520px;
+      width: 90vw;
+      margin: auto;
+    }
+
+    dialog::backdrop {
+      background: var(--cp-overlay);
+    }
+
+    .dialog-header {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-bottom: 10px;
+    }
+
+    .form-row-checkbox {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+
+    .dialog-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 14px;
+    }
+
+    .empty-state {
+      padding: 24px;
+      text-align: center;
+      color: var(--cp-text-muted);
+      font-style: italic;
+    }
+
+    .loading-spinner {
+      color: var(--cp-text-muted);
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 12px;
+    }
+
+    canvas#mic-canvas {
+      border: 1px solid var(--cp-border);
+      border-radius: 0.625rem;
+      background: var(--cp-surface-soft);
+      vertical-align: middle;
+    }
+
+    /* Responsive adjustments */
+    @media (max-width: 800px) {
+      body {
+        height: auto;
+        min-height: 100dvh;
+        overflow: auto;
+      }
+      .control-group:has(select) {
+        width: 100%;
+      }
+      .control-group select {
+        flex: 1;
+      }
+      .control-label {
+        flex-shrink: 0;
+      }
+      .workspace-body {
+        flex-direction: column;
+        flex: none;
+        min-height: 360px;
+      }
+      aside.sidebar {
+        width: 100%;
+        height: 180px;
+        border-right: none;
+        border-bottom: 1px solid var(--cp-border);
+      }
+    }
+  </style>
+</head>
+<body>
+  <!-- Utilitarian Top Bar -->
+  <header class="top-bar">
+    <div class="brand-title">
+      <i data-lucide="mic"></i>
+      <span>Voice Work Supervisor</span>
+    </div>
+
+    <div class="header-controls">
+      <!-- Route and Providers -->
+      <div class="control-group">
+        <label class="control-label" for="provider-select">Provider</label>
+        <select id="provider-select" aria-label="LLM Provider"></select>
+      </div>
+
+      <div class="control-group">
+        <label class="control-label" id="model-label" for="model-input">Text/Cascade Model</label>
+        <input type="text" id="model-input" style="width: 140px;" aria-label="Text or cascade model identifier" placeholder="Text model">
+      </div>
+
+      <div class="control-group">
+        <label class="control-label" for="voice-mode-select">Voice Mode</label>
+        <select id="voice-mode-select" aria-label="Voice runtime mode"></select>
+      </div>
+
+      <!-- Cloud hybrid opt-in -->
+      <div class="control-group" title="Required to route local voice transcripts to hosted LLM">
+        <input type="checkbox" id="allow-cloud-opt" aria-label="Allow Cloud Hybrid">
+        <label for="allow-cloud-opt" style="font-size: 11px; cursor: pointer;">Allow Cloud Hybrid</label>
+      </div>
+
+      <!-- Mute Mic Toggle -->
+      <div class="control-group" title="Mute microphone input">
+        <input type="checkbox" id="mute-mic-opt" aria-label="Mute microphone">
+        <label for="mute-mic-opt" style="font-size: 11px; cursor: pointer;">Mute</label>
+      </div>
+
+      <!-- Real PTT Mode Toggle -->
+      <div class="control-group" title="Push To Talk: gate microphone until button or Spacebar is held">
+        <input type="checkbox" id="ptt-mode-opt" aria-label="Enable Push To Talk mode">
+        <label for="ptt-mode-opt" style="font-size: 11px; cursor: pointer;">PTT Mode</label>
+      </div>
+
+      <!-- Quiet Mode Toggle -->
+      <button class="btn" id="quiet-mode-btn" type="button" aria-label="Toggle Quiet Mode" title="Block proactive spoken notifications">
+        <i data-lucide="bell-off"></i>
+        <span>Quiet</span>
+        <span class="badge" id="quiet-badge" style="display: none;">Active</span>
+      </button>
+
+      <!-- Live Mic Level Visualizer -->
+      <canvas id="mic-canvas" width="70" height="22" aria-label="Microphone volume level"></canvas>
+
+      <!-- Mic Connect / Disconnect -->
+      <button class="btn btn-accent" id="mic-toggle-btn" type="button" aria-label="Connect or Disconnect Microphone">
+        <i data-lucide="mic"></i>
+        <span id="mic-btn-label">Connect Mic</span>
+      </button>
+
+      <!-- Push-To-Talk / Commit Button -->
+      <button class="btn" id="ptt-btn" type="button" disabled aria-label="Hold to talk or commit speech" title="Commit speech (or hold to talk in PTT mode)">
+        <i data-lucide="radio"></i>
+        <span id="ptt-btn-label">Commit</span>
+      </button>
+
+      <!-- Stop Talking / Interrupt -->
+      <button class="btn btn-danger" id="interrupt-btn" type="button" disabled aria-label="Interrupt speech" title="Stop assistant speech immediately">
+        <i data-lucide="square"></i>
+        <span>Stop Talking</span>
+      </button>
+
+      <!-- Route Readiness Badge -->
+      <span class="badge" id="route-status-badge">Checking...</span>
+    </div>
+  </header>
+
+  <!-- Workspace Body -->
+  <div class="workspace-body">
+    <!-- Left Sidebar: Work Areas -->
+    <aside class="sidebar">
+      <div class="section-header">
+        <span class="section-title">Work Areas</span>
+        <button class="btn" id="btn-new-area" type="button" aria-label="Register Work Area">
+          <i data-lucide="plus"></i>
+          <span>Add Area</span>
+        </button>
+      </div>
+      <div class="scroll-list" id="areas-list" role="region" aria-label="Registered Work Areas">
+        <div class="loading-spinner">Loading work areas...</div>
+      </div>
+    </aside>
+
+    <!-- Center Pane: Tasks -->
+    <main class="center-pane">
+      <div class="section-header">
+        <span class="section-title">Active &amp; Supervised Tasks</span>
+        <div style="display: flex; gap: 6px;">
+          <button class="btn btn-accent" id="btn-new-task" type="button" aria-label="Dispatch New Task">
+            <i data-lucide="plus-circle"></i>
+            <span>New Task</span>
+          </button>
+          <button class="btn" id="btn-refresh-tasks" type="button" aria-label="Refresh Status">
+            <i data-lucide="refresh-cw"></i>
+          </button>
+        </div>
+      </div>
+      <div class="task-table-wrapper" id="tasks-list" role="region" aria-label="Supervised Tasks">
+        <div class="loading-spinner">Loading tasks...</div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Bottom: Conversation -->
+  <section class="conversation-pane" aria-label="Supervisor Conversation">
+    <div class="section-header" style="padding: 4px 12px;">
+      <span class="section-title">Conversation &amp; Dispatch Log</span>
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <span id="session-reset-notice" class="badge badge-warning" style="display: none;">Session Context Reset</span>
+        <button class="btn" id="btn-clear-chat" type="button" aria-label="Clear Chat History">
+          <i data-lucide="trash-2"></i>
+          <span>Clear Log</span>
+        </button>
+      </div>
+    </div>
+    <div class="chat-messages" id="chat-messages" role="log" aria-live="polite"></div>
+    <div class="partial-line" id="partial-transcript" style="display: none;"></div>
+    <div class="chat-input-bar">
+      <input type="text" id="chat-input" placeholder="Type instructions or query task progress (e.g. 'What is the progress on PDF work?')..." aria-label="Typed message input">
+      <button class="btn btn-accent" id="btn-send-chat" type="button" aria-label="Send typed message">
+        <i data-lucide="send"></i>
+        <span>Send</span>
+      </button>
+    </div>
+  </section>
+
+  <!-- Work Area Registration/Edit Modal -->
+  <dialog id="area-dialog" aria-labelledby="area-dialog-title">
+    <form id="area-form" method="dialog">
+      <div class="dialog-header">
+        <span id="area-dialog-title">Register Work Area</span>
+        <button type="button" class="btn" id="area-dialog-close" aria-label="Close dialog">✕</button>
+      </div>
+      <input type="hidden" id="area-id-input">
+      <div class="form-group">
+        <label class="control-label" for="area-name-input">Area Name *</label>
+        <input type="text" id="area-name-input" required placeholder="e.g. PDF Encryption">
+      </div>
+      <div class="form-group">
+        <label class="control-label" for="area-repo-input">Repository Path *</label>
+        <input type="text" id="area-repo-input" required placeholder="C:\path\to\repo or relative">
+      </div>
+      <div class="form-group">
+        <label class="control-label" for="area-aliases-input">Aliases (comma-separated)</label>
+        <input type="text" id="area-aliases-input" placeholder="pdf, encryption, security">
+      </div>
+      <div class="form-group">
+        <label class="control-label" for="area-agent-input">Agent Mode (default: agent)</label>
+        <input type="text" id="area-agent-input" value="agent" placeholder="agent">
+      </div>
+      <div class="form-group">
+        <label class="control-label" for="area-base-ref-input">Base Git Ref (default: HEAD)</label>
+        <input type="text" id="area-base-ref-input" value="HEAD" placeholder="HEAD">
+      </div>
+      <div class="form-row-checkbox">
+        <input type="checkbox" id="area-allow-publish-input">
+        <label for="area-allow-publish-input" style="cursor: pointer;">Allow Publish (commits, pushes, draft PRs)</label>
+      </div>
+      <div class="dialog-actions">
+        <button type="button" class="btn" id="area-cancel-btn">Cancel</button>
+        <button type="submit" class="btn btn-accent" id="area-save-btn">Save Area</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- New Task Dispatch Dialog -->
+  <dialog id="new-task-dialog" aria-labelledby="new-task-dialog-title">
+    <form id="new-task-form" method="dialog">
+      <div class="dialog-header">
+        <span id="new-task-dialog-title">Dispatch New Task</span>
+        <button type="button" class="btn" id="task-dialog-close" aria-label="Close dialog">✕</button>
+      </div>
+      <div class="form-group">
+        <label class="control-label" for="task-area-select">Work Area *</label>
+        <select id="task-area-select" required aria-label="Select Work Area"></select>
+      </div>
+      <div class="form-group">
+        <label class="control-label" for="task-objective-input">Objective &amp; Constraints *</label>
+        <textarea id="task-objective-input" required rows="4" placeholder="Describe the goal clearly..."></textarea>
+      </div>
+      <div class="dialog-actions">
+        <button type="button" class="btn" id="task-cancel-btn">Cancel</button>
+        <button type="submit" class="btn btn-accent" id="task-dispatch-btn">Dispatch</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Task Detail & Observations Modal -->
+  <dialog id="task-detail-dialog" aria-labelledby="detail-dialog-title">
+    <div class="dialog-header">
+      <span id="detail-dialog-title">Task Details</span>
+      <button type="button" class="btn" id="detail-dialog-close" aria-label="Close dialog">✕</button>
+    </div>
+    <div id="detail-content" style="display: flex; flex-direction: column; gap: 8px; font-size: 12px; max-height: 60vh; overflow-y: auto;"></div>
+    <div class="dialog-actions">
+      <button type="button" class="btn btn-accent" id="detail-open-worktree-btn" style="display: none;">
+        <i data-lucide="external-link"></i>
+        <span>Open Worktree</span>
+      </button>
+      <button type="button" class="btn" id="detail-close-btn">Close</button>
+    </div>
+  </dialog>
+
+  <!-- Lucide icons from local vendor -->
+  <script src="/vendor/lucide.js"></script>
+  <!-- Application script -->
+  <script type="module" src="app.js"></script>
+</body>
+</html>

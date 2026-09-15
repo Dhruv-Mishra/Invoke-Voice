@@ -1,0 +1,6 @@
+kokoro==0.9.4
+soundfile>=0.13,<0.14# Minimal pinned-compatible dependencies for Kokoro-82M TTS local worker
+# PyTorch and transformers are resolved as dependencies of kokoro
+kokoro>=0.8.4,<0.9.0
+soundfile>=0.12.1,<0.13.0
+numpy>=1.24.0,<3.0.0

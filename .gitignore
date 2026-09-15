@@ -7,3 +7,4 @@ models/
 runtimes/
 *.log
 __pycache__/
+.zvec-grep/

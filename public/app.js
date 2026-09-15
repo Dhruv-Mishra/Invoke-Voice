@@ -56,8 +56,12 @@ const interruptBtn = document.getElementById('interrupt-btn');
 const routeStatusBadge = document.getElementById('route-status-badge');
 const sessionResetNotice = document.getElementById('session-reset-notice');
 const agentSprite = document.getElementById('agent-sprite');
+const routeConfigBtn = document.getElementById('route-config-btn');
+const routeConfigDialog = document.getElementById('route-config-dialog');
+const routeConfigClose = document.getElementById('route-config-close');
 
 const areasList = document.getElementById('areas-list');
+const areasDisclosure = document.getElementById('areas-disclosure');
 const btnNewArea = document.getElementById('btn-new-area');
 const areaDialog = document.getElementById('area-dialog');
 const areaForm = document.getElementById('area-form');
@@ -201,8 +205,51 @@ function setAgentState(state) {
   if (!agentSprite) return;
   const next = ['idle', 'connecting', 'listening', 'thinking', 'speaking'].includes(state) ? state : 'idle';
   agentSprite.dataset.state = next;
+  agentSprite.textContent = next;
   agentSprite.setAttribute('aria-label', `Agent ${next}`);
   agentSprite.title = `Agent ${next}`;
+}
+
+const MARKDOWN_TAGS = ['p', 'br', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'em', 'strong', 'i', 'b', 'blockquote', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'code', 'pre', 'a', 'hr'];
+
+function renderSafeMarkdown(target, text) {
+  const source = text == null ? '' : String(text);
+  try {
+    if (!target || !window.marked || !window.DOMPurify) {
+      if (target) target.textContent = source;
+      return;
+    }
+    const parsed = window.marked.parse(source, { async: false, gfm: true, breaks: true });
+    const clean = window.DOMPurify.sanitize(parsed, {
+      ALLOWED_TAGS: MARKDOWN_TAGS,
+      ALLOWED_ATTR: ['href', 'title'],
+      ALLOW_DATA_ATTR: false,
+      FORBID_TAGS: ['img', 'svg', 'math', 'form', 'input', 'textarea', 'select', 'button', 'iframe', 'object', 'embed', 'video', 'audio', 'source', 'script', 'style', 'link', 'meta', 'base'],
+      FORBID_ATTR: ['style', 'class', 'id']
+    });
+    target.innerHTML = clean;
+    target.classList.add('md-content');
+    for (const anchor of target.querySelectorAll('a')) {
+      const href = anchor.getAttribute('href') || '';
+      if (!/^https?:\/\//i.test(href)) {
+        anchor.removeAttribute('href');
+        continue;
+      }
+      anchor.setAttribute('target', '_blank');
+      anchor.setAttribute('rel', 'noopener noreferrer');
+    }
+  } catch (_) {
+    target.textContent = source;
+  }
+}
+
+function applyState(state) {
+  appState = state && typeof state === 'object' ? state : { areas: [], tasks: [] };
+  if (!Array.isArray(appState.areas)) appState.areas = [];
+  if (!Array.isArray(appState.tasks)) appState.tasks = [];
+  renderAreas();
+  renderTasks();
+  updateIcons();
 }
 
 // Safe icon refreshment
@@ -342,10 +389,14 @@ function updateRouteReadiness() {
 }
 
 // Conversation rendering
-function appendMessage(role, text) {
+function appendMessage(role, text, options = {}) {
   const bubble = document.createElement('div');
   bubble.className = `chat-bubble ${role}`;
-  bubble.textContent = text;
+  if ((role === 'assistant' || role === 'tool') && !options.plain) {
+    renderSafeMarkdown(bubble, text);
+  } else {
+    bubble.textContent = text;
+  }
   chatMessages.appendChild(bubble);
   chatMessages.scrollTop = chatMessages.scrollHeight;
 }
@@ -652,7 +703,7 @@ async function startVoiceSession() {
           appendMessage('system', '[Speech interrupted]');
         } else if (data.type === 'tool') {
           const resultStr = typeof data.result === 'object' ? JSON.stringify(data.result) : String(data.result);
-          appendMessage('tool', `Tool [${data.name}]: ${resultStr}`);
+          appendMessage('tool', `Tool [${data.name}]: ${resultStr}`, { plain: typeof data.result === 'object' });
         } else if (data.type === 'state') {
           isVoiceThinking = data.state === 'thinking';
           setAgentState(data.state === 'thinking' ? 'thinking' : 'listening');
@@ -786,11 +837,13 @@ pttBtn.addEventListener('pointercancel', (e) => {
   }
 });
 
+function isInteractiveTarget(target) {
+  return target instanceof Element && Boolean(target.closest('input, textarea, select, button, [contenteditable="true"], dialog'));
+}
+
 window.addEventListener('keydown', (e) => {
   if (e.code === 'Space' && isPttMode && !isPttHeld && !e.repeat) {
-    const target = e.target;
-    const isEditing = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
-    if (!isEditing && voiceSocket && voiceSocket.readyState === WebSocket.OPEN && isServerReady) {
+    if (!isInteractiveTarget(e.target) && voiceSocket && voiceSocket.readyState === WebSocket.OPEN && isServerReady) {
       e.preventDefault();
       startPttHold();
     }
@@ -799,14 +852,13 @@ window.addEventListener('keydown', (e) => {
 
 window.addEventListener('keyup', (e) => {
   if (e.code === 'Space' && isPttMode && isPttHeld) {
-    const target = e.target;
-    const isEditing = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
-    if (!isEditing) {
-      e.preventDefault();
-      endPttHold();
-    }
+    if (!isInteractiveTarget(e.target)) e.preventDefault();
+    endPttHold();
   }
 });
+
+window.addEventListener('blur', endPttHold);
+document.addEventListener('visibilitychange', () => { if (document.hidden) endPttHold(); });
 
 interruptBtn.addEventListener('click', () => {
   clearPlayback();
@@ -843,9 +895,7 @@ function initEventSource() {
     try {
       const data = JSON.parse(event.data);
       if (data.type === 'state' && data.state) {
-        appState = data.state;
-        renderAreas();
-        renderTasks();
+        applyState(data.state);
       } else if (data.type === 'notification' && data.notification) {
         handleNotification(data.notification);
       }
@@ -917,9 +967,7 @@ async function loadState() {
   try {
     const res = await fetch('/api/state');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    appState = await res.json();
-    renderAreas();
-    renderTasks();
+    applyState(await res.json());
   } catch (err) {
     tasksList.replaceChildren();
     const errDiv = document.createElement('div');
@@ -933,6 +981,7 @@ async function loadState() {
 function renderAreas() {
   areasList.replaceChildren();
   taskAreaSelect.replaceChildren();
+  if (areasDisclosure && (!appState.areas || appState.areas.length === 0)) areasDisclosure.open = true;
 
   if (!appState.areas || appState.areas.length === 0) {
     const empty = document.createElement('div');
@@ -947,7 +996,6 @@ function renderAreas() {
     detail.textContent = 'Repositories you supervise appear here.';
     empty.append(icon, title, detail);
     areasList.appendChild(empty);
-    updateIcons();
     return;
   }
 
@@ -959,11 +1007,9 @@ function renderAreas() {
     taskAreaSelect.appendChild(opt);
 
     // Sidebar item
-    const row = document.createElement('div');
+    const row = document.createElement('article');
     row.className = 'item-row';
-    row.setAttribute('role', 'button');
-    row.setAttribute('tabindex', '0');
-    row.setAttribute('aria-label', `Edit work area ${area.name}`);
+    row.setAttribute('aria-label', `Work area ${area.name}`);
 
     const top = document.createElement('div');
     top.className = 'item-title-bar';
@@ -1011,23 +1057,18 @@ function renderAreas() {
     row.appendChild(top);
     row.appendChild(meta);
 
-    const openEdit = (e) => {
+    editBtn.setAttribute('aria-label', `Edit work area ${area.name}`);
+    editBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       openAreaModal(area);
-    };
-    editBtn.addEventListener('click', openEdit);
-    row.addEventListener('click', () => openAreaModal(area));
-    row.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        openAreaModal(area);
-      }
+    });
+    row.addEventListener('click', (e) => {
+      if (e.target.closest('button, a')) return;
+      openAreaModal(area);
     });
 
     areasList.appendChild(row);
   });
-
-  updateIcons();
 }
 
 function openAreaModal(area = null) {
@@ -1105,7 +1146,6 @@ function renderTasks() {
     detail.textContent = 'Agent sessions and progress appear here.';
     empty.append(icon, title, detail);
     tasksList.appendChild(empty);
-    updateIcons();
     return;
   }
 
@@ -1188,9 +1228,21 @@ function renderTasks() {
       summary.style.color = 'var(--cp-danger)';
     } else if (task.observations && task.observations.length > 0) {
       const lastObs = task.observations[task.observations.length - 1];
-      summary.textContent = `[${lastObs.kind || 'observation'}] ${lastObs.summary || 'Update observed'}`;
+      const label = document.createElement('span');
+      label.className = 'task-summary-label';
+      label.textContent = lastObs.kind || 'observation';
+      const content = document.createElement('div');
+      renderSafeMarkdown(content, lastObs.summary || 'Update observed');
+      summary.append(label, content);
+    } else if (task.result && typeof task.result === 'object') {
+      summary.textContent = `Result: ${JSON.stringify(task.result)}`;
     } else if (task.result) {
-      summary.textContent = `Result: ${typeof task.result === 'object' ? JSON.stringify(task.result) : task.result}`;
+      const label = document.createElement('span');
+      label.className = 'task-summary-label';
+      label.textContent = 'result';
+      const content = document.createElement('div');
+      renderSafeMarkdown(content, task.result);
+      summary.append(label, content);
     } else {
       summary.textContent = 'Awaiting initial observer event...';
     }
@@ -1221,11 +1273,12 @@ function renderTasks() {
 
     // Click card to open detail view
     card.style.cursor = 'pointer';
-    card.addEventListener('click', () => showTaskDetail(task));
+    card.addEventListener('click', (e) => {
+      if (e.target.closest('button, a')) return;
+      showTaskDetail(task);
+    });
     tasksList.appendChild(card);
   });
-
-  updateIcons();
 }
 
 // Show Task Detail Modal
@@ -1245,20 +1298,52 @@ function showTaskDetail(task) {
   };
 
   addField('Title', task.title);
-  addField('Task ID', task.id, true);
   addField('State', task.state);
-  addField('Model', task.model);
-  addField('Context', task.context);
   addField('Stale', task.stale ? 'Yes' : 'No');
-  addField('Worktree', task.worktree, true);
-  addField('Session ID', task.sessionId, true);
-  addField('Created At', task.createdAt ? new Date(task.createdAt).toLocaleString() : '');
-  addField('Last Observed', task.lastObservedAt ? new Date(task.lastObservedAt).toLocaleString() : '');
   if (task.error) addField('Error', task.error);
-  if (task.result) addField('Result', typeof task.result === 'object' ? JSON.stringify(task.result, null, 2) : task.result);
+  if (task.result) {
+    const resultBlock = document.createElement('div');
+    const resultLabel = document.createElement('strong');
+    resultLabel.textContent = 'Result: ';
+    const resultBody = document.createElement('div');
+    if (typeof task.result === 'object') {
+      resultBody.className = 'mono';
+      resultBody.textContent = JSON.stringify(task.result, null, 2);
+    } else {
+      renderSafeMarkdown(resultBody, task.result);
+    }
+    resultBlock.append(resultLabel, resultBody);
+    detailContent.appendChild(resultBlock);
+  }
+
+  const advanced = document.createElement('details');
+  advanced.className = 'advanced-disclosure';
+  const advancedSummary = document.createElement('summary');
+  advancedSummary.textContent = 'Advanced';
+  advanced.appendChild(advancedSummary);
+  const advancedBody = document.createElement('div');
+  const addAdvanced = (label, val, isMono = false) => {
+    const p = document.createElement('p');
+    const b = document.createElement('strong');
+    b.textContent = `${label}: `;
+    p.appendChild(b);
+    const s = document.createElement('span');
+    if (isMono) s.className = 'mono';
+    s.textContent = val || 'None';
+    p.appendChild(s);
+    advancedBody.appendChild(p);
+  };
+  addAdvanced('Task ID', task.id, true);
+  addAdvanced('Model', task.model);
+  addAdvanced('Context', task.context);
+  addAdvanced('Worktree', task.worktree, true);
+  addAdvanced('Session ID', task.sessionId, true);
+  addAdvanced('Created At', task.createdAt ? new Date(task.createdAt).toLocaleString() : '');
+  addAdvanced('Last Observed', task.lastObservedAt ? new Date(task.lastObservedAt).toLocaleString() : '');
+  advanced.appendChild(advancedBody);
+  detailContent.appendChild(advanced);
 
   const obsHeader = document.createElement('h4');
-  obsHeader.style.marginTop = '10px';
   obsHeader.textContent = 'Recent Observations';
   detailContent.appendChild(obsHeader);
 
@@ -1269,19 +1354,16 @@ function showTaskDetail(task) {
     detailContent.appendChild(noObs);
   } else {
     const obsList = document.createElement('div');
-    obsList.style.display = 'flex';
-    obsList.style.flexDirection = 'column';
-    obsList.style.gap = '6px';
+    obsList.className = 'detail-observations';
     task.observations.forEach(obs => {
       const item = document.createElement('div');
       item.className = 'item-row';
       const time = obs.at ? new Date(obs.at).toLocaleTimeString() : '';
       const t = document.createElement('span');
       t.className = 'mono';
-      t.style.fontSize = '11px';
       t.textContent = `[${time}] ${obs.kind || 'event'}: `;
-      const desc = document.createElement('span');
-      desc.textContent = obs.summary || '';
+      const desc = document.createElement('div');
+      renderSafeMarkdown(desc, obs.summary || '');
       item.appendChild(t);
       item.appendChild(desc);
       obsList.appendChild(item);
@@ -1297,7 +1379,6 @@ function showTaskDetail(task) {
   }
 
   taskDetailDialog.showModal();
-  updateIcons();
 }
 
 detailCloseBtn.addEventListener('click', () => taskDetailDialog.close());
@@ -1405,7 +1486,6 @@ function selectToolDefinition(definition) {
   for (const item of toolList.querySelectorAll('.tool-list-item')) {
     item.setAttribute('aria-selected', String(item.dataset.tool === name));
   }
-  updateIcons();
 }
 
 function renderToolCatalog() {
@@ -1430,11 +1510,13 @@ function renderToolCatalog() {
     description.textContent = definition.function.description;
     copy.append(name, description);
     item.append(icon, copy);
-    item.addEventListener('click', () => selectToolDefinition(definition));
+    item.addEventListener('click', () => {
+      selectToolDefinition(definition);
+      updateIcons();
+    });
     toolList.appendChild(item);
   }
   if (availableTools.length) selectToolDefinition(availableTools[0]);
-  updateIcons();
 }
 
 async function loadTools() {
@@ -1444,6 +1526,7 @@ async function loadTools() {
     if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
     availableTools = result;
     renderToolCatalog();
+    updateIcons();
   } catch (error) {
     toolName.textContent = 'Tools unavailable';
     toolDescription.textContent = error.message;
@@ -1608,11 +1691,11 @@ async function sendChatMessage() {
               chatMessages.appendChild(assistantBubble);
             }
             accumulated += evt.text;
-            assistantBubble.textContent = accumulated;
+            renderSafeMarkdown(assistantBubble, accumulated);
             chatMessages.scrollTop = chatMessages.scrollHeight;
           } else if (evt.type === 'tool') {
             const toolStr = typeof evt.result === 'object' ? JSON.stringify(evt.result) : String(evt.result);
-            appendMessage('tool', `Tool [${evt.name}]: ${toolStr}`);
+            appendMessage('tool', `Tool [${evt.name}]: ${toolStr}`, { plain: typeof evt.result === 'object' });
           } else if (evt.type === 'error') {
             appendMessage('system', `Chat Error: ${evt.message}`);
           } else if (evt.type === 'done') {
@@ -1673,6 +1756,13 @@ voiceModeSelect.addEventListener('change', () => {
 modelInput.addEventListener('change', () => {
   handleRouteSwitch('model change');
 });
+
+if (routeConfigBtn && routeConfigDialog) {
+  routeConfigBtn.addEventListener('click', () => routeConfigDialog.showModal());
+}
+if (routeConfigClose && routeConfigDialog) {
+  routeConfigClose.addEventListener('click', () => routeConfigDialog.close());
+}
 
 // Initialize on DOM load
 window.addEventListener('DOMContentLoaded', async () => {

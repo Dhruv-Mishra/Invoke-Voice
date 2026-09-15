@@ -13,14 +13,20 @@
     "copilot:check": "node --env-file-if-exists=.env scripts/check-copilot.mjs",
     "test": "node --test test/*.test.mjs",
     "desktop": "electron desktop.cjs",
-    "models": "node --env-file-if-exists=.env scripts/models.mjs"
+    "models": "node --env-file-if-exists=.env scripts/models.mjs",
+    "search": "zg query",
+    "search:index": "zg index --embedding local/potion-code-16m-v2",
+    "search:status": "zg status"
   },
   "dependencies": {
     "@google/genai": "^2.21.0",
+    "dompurify": "^3.4.15",
     "lucide": "^1.42.0",
+    "marked": "^18.0.12",
     "ws": "^8.21.3"
   },
   "devDependencies": {
+    "@zvec/zvec-grep": "^0.2.2",
     "electron": "^45.0.0-alpha.5"
   }
 }

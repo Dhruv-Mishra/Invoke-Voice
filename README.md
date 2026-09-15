@@ -16,6 +16,15 @@ Copy-Item example.env .env   # first setup only; do not overwrite a configured .
 
 Put secrets only in `.env`. The browser never receives provider keys.
 
+Build the local zvec-grep index once, then use hybrid code search:
+
+```powershell
+npm run search:index
+npm run search -- "where task status is rendered"
+```
+
+The generated `.zvec-grep/` index and embedding model stay local.
+
 ## Hosted Voice
 
 Set `GEMINI_API_KEY` in `.env`. The configured voice model is `gemini-3.1-flash-live-preview`.

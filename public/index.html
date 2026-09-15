@@ -33,7 +33,7 @@
       --cp-danger: #dc2626;
       --cp-warning: #f59e0b;
       --cp-link: #0078d4;
-      --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.12);
+      --cp-shadow: 0 12px 32px rgba(0, 0, 0, 0.12);
       --cp-overlay: rgba(255, 255, 255, 0.8);
       --cp-panel: rgba(255, 255, 255, 0.86);
       --cp-panel-strong: rgba(255, 255, 255, 0.96);
@@ -67,12 +67,7 @@
       --cp-highlight: rgba(253, 142, 161, 0.12);
     }
 
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-    }
-
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       background: var(--cp-bg);
       color: var(--cp-text);
@@ -82,324 +77,147 @@
       display: flex;
       flex-direction: column;
       height: 100vh;
+      min-height: 100dvh;
       overflow: hidden;
     }
+    code, pre, .mono { font-family: Consolas, "Courier New", Courier, monospace; }
+    .mono { word-break: break-all; overflow-wrap: anywhere; }
+    :focus-visible { outline: 2px solid var(--cp-accent); outline-offset: 2px; }
+    [hidden] { display: none !important; }
 
-    code, pre, .mono {
-      font-family: Consolas, "Courier New", Courier, monospace;
-    }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--cp-border); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--cp-border-strong); }
 
-    /* Utilitarian Header */
+    /* Top Navigation Bar */
     header.top-bar {
-      background: var(--cp-bg-elevated);
-      border-bottom: 1px solid var(--cp-border);
-      padding: 8px 14px;
+      min-height: 56px;
+      padding: 8px 16px;
       display: flex;
       flex-wrap: wrap;
       align-items: center;
-      gap: 12px;
       justify-content: space-between;
+      gap: 12px;
+      background: var(--cp-panel-strong);
+      border-bottom: 1px solid var(--cp-border);
+      position: relative;
+      z-index: 4;
       flex-shrink: 0;
     }
+    .brand-zone { min-width: 0; display: flex; align-items: center; gap: 8px; }
+    .brand-copy { display: grid; gap: 0; }
+    .brand-eyebrow { color: var(--cp-accent); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
+    .brand-title { display: block; font-size: 16px; font-weight: 650; line-height: 1.2; }
 
-    .brand-title {
-      font-weight: 600;
-      font-size: 14px;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      letter-spacing: 0;
-    }
-
-    .header-controls {
-      display: flex;
-      max-width: 100%;
-      min-width: 0;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .control-group {
-      display: inline-flex;
-      max-width: 100%;
-      min-width: 0;
-      align-items: center;
-      gap: 4px;
-    }
-
-    label.control-label {
-      font-size: 11px;
+    .view-tabs { display: flex; align-items: center; gap: 8px; }
+    .view-tab {
+      min-height: 36px;
+      padding: 6px 12px;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
       color: var(--cp-text-muted);
-      font-weight: 500;
-      text-transform: uppercase;
-      letter-spacing: 0;
-    }
-
-    select, input[type="text"], textarea {
-      min-width: 0;
-      max-width: 100%;
-      background: var(--cp-surface);
-      color: var(--cp-text);
-      border: 1px solid var(--cp-border);
-      border-radius: 0.625rem;
-      padding: 4px 8px;
-      font-family: inherit;
+      font: inherit;
       font-size: 12px;
-      outline: none;
-    }
-
-    select:focus, input[type="text"]:focus, textarea:focus {
-      border-color: var(--cp-border-strong);
-      box-shadow: 0 0 0 1px var(--cp-border-strong);
-    }
-
-    .btn {
-      background: var(--cp-surface);
-      color: var(--cp-text);
-      border: 1px solid var(--cp-border);
-      border-radius: 0.625rem;
-      padding: 4px 10px;
-      font-family: inherit;
-      font-size: 12px;
-      font-weight: 500;
+      font-weight: 600;
       cursor: pointer;
       display: inline-flex;
       align-items: center;
-      gap: 5px;
-      transition: background 0.15s ease, border-color 0.15s ease;
+      gap: 6px;
+      transition: background 120ms ease, color 120ms ease;
       white-space: nowrap;
     }
+    .view-tab:hover { color: var(--cp-text); background: var(--cp-surface-soft); }
+    .view-tab[aria-selected="true"] { color: var(--cp-accent); background: var(--cp-accent-soft); font-weight: 650; }
+    .view-tab svg { width: 15px; height: 15px; flex-shrink: 0; }
 
-    .btn:hover:not(:disabled) {
-      background: var(--cp-surface-soft);
-      border-color: var(--cp-border-strong);
-    }
-
-    .btn:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-
-    .btn-accent {
-      background: var(--cp-accent);
-      color: var(--cp-accent-fg);
-      border-color: var(--cp-accent);
-    }
-
-    .btn-accent:hover:not(:disabled) {
-      background: var(--cp-accent-hover);
-      border-color: var(--cp-accent-hover);
-    }
-
-    .btn-danger {
-      background: var(--cp-surface);
-      color: var(--cp-danger);
-      border-color: var(--cp-danger);
-    }
-
-    .btn-danger:hover:not(:disabled) {
-      background: var(--cp-surface-soft);
-    }
-
-    .badge {
+    .header-status { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; min-width: 0; }
+    .agent-status {
       display: inline-flex;
       align-items: center;
-      padding: 2px 6px;
-      border-radius: 0.625rem;
+      min-height: 24px;
+      padding: 2px 8px;
+      border: 1px solid var(--cp-border);
+      border-radius: 6px;
+      background: var(--cp-surface-soft);
+      color: var(--cp-text-muted);
       font-size: 11px;
       font-weight: 600;
-      border: 1px solid var(--cp-border);
-      background: var(--cp-surface-soft);
-      color: var(--cp-text);
+      text-transform: capitalize;
+      line-height: 1;
     }
+    .agent-status[data-state="listening"], .agent-status[data-state="speaking"] { color: var(--cp-success); border-color: var(--cp-success); }
+    .agent-status[data-state="thinking"], .agent-status[data-state="connecting"] { color: var(--cp-accent); border-color: var(--cp-accent); }
 
-    .badge-success {
-      background: var(--cp-surface);
-      color: var(--cp-success);
-      border-color: var(--cp-success);
+    /* Main Workspace Layout */
+    .app-main { min-height: 0; flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+    .application-body { min-height: 0; flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 34%); overflow: hidden; }
+    main.center-pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--cp-bg); overflow: hidden; }
+    section.conversation-pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; border-left: 1px solid var(--cp-border); background: var(--cp-bg-elevated); overflow: hidden; }
+
+    /* Work Areas Disclosure */
+    .areas-disclosure { flex-shrink: 0; border-bottom: 1px solid var(--cp-border); background: var(--cp-bg-elevated); }
+    .areas-summary {
+      list-style: none;
+      cursor: pointer;
+      padding: 10px 16px;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--cp-text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      user-select: none;
     }
+    .areas-summary::-webkit-details-marker { display: none; }
+    .areas-toolbar { display: flex; justify-content: flex-end; padding: 0 16px 8px; }
+    .areas-disclosure .scroll-list { max-height: 168px; padding: 0 16px 12px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
 
-    .badge-warning {
-      background: var(--cp-surface);
-      color: var(--cp-warning);
-      border-color: var(--cp-warning);
-    }
-
-    .badge-danger {
-      background: var(--cp-surface);
-      color: var(--cp-danger);
-      border-color: var(--cp-danger);
-    }
-
-    .badge-accent {
-      background: var(--cp-accent-soft);
-      color: var(--cp-accent);
-      border-color: var(--cp-accent);
-    }
-
-    /* Layout Split */
-    .workspace-body {
-      display: flex;
-      flex: 1;
-      overflow: hidden;
-    }
-
-    /* Left Sidebar: Areas */
-    aside.sidebar {
-      width: 280px;
-      flex-shrink: 0;
-      background: var(--cp-surface);
-      border-right: 1px solid var(--cp-border);
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
-    }
-
+    /* Section Headers */
     .section-header {
-      padding: 8px 12px;
-      background: var(--cp-surface-soft);
+      min-height: 44px;
+      padding: 8px 16px;
+      background: transparent;
       border-bottom: 1px solid var(--cp-border);
       display: flex;
       align-items: center;
       justify-content: space-between;
-    }
-
-    .section-title {
-      font-size: 12px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0;
-      color: var(--cp-text-muted);
-    }
-
-    .scroll-list {
-      flex: 1;
-      overflow-y: auto;
-      padding: 8px;
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-
-    .item-row {
-      background: var(--cp-bg-elevated);
-      border: 1px solid var(--cp-border);
-      border-radius: 0.625rem;
-      padding: 8px 10px;
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-      cursor: pointer;
-      box-shadow: 0 0 2px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.14);
-    }
-
-    .item-row:hover {
-      border-color: var(--cp-border-strong);
-    }
-
-    .item-title-bar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 6px;
-    }
-
-    .item-name {
-      font-weight: 600;
-      color: var(--cp-text);
-      word-break: break-all;
-    }
-
-    .item-meta {
-      font-size: 11px;
-      color: var(--cp-text-muted);
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-    }
-
-    /* Central Pane: Tasks */
-    main.center-pane {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      min-width: 0;
-      background: var(--cp-bg);
-      border-right: 1px solid var(--cp-border);
-    }
-
-    .task-table-wrapper {
-      flex: 1;
-      overflow-y: auto;
-      padding: 10px;
-      display: flex;
-      flex-direction: column;
       gap: 8px;
+      flex-shrink: 0;
     }
+    .section-title { font-size: 11px; font-weight: 700; color: var(--cp-text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+    .task-header-actions, .conversation-actions, .voice-strip-toggles, .voice-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 
-    .task-card {
+    /* Task Table & Cards */
+    .task-table-wrapper { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
+    .item-row, .task-card {
       background: var(--cp-surface);
       border: 1px solid var(--cp-border);
-      border-radius: 0.625rem;
+      border-radius: 6px;
       padding: 10px 12px;
       display: flex;
       flex-direction: column;
       gap: 6px;
-      box-shadow: 0 0 2px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.14);
+      transition: border-color 120ms ease;
     }
+    .item-row { background: var(--cp-bg-elevated); cursor: pointer; }
+    .item-row:hover, .task-card:hover { border-color: var(--cp-border-strong); }
+    .item-title-bar, .task-header { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+    .task-header { align-items: flex-start; gap: 8px; }
+    .item-name, .task-title { font-weight: 600; color: var(--cp-text); }
+    .item-name { word-break: break-all; }
+    .task-title { font-size: 13px; }
+    .item-meta { font-size: 11px; color: var(--cp-text-muted); display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 
-    .task-card.stale {
-      border-left: 4px solid var(--cp-warning);
-    }
+    .task-card.stale { border-left: 3px solid var(--cp-warning); }
+    .task-card.state-running { border-left: 3px solid var(--cp-link); }
+    .task-card.state-completed, .task-card.state-result_ready { border-left: 3px solid var(--cp-success); }
+    .task-card.state-failed, .task-card.state-agent_failed { border-left: 3px solid var(--cp-danger); }
 
-    .task-card.state-running {
-      border-left: 4px solid var(--cp-link);
-    }
-
-    .task-card.state-completed {
-      border-left: 4px solid var(--cp-success);
-    }
-
-    .task-card.state-result_ready {
-      border-left: 4px solid var(--cp-success);
-    }
-
-    .task-card.state-failed {
-      border-left: 4px solid var(--cp-danger);
-    }
-
-    .task-card.state-agent_failed {
-      border-left: 4px solid var(--cp-danger);
-    }
-
-    .task-header {
-      display: flex;
-      align-items: flex-start;
-      justify-content: space-between;
-      gap: 8px;
-    }
-
-    .task-title {
-      font-weight: 600;
-      font-size: 13px;
-      color: var(--cp-text);
-    }
-
-    .task-actions {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-
-    .task-summary {
-      font-size: 12px;
-      color: var(--cp-text-soft);
-      line-height: 1.4;
-      white-space: pre-wrap;
-      word-break: break-word;
-    }
-
+    .task-actions { display: flex; align-items: center; gap: 6px; }
+    .task-actions .btn, .item-title-bar .btn { min-height: 28px; padding: 2px 8px; font-size: 11px; }
+    .task-summary { font-size: 12px; color: var(--cp-text-soft); line-height: 1.4; white-space: pre-wrap; word-break: break-word; }
+    .task-summary-label { display: block; margin-bottom: 2px; color: var(--cp-text-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
     .task-footer {
       display: flex;
       flex-wrap: wrap;
@@ -412,1156 +230,263 @@
       padding-top: 6px;
     }
 
-    /* Bottom Conversation & Logs */
-    section.conversation-pane {
-      height: 240px;
-      flex-shrink: 0;
-      background: var(--cp-surface);
-      border-top: 1px solid var(--cp-border);
-      display: flex;
-      flex-direction: column;
-    }
-
-    .chat-messages {
-      flex: 1;
-      overflow-y: auto;
-      padding: 8px 12px;
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-
-    .chat-bubble {
-      max-width: 85%;
-      padding: 6px 10px;
-      border-radius: 0.625rem;
-      font-size: 12px;
-      word-break: break-word;
-      white-space: pre-wrap;
-    }
-
-    .chat-bubble.user {
-      align-self: flex-end;
-      background: var(--cp-accent-soft);
-      border: 1px solid var(--cp-accent);
-      color: var(--cp-text);
-    }
-
-    .chat-bubble.assistant {
-      align-self: flex-start;
-      background: var(--cp-surface-soft);
-      border: 1px solid var(--cp-border);
-      color: var(--cp-text);
-    }
-
-    .chat-bubble.tool {
-      align-self: flex-start;
-      background: var(--cp-bg-elevated);
-      border: 1px dashed var(--cp-border-strong);
-      color: var(--cp-text-muted);
-      font-size: 11px;
-    }
-
-    .chat-bubble.system {
-      align-self: center;
-      background: transparent;
-      border: none;
-      color: var(--cp-text-muted);
-      font-style: italic;
-      font-size: 11px;
-    }
-
-    .partial-line {
-      font-style: italic;
-      color: var(--cp-text-muted);
-      font-size: 12px;
-      padding: 2px 12px;
-    }
-
-    .chat-input-bar {
-      padding: 6px 12px;
-      border-top: 1px solid var(--cp-border);
-      background: var(--cp-bg-elevated);
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .chat-input-bar input {
-      flex: 1;
-    }
-
-    /* Modal Dialogs */
-    dialog {
-      background: var(--cp-surface);
-      color: var(--cp-text);
-      border: 1px solid var(--cp-border-strong);
-      border-radius: 16px;
-      box-shadow: var(--cp-shadow);
-      padding: 18px;
-      max-width: 520px;
-      width: 90vw;
-      margin: auto;
-    }
-
-    dialog::backdrop {
-      background: var(--cp-overlay);
-    }
-
-    .dialog-header {
-      font-size: 14px;
-      font-weight: 600;
-      margin-bottom: 12px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-
-    .form-group {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-      margin-bottom: 10px;
-    }
-
-    .form-row-checkbox {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      margin-bottom: 10px;
-    }
-
-    .dialog-actions {
-      display: flex;
-      justify-content: flex-end;
-      gap: 8px;
-      margin-top: 14px;
-    }
-
-    .empty-state {
-      padding: 24px;
-      text-align: center;
-      color: var(--cp-text-muted);
-      font-style: italic;
-    }
-
-    .loading-spinner {
-      color: var(--cp-text-muted);
-      font-size: 12px;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      padding: 12px;
-    }
-
-    canvas#mic-canvas {
-      border: 1px solid var(--cp-border);
-      border-radius: 0.625rem;
-      background: var(--cp-surface-soft);
-      vertical-align: middle;
-    }
-
-    /* Refined application shell */
-    body {
-      background: var(--cp-bg);
-    }
-
-    header.top-bar {
-      min-height: 76px;
-      padding: 10px 16px;
-      flex-wrap: nowrap;
-      gap: 20px;
-      background: var(--cp-panel-strong);
-      box-shadow: 0 1px 0 var(--cp-border);
-      animation: shell-enter 320ms ease-out both;
-      position: relative;
-      z-index: 20;
-    }
-
-    .brand-zone {
-      min-width: 210px;
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
-
-    .brand-copy {
-      display: grid;
-      gap: 1px;
-    }
-
-    .brand-eyebrow {
-      color: var(--cp-accent);
-      font-size: 10px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0;
-    }
-
-    .brand-title {
-      display: block;
-      font-size: 16px;
-      font-weight: 650;
-      line-height: 1.2;
-    }
-
-    .agent-sprite {
-      width: 46px;
-      height: 46px;
-      position: relative;
-      flex: 0 0 46px;
-      display: grid;
-      place-items: center;
-      animation: agent-float 3.8s ease-in-out infinite;
-    }
-
-    .agent-halo {
-      position: absolute;
-      inset: 2px;
-      border: 1px solid var(--cp-border);
-      border-radius: 50%;
-      transition: border-color 180ms ease, transform 180ms ease;
-    }
-
-    .agent-head {
-      width: 30px;
-      height: 27px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 5px;
-      position: relative;
-      border: 1px solid var(--cp-border-strong);
-      border-radius: 8px;
-      background: var(--cp-surface);
-      box-shadow: 0 4px 12px var(--cp-highlight);
-    }
-
-    .agent-head::before {
-      content: "";
-      width: 1px;
-      height: 6px;
-      position: absolute;
-      top: -7px;
-      background: var(--cp-border-strong);
-    }
-
-    .agent-head::after {
-      content: "";
-      width: 4px;
-      height: 4px;
-      position: absolute;
-      top: -10px;
-      border-radius: 50%;
-      background: var(--cp-accent);
-    }
-
-    .agent-eye {
-      width: 4px;
-      height: 6px;
-      border-radius: 4px;
-      background: var(--cp-accent);
-      animation: agent-blink 4.8s ease-in-out infinite;
-    }
-
-    .agent-wave {
-      position: absolute;
-      bottom: 1px;
-      display: flex;
-      align-items: flex-end;
-      gap: 2px;
-      height: 7px;
-      opacity: 0;
-      transition: opacity 160ms ease;
-    }
-
-    .agent-wave i {
-      width: 2px;
-      height: 3px;
-      border-radius: 2px;
-      background: var(--cp-accent);
-    }
-
-    .agent-sprite[data-state="listening"] .agent-halo,
-    .agent-sprite[data-state="speaking"] .agent-halo {
-      border-color: var(--cp-success);
-      animation: agent-pulse 1.8s ease-out infinite;
-    }
-
-    .agent-sprite[data-state="thinking"] .agent-halo,
-    .agent-sprite[data-state="connecting"] .agent-halo {
-      border-color: var(--cp-accent);
-      border-style: dashed;
-      animation: agent-spin 3s linear infinite;
-    }
-
-    .agent-sprite[data-state="speaking"] .agent-wave {
-      opacity: 1;
-    }
-
-    .agent-sprite[data-state="speaking"] .agent-wave i {
-      animation: agent-level 520ms ease-in-out infinite alternate;
-    }
-
-    .agent-sprite[data-state="speaking"] .agent-wave i:nth-child(2) { animation-delay: 110ms; }
-    .agent-sprite[data-state="speaking"] .agent-wave i:nth-child(3) { animation-delay: 220ms; }
-
-    .command-deck {
-      min-width: 0;
-      flex: 1;
-      display: grid;
-      gap: 8px;
-    }
-
-    .route-controls,
-    .session-controls,
-    .voice-actions {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      min-width: 0;
-    }
-
-    .route-controls {
-      flex: 1;
-    }
-
-    .session-controls {
-      justify-content: space-between;
-    }
-
-    .header-controls {
-      display: contents;
-    }
-
-    .control-group {
-      gap: 6px;
-    }
-
-    .control-group.route-provider { width: 150px; }
-    .control-group.route-model { flex: 1; min-width: 150px; max-width: 260px; }
-    .control-group.route-voice { width: 235px; }
-
-    .control-group.route-model input {
-      width: 100% !important;
-    }
-
-    select,
-    input[type="text"],
-    textarea {
-      min-height: 34px;
-      padding: 7px 10px;
-      border-radius: 7px;
-      transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
-    }
-
-    textarea { resize: vertical; }
-
-    .select-shell {
-      min-width: 0;
-      position: relative;
-      flex: 1;
-    }
-
-    .select-native {
-      width: 1px !important;
-      height: 1px !important;
-       max-width: calc(100vw - 24px);
-      min-height: 0 !important;
-      position: absolute;
-      inset: auto;
-      opacity: 0;
-       right: 0;
-    }
-
-    .select-trigger {
-      width: 100%;
-      min-height: 34px;
-      padding: 7px 30px 7px 10px;
-      position: relative;
-      overflow: hidden;
-      border: 1px solid var(--cp-border);
-      border-radius: 7px;
-      background: var(--cp-surface);
-      color: var(--cp-text);
-      font: inherit;
-      font-size: 12px;
-      text-align: left;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      cursor: pointer;
-      transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
-    }
-
-    .select-trigger::after {
-      content: "";
-      width: 6px;
-      height: 6px;
-      position: absolute;
-      top: 12px;
-      right: 11px;
-      border-right: 1px solid var(--cp-text-muted);
-      border-bottom: 1px solid var(--cp-text-muted);
-      transform: rotate(45deg);
-      transition: transform 180ms ease, top 180ms ease;
-    }
-
-    .select-shell.open .select-trigger {
-      border-color: var(--cp-accent);
-      background: var(--cp-bg-elevated);
-      box-shadow: 0 0 0 3px var(--cp-accent-soft);
-    }
-
-    .select-shell.open .select-trigger::after {
-      top: 15px;
-      transform: rotate(225deg);
-    }
-
-    .select-menu {
-      width: max-content;
-      min-width: 100%;
-      max-width: min(360px, calc(100vw - 48px));
-      max-height: 240px;
-      padding: 5px;
-      position: absolute;
-      top: calc(100% + 6px);
-      right: 0;
-      z-index: 100;
-      overflow-y: auto;
-      border: 1px solid var(--cp-border);
-      border-radius: 8px;
-      background: var(--cp-panel-strong);
-      box-shadow: var(--cp-shadow);
-      opacity: 0;
-      visibility: hidden;
-      transform: translateY(-5px) scale(0.98);
-      transform-origin: top left;
-      transition: opacity 150ms ease, visibility 150ms ease, transform 180ms ease;
-    }
-
-    .select-shell.open .select-menu {
-      opacity: 1;
-      visibility: visible;
-      transform: translateY(0) scale(1);
-    }
-
-    .select-option {
-      width: 100%;
-      min-height: 31px;
-      padding: 6px 26px 6px 8px;
-      position: relative;
-      border: 0;
-      border-radius: 6px;
-      background: transparent;
-      color: var(--cp-text);
-      font: inherit;
-      font-size: 12px;
-      text-align: left;
-      white-space: nowrap;
-      cursor: pointer;
-      transition: background 120ms ease, color 120ms ease;
-    }
-
-    .select-option:hover,
-    .select-option:focus-visible {
-      outline: none;
-      background: var(--cp-surface-soft);
-    }
-
-    .select-option.selected {
-      color: var(--cp-accent);
-      background: var(--cp-accent-soft);
-    }
-
-    .select-option.selected::after {
-      content: "✓";
-      position: absolute;
-      right: 9px;
-      color: var(--cp-accent);
-    }
-
-    .select-option:disabled {
-      opacity: 0.45;
-      cursor: not-allowed;
-    }
-
-    .form-group .select-shell {
-      width: 100%;
-    }
-
-    .toggle-control {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      color: var(--cp-text-muted);
-      font-size: 11px;
-      cursor: pointer;
-      white-space: nowrap;
-    }
-
-    .toggle-control input {
-      position: absolute;
-      opacity: 0;
-      pointer-events: none;
-    }
-
-    .toggle-track {
-      width: 27px;
-      height: 16px;
-      padding: 2px;
-      border: 1px solid var(--cp-border);
-      border-radius: 8px;
-      background: var(--cp-surface-soft);
-      transition: background 160ms ease, border-color 160ms ease;
-    }
-
-    .toggle-track::after {
-      content: "";
-      display: block;
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
-      background: var(--cp-text-muted);
-      transition: transform 180ms ease, background 180ms ease;
-    }
-
-    .toggle-control input:checked + .toggle-track {
-      border-color: var(--cp-accent);
-      background: var(--cp-accent-soft);
-    }
-
-    .toggle-control input:checked + .toggle-track::after {
-      transform: translateX(11px);
-      background: var(--cp-accent);
-    }
-
+    /* Conversation Pane & Messages */
+    .chat-messages { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
+    .chat-messages:empty::before { content: "Ready when you are"; margin: auto; color: var(--cp-text-muted); font-size: 12px; }
+    .chat-bubble { max-width: 88%; padding: 8px 12px; border-radius: 6px; font-size: 12px; line-height: 1.45; word-break: break-word; white-space: pre-wrap; }
+    .chat-bubble.user { align-self: flex-end; background: var(--cp-accent-soft); border: 1px solid var(--cp-accent); color: var(--cp-text); }
+    .chat-bubble.assistant { align-self: flex-start; background: var(--cp-surface); border: 1px solid var(--cp-border); color: var(--cp-text); }
+    .chat-bubble.tool { align-self: flex-start; background: var(--cp-bg-elevated); border: 1px dashed var(--cp-border-strong); color: var(--cp-text-muted); font-size: 11px; }
+    .chat-bubble.system { align-self: center; background: transparent; border: none; color: var(--cp-text-muted); font-style: italic; font-size: 11px; }
+    .partial-line { font-style: italic; color: var(--cp-text-muted); font-size: 12px; padding: 2px 16px; flex-shrink: 0; }
+    .chat-input-bar { padding: 8px 16px; border-top: 1px solid var(--cp-border); background: var(--cp-surface); display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+    .chat-input-bar input { flex: 1; min-height: 36px; }
+
+    /* Markdown Formatted Content */
+    .md-content { white-space: normal; }
+    .md-content p { margin: 0 0 8px; }
+    .md-content p:last-child { margin-bottom: 0; }
+    .md-content h1, .md-content h2, .md-content h3, .md-content h4 { margin: 8px 0 4px; font-size: 13px; font-weight: 650; }
+    .md-content ul, .md-content ol { margin: 4px 0 8px; padding-left: 18px; }
+    .md-content li { margin-bottom: 2px; }
+    .md-content blockquote { margin: 8px 0; padding-left: 12px; border-left: 2px solid var(--cp-border-strong); color: var(--cp-text-muted); }
+    .md-content code { padding: 1px 4px; border-radius: 4px; background: var(--cp-surface-soft); font-family: Consolas, "Courier New", Courier, monospace; font-size: 11px; }
+    .md-content pre { margin: 8px 0; padding: 8px 12px; overflow: auto; border: 1px solid var(--cp-border); border-radius: 6px; background: var(--cp-bg-elevated); }
+    .md-content pre code { padding: 0; background: none; }
+    .md-content a { color: var(--cp-link); text-decoration: underline; }
+    .md-content table { width: 100%; margin: 8px 0; border-collapse: collapse; }
+    .md-content th, .md-content td { padding: 4px 8px; border: 1px solid var(--cp-border); text-align: left; }
+    .md-content th { background: var(--cp-surface-soft); font-weight: 600; }
+
+    /* Buttons, Badges, & Inputs */
     .btn {
-      min-height: 34px;
-      border-radius: 7px;
-      padding: 7px 10px;
-      transition: transform 150ms ease, background 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+      min-height: 36px; padding: 6px 12px; border: 1px solid var(--cp-border); border-radius: 6px; background: var(--cp-surface);
+      color: var(--cp-text); font: inherit; font-size: 12px; font-weight: 500; cursor: pointer; display: inline-flex;
+      align-items: center; gap: 6px; transition: background 120ms ease, border-color 120ms ease; white-space: nowrap;
     }
-
-    .btn:hover:not(:disabled) {
-      transform: translateY(-1px);
-      box-shadow: 0 4px 12px var(--cp-highlight);
-    }
-
-    .btn-icon {
-      width: 34px;
-      padding: 0;
-      justify-content: center;
-    }
+    .btn:hover:not(:disabled) { background: var(--cp-surface-soft); border-color: var(--cp-border-strong); }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-accent { background: var(--cp-accent); color: var(--cp-accent-fg); border-color: var(--cp-accent); }
+    .btn-accent:hover:not(:disabled) { background: var(--cp-accent-hover); border-color: var(--cp-accent-hover); }
+    .btn-danger { background: var(--cp-surface); color: var(--cp-danger); border-color: var(--cp-danger); }
+    .btn-danger:hover:not(:disabled) { background: var(--cp-surface-soft); }
+    .btn-icon { width: 36px; min-width: 36px; padding: 0; justify-content: center; }
+    #quiet-mode-btn { width: auto; min-width: 36px; padding: 0 8px; gap: 4px; }
+    .btn svg, .view-tab svg, .item-row svg, .task-card svg { width: 14px; height: 14px; flex-shrink: 0; vertical-align: middle; }
+    .btn-icon svg { width: 16px; height: 16px; }
 
     .badge {
-      min-height: 24px;
-      padding: 3px 8px;
-      border-radius: 7px;
+      display: inline-flex; align-items: center; min-height: 22px; padding: 2px 7px; border: 1px solid var(--cp-border);
+      border-radius: 6px; background: var(--cp-surface-soft); color: var(--cp-text); font-size: 11px; font-weight: 600; line-height: 1; white-space: nowrap;
     }
+    .badge-success { background: var(--cp-surface); color: var(--cp-success); border-color: var(--cp-success); }
+    .badge-warning { background: var(--cp-surface); color: var(--cp-warning); border-color: var(--cp-warning); }
+    .badge-danger { background: var(--cp-surface); color: var(--cp-danger); border-color: var(--cp-danger); }
+    .badge-accent { background: var(--cp-accent-soft); color: var(--cp-accent); border-color: var(--cp-accent); }
 
-    canvas#mic-canvas {
-      width: 64px;
-      height: 20px;
-      border: none;
-      background: var(--cp-surface-soft);
+    input[type="text"], textarea, select {
+      min-width: 0; max-width: 100%; min-height: 36px; padding: 6px 10px; border: 1px solid var(--cp-border);
+      border-radius: 6px; background: var(--cp-surface); color: var(--cp-text); font: inherit; font-size: 12px; outline: none; transition: border-color 120ms ease;
     }
+    textarea { resize: vertical; }
+    input[type="text"]:focus, textarea:focus, select:focus { border-color: var(--cp-border-strong); }
 
-    .view-tabs {
-      min-height: 43px;
-      padding: 0 14px;
-      display: flex;
-      align-items: stretch;
-      gap: 18px;
-      flex-shrink: 0;
-      border-bottom: 1px solid var(--cp-border);
-      background: var(--cp-bg-elevated);
+    /* Custom Select Component */
+    .select-shell { min-width: 0; position: relative; flex: 1; }
+    .select-native { width: 1px !important; height: 1px !important; max-width: calc(100vw - 24px); min-height: 0 !important; position: absolute; inset: auto; right: 0; opacity: 0; pointer-events: none; }
+    .select-trigger {
+      width: 100%; min-height: 36px; padding: 6px 28px 6px 10px; position: relative; overflow: hidden;
+      border: 1px solid var(--cp-border); border-radius: 6px; background: var(--cp-surface); color: var(--cp-text);
+      font: inherit; font-size: 12px; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; transition: border-color 120ms ease, background 120ms ease;
     }
-
-    .view-tab {
-      padding: 0 2px;
-      position: relative;
-      display: inline-flex;
-      align-items: center;
-      gap: 7px;
-      border: 0;
-      background: transparent;
-      color: var(--cp-text-muted);
-      font: inherit;
-      font-weight: 600;
-      cursor: pointer;
+    .select-trigger::after {
+      content: ""; width: 6px; height: 6px; position: absolute; top: 13px; right: 11px;
+      border-right: 1.5px solid var(--cp-text-muted); border-bottom: 1.5px solid var(--cp-text-muted);
+      transform: rotate(45deg); transition: transform 150ms ease, top 150ms ease;
     }
-
-    .view-tab::after {
-      content: "";
-      height: 2px;
-      position: absolute;
-      right: 0;
-      bottom: -1px;
-      left: 0;
-      background: var(--cp-accent);
-      transform: scaleX(0);
-      transition: transform 180ms ease;
+    .select-shell.open .select-trigger { border-color: var(--cp-accent); background: var(--cp-bg-elevated); }
+    .select-shell.open .select-trigger::after { top: 16px; transform: rotate(225deg); }
+    .select-menu {
+      width: max-content; min-width: 100%; max-width: min(360px, calc(100vw - 32px)); max-height: 240px; padding: 4px;
+      position: absolute; top: calc(100% + 4px); right: 0; z-index: 100; overflow-y: auto; border: 1px solid var(--cp-border);
+      border-radius: 6px; background: var(--cp-panel-strong); box-shadow: var(--cp-shadow); opacity: 0; visibility: hidden; transition: opacity 120ms ease, visibility 120ms ease;
     }
-
-    .view-tab:hover,
-    .view-tab[aria-selected="true"] { color: var(--cp-text); }
-
-    .view-tab[aria-selected="true"]::after { transform: scaleX(1); }
-
-    .view-tab svg {
-      width: 15px;
-      height: 15px;
+    .select-shell.open .select-menu { opacity: 1; visibility: visible; }
+    .select-option {
+      width: 100%; min-height: 30px; padding: 6px 24px 6px 8px; position: relative; border: 0; border-radius: 4px;
+      background: transparent; color: var(--cp-text); font: inherit; font-size: 12px; text-align: left; white-space: nowrap; cursor: pointer; transition: background 100ms ease;
     }
+    .select-option:hover, .select-option:focus-visible { outline: none; background: var(--cp-surface-soft); }
+    .select-option.selected { color: var(--cp-accent); background: var(--cp-accent-soft); font-weight: 600; }
+    .select-option.selected::after { content: "✓"; position: absolute; right: 8px; color: var(--cp-accent); }
+    .select-option:disabled { opacity: 0.45; cursor: not-allowed; }
+    .form-group .select-shell { width: 100%; }
 
-    [hidden] { display: none !important; }
-
-    .tool-lab {
-      min-height: 0;
-      flex: 1;
-      display: grid;
-      grid-template-columns: 280px minmax(0, 1fr);
-      overflow: hidden;
-      background: var(--cp-bg);
-      animation: shell-enter 260ms ease-out both;
+    /* Persistent Voice Control Strip */
+    .voice-strip {
+      flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 8px 16px;
+      border-top: 1px solid var(--cp-border); background: var(--cp-panel-strong); position: relative; z-index: 3;
     }
-
-    .tool-catalog {
-      min-width: 0;
-      padding: 18px 12px;
-      overflow-y: auto;
-      border-right: 1px solid var(--cp-border);
-      background: var(--cp-bg-elevated);
+    .voice-actions { margin-left: auto; }
+    .toggle-control {
+      display: inline-flex; align-items: center; gap: 6px; color: var(--cp-text-muted); font-size: 11px; cursor: pointer; white-space: nowrap; user-select: none;
     }
-
-    .tool-catalog-header,
-    .tool-runner-header,
-    .tool-output-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
+    .toggle-control input { position: absolute; opacity: 0; pointer-events: none; }
+    .toggle-track {
+      width: 28px; height: 16px; padding: 2px; border: 1px solid var(--cp-border); border-radius: 8px;
+      background: var(--cp-surface-soft); display: inline-flex; align-items: center; transition: background 140ms ease, border-color 140ms ease;
     }
+    .toggle-track::after { content: ""; display: block; width: 10px; height: 10px; border-radius: 50%; background: var(--cp-text-muted); transition: transform 140ms ease, background 140ms ease; }
+    .toggle-control input:checked + .toggle-track { border-color: var(--cp-accent); background: var(--cp-accent-soft); }
+    .toggle-control input:checked + .toggle-track::after { transform: translateX(12px); background: var(--cp-accent); }
+    canvas#mic-canvas { width: 64px; height: 20px; border: 1px solid var(--cp-border); border-radius: 6px; background: var(--cp-surface-soft); vertical-align: middle; flex-shrink: 0; }
 
-    .tool-catalog-header { padding: 0 6px 12px; }
-
-    .tool-list {
-      display: grid;
-      gap: 6px;
-    }
-
+    /* Tool Lab */
+    .tool-lab { min-height: 0; flex: 1; display: grid; grid-template-columns: 280px minmax(0, 1fr); overflow: hidden; background: var(--cp-bg); }
+    .tool-catalog { min-width: 0; padding: 14px 12px; overflow-y: auto; border-right: 1px solid var(--cp-border); background: var(--cp-bg-elevated); }
+    .tool-catalog-header, .tool-runner-header, .tool-output-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .tool-catalog-header { padding: 0 4px 12px; }
+    .tool-list { display: grid; gap: 6px; }
     .tool-list-item {
-      width: 100%;
-      padding: 10px;
-      display: grid;
-      grid-template-columns: 30px minmax(0, 1fr);
-      gap: 9px;
-      border: 1px solid transparent;
-      border-radius: 8px;
-      background: transparent;
-      color: var(--cp-text);
-      text-align: left;
-      cursor: pointer;
-      transition: background 150ms ease, border-color 150ms ease, transform 150ms ease;
+      width: 100%; padding: 8px 10px; display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 8px;
+      border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--cp-text);
+      text-align: left; cursor: pointer; transition: background 120ms ease, border-color 120ms ease;
     }
-
     .tool-list-item:hover { background: var(--cp-surface-soft); }
-
-    .tool-list-item[aria-selected="true"] {
-      border-color: var(--cp-border);
-      background: var(--cp-surface);
-      box-shadow: 0 4px 14px var(--cp-highlight);
-      transform: translateX(2px);
-    }
-
-    .tool-list-icon {
-      width: 30px;
-      height: 30px;
-      display: grid;
-      place-items: center;
-      border-radius: 7px;
-      background: var(--cp-accent-soft);
-      color: var(--cp-accent);
-    }
-
-    .tool-list-icon svg {
-      width: 15px;
-      height: 15px;
-    }
-
-    .tool-list-name {
-      display: block;
-      overflow: hidden;
-      font: 600 12px Consolas, "Courier New", monospace;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .tool-list-description {
-      margin-top: 3px;
-      display: -webkit-box;
-      overflow: hidden;
-      color: var(--cp-text-muted);
-      font-size: 11px;
-      line-height: 1.35;
-      -webkit-box-orient: vertical;
-      -webkit-line-clamp: 2;
-    }
-
-    .tool-runner {
-      min-width: 0;
-      padding: 24px clamp(18px, 4vw, 52px);
-      overflow-y: auto;
-    }
-
-    .tool-runner-inner {
-      width: min(860px, 100%);
-      margin: 0 auto;
-    }
-
-    .tool-runner-header {
-      min-height: 54px;
-      padding-bottom: 16px;
-      border-bottom: 1px solid var(--cp-border);
-    }
-
-    .tool-runner-title {
-      font: 600 18px Consolas, "Courier New", monospace;
-    }
-
-    .tool-runner-description {
-      margin-top: 5px;
-      color: var(--cp-text-muted);
-      font-size: 12px;
-    }
-
-    .tool-form {
-      padding: 20px 0;
-      display: grid;
-      gap: 15px;
-    }
-
-    .tool-field {
-      display: grid;
-      gap: 6px;
-    }
-
-    .tool-field-label {
-      color: var(--cp-text);
-      font-size: 12px;
-      font-weight: 600;
-    }
-
-    .tool-field-required { color: var(--cp-accent); }
-
-    .tool-field-help {
-      color: var(--cp-text-muted);
-      font-size: 11px;
-    }
-
-    .tool-field input,
-    .tool-field textarea,
-    .tool-field select,
-    .tool-field .select-shell { width: 100%; }
-
-    .tool-field input,
-    .tool-field select { min-height: 38px; }
-
-    .tool-field textarea {
-      min-height: 94px;
-      padding: 9px 10px;
-      resize: vertical;
-    }
-
-    .tool-actions {
-      display: flex;
-      align-items: center;
-      justify-content: flex-end;
-      gap: 10px;
-    }
-
-    .tool-output {
-      padding-top: 17px;
-      border-top: 1px solid var(--cp-border);
-    }
-
+    .tool-list-item[aria-selected="true"] { border-color: var(--cp-border); background: var(--cp-surface); }
+    .tool-list-icon { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 6px; background: var(--cp-accent-soft); color: var(--cp-accent); }
+    .tool-list-icon svg { width: 14px; height: 14px; }
+    .tool-list-name { display: block; overflow: hidden; font: 600 12px Consolas, "Courier New", monospace; text-overflow: ellipsis; white-space: nowrap; }
+    .tool-list-description { margin-top: 2px; display: -webkit-box; overflow: hidden; color: var(--cp-text-muted); font-size: 11px; line-height: 1.35; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; }
+    .tool-runner { min-width: 0; padding: 20px 24px; overflow-y: auto; }
+    .tool-runner-inner { width: min(860px, 100%); margin: 0 auto; }
+    .tool-runner-header { min-height: 48px; padding-bottom: 14px; border-bottom: 1px solid var(--cp-border); }
+    .tool-runner-title { font: 600 16px Consolas, "Courier New", monospace; }
+    .tool-runner-description { margin-top: 4px; color: var(--cp-text-muted); font-size: 12px; }
+    .tool-form { padding: 16px 0; display: grid; gap: 12px; }
+    .tool-field { display: grid; gap: 4px; }
+    .tool-field-label { color: var(--cp-text); font-size: 12px; font-weight: 600; }
+    .tool-field-required { color: var(--cp-accent); margin-left: 2px; }
+    .tool-field-help { color: var(--cp-text-muted); font-size: 11px; line-height: 1.35; }
+    .tool-field input, .tool-field textarea, .tool-field select, .tool-field .select-shell { width: 100%; }
+    .tool-field textarea { min-height: 80px; }
+    .tool-actions, .dialog-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+    .tool-output { padding-top: 14px; border-top: 1px solid var(--cp-border); }
     .tool-output pre {
-      min-height: 150px;
-      max-height: 310px;
-      margin-top: 10px;
-      padding: 14px;
-      overflow: auto;
-      border: 1px solid var(--cp-border);
-      border-radius: 8px;
-      background: var(--cp-bg-elevated);
-      color: var(--cp-text);
-      font-size: 11px;
-      line-height: 1.55;
-      white-space: pre-wrap;
-      overflow-wrap: anywhere;
+      min-height: 140px; max-height: 300px; margin-top: 8px; padding: 12px; overflow: auto;
+      border: 1px solid var(--cp-border); border-radius: 6px; background: var(--cp-bg-elevated);
+      color: var(--cp-text); font-size: 11px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere;
     }
 
-    .workspace-body {
-      min-height: 0;
-      background: var(--cp-bg);
-    }
-
-    .application-body {
-      min-height: 0;
-      flex: 1;
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(320px, 26vw);
-      overflow: hidden;
-      animation: shell-enter 420ms 70ms ease-out both;
-    }
-
-    aside.sidebar {
-      width: 252px;
-      background: var(--cp-bg-elevated);
-    }
-
-    .section-header {
-      min-height: 49px;
-      padding: 10px 14px;
-      background: transparent;
-    }
-
-    .section-title {
-      font-size: 11px;
-      font-weight: 700;
-      color: var(--cp-text-muted);
-    }
-
-    .scroll-list,
-    .task-table-wrapper {
-      padding: 10px;
-      gap: 8px;
-    }
-
-    .item-row,
-    .task-card {
-      border-radius: 8px;
-      box-shadow: none;
-      transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
-    }
-
-    .item-row:hover,
-    .task-card:hover {
-      transform: translateY(-1px);
-      border-color: var(--cp-border-strong);
-      box-shadow: 0 6px 18px var(--cp-highlight);
-    }
-
-    main.center-pane {
-      background: var(--cp-bg);
-    }
-
-    .task-card {
-      padding: 12px 14px;
-      gap: 8px;
-      background: var(--cp-bg-elevated);
-    }
-
-    section.conversation-pane {
-      width: 100%;
-      height: auto;
-      min-width: 0;
-      border-top: none;
-      border-left: 1px solid var(--cp-border);
-      background: var(--cp-bg-elevated);
-    }
-
-    .chat-messages {
-      padding: 10px 14px;
-      gap: 8px;
-    }
-
-    .chat-bubble {
-      padding: 8px 11px;
-      border-radius: 8px;
-      animation: message-enter 180ms ease-out both;
-    }
-
-    .chat-input-bar {
-      padding: 10px 14px;
-      background: var(--cp-surface);
-    }
-
-    .chat-input-bar input {
-      min-height: 38px;
-    }
-
+    /* Dialogs, Forms & Details */
     dialog {
-      border-radius: 8px;
-      border-color: var(--cp-border);
-      animation: dialog-enter 180ms ease-out both;
+      background: var(--cp-surface); color: var(--cp-text); border: 1px solid var(--cp-border);
+      border-radius: 12px; box-shadow: var(--cp-shadow); padding: 18px; max-width: 520px;
+      width: min(520px, calc(100vw - 32px)); margin: auto;
     }
+    dialog::backdrop { background: var(--cp-overlay); }
+    .dialog-header { font-size: 14px; font-weight: 650; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    .dialog-header .btn { min-height: 28px; width: 28px; padding: 0; justify-content: center; border-radius: 6px; }
+    .dialog-actions { margin-top: 14px; }
+    .form-group { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+    .form-group:last-child { margin-bottom: 0; }
+    .form-row-checkbox { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 12px; }
+    label.control-label { font-size: 11px; color: var(--cp-text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
 
-    .empty-state {
-      margin: auto;
-      max-width: 360px;
-      padding: 40px 24px;
-      font-style: normal;
-      line-height: 1.6;
-      display: grid;
-      place-items: center;
-      gap: 8px;
-      color: var(--cp-text-muted);
-    }
+    .advanced-disclosure { margin: 8px 0 12px; padding: 8px 12px; border: 1px solid var(--cp-border); border-radius: 6px; background: var(--cp-bg-elevated); }
+    .advanced-disclosure summary { cursor: pointer; font-weight: 600; font-size: 11px; color: var(--cp-text-muted); text-transform: uppercase; letter-spacing: 0.04em; user-select: none; }
+    .advanced-disclosure .form-group { margin-top: 8px; }
 
-    .empty-state svg {
-      width: 28px;
-      height: 28px;
-      color: var(--cp-border-strong);
-      stroke-width: 1.4;
-    }
+    .detail-content { display: flex; flex-direction: column; gap: 8px; max-height: 60vh; overflow-y: auto; font-size: 12px; padding-right: 4px; }
+    .detail-content p { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
+    .detail-content strong { color: var(--cp-text-muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+    .detail-content h4 { font-size: 12px; font-weight: 650; color: var(--cp-text); margin-top: 4px; }
+    .detail-observations { display: flex; flex-direction: column; gap: 6px; }
 
-    .empty-title {
-      color: var(--cp-text);
-      font-size: 13px;
-      font-weight: 600;
-    }
+    .empty-state { margin: auto; max-width: 360px; padding: 32px 16px; display: grid; place-items: center; gap: 8px; text-align: center; color: var(--cp-text-muted); }
+    .empty-state svg { width: 28px; height: 28px; color: var(--cp-border-strong); stroke-width: 1.5; }
+    .empty-title { color: var(--cp-text); font-size: 13px; font-weight: 600; }
+    .empty-detail { max-width: 260px; color: var(--cp-text-muted); font-size: 11px; line-height: 1.4; }
+    .loading-spinner { color: var(--cp-text-muted); font-size: 12px; display: flex; align-items: center; gap: 6px; padding: 12px; }
 
-    .empty-detail {
-      max-width: 240px;
-      color: var(--cp-text-muted);
-      font-size: 11px;
-      text-align: center;
-    }
-
-    .chat-messages:empty::before {
-      content: "Ready when you are";
-      margin: auto;
-      color: var(--cp-text-muted);
-      font-size: 11px;
-    }
-
-    @keyframes shell-enter {
-      from { opacity: 0; transform: translateY(6px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-
-    @keyframes dialog-enter {
-      from { opacity: 0; transform: translateY(8px) scale(0.99); }
-      to { opacity: 1; transform: translateY(0) scale(1); }
-    }
-
-    @keyframes message-enter {
-      from { opacity: 0; transform: translateY(3px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-
-    @keyframes agent-float {
-      0%, 100% { transform: translateY(0); }
-      50% { transform: translateY(-2px); }
-    }
-
-    @keyframes agent-blink {
-      0%, 46%, 50%, 100% { transform: scaleY(1); }
-      48% { transform: scaleY(0.15); }
-    }
-
-    @keyframes agent-pulse {
-      0% { transform: scale(0.88); opacity: 1; }
-      100% { transform: scale(1.08); opacity: 0; }
-    }
-
-    @keyframes agent-spin { to { transform: rotate(360deg); } }
-
-    @keyframes agent-level {
-      from { height: 2px; }
-      to { height: 7px; }
-    }
-
+    /* Responsive Stack */
     @media (max-width: 1080px) {
-      header.top-bar { align-items: flex-start; }
-      .brand-zone { min-width: 190px; }
-      .session-controls { align-items: flex-start; }
-      .voice-actions { flex-wrap: wrap; justify-content: flex-end; }
-      .control-group.route-voice { width: 200px; }
-      .application-body {
-        grid-template-columns: 1fr;
-        overflow: auto;
-      }
-      .workspace-body { min-height: 420px; }
-      section.conversation-pane {
-        height: 270px;
-        border-top: 1px solid var(--cp-border);
-        border-left: none;
-      }
+      .application-body { grid-template-columns: 1fr; overflow: auto; }
+      section.conversation-pane { min-height: 280px; height: 320px; border-left: none; border-top: 1px solid var(--cp-border); }
+      .tool-lab { grid-template-columns: 1fr; }
+      .tool-catalog { border-right: 0; border-bottom: 1px solid var(--cp-border); }
     }
 
     @media (max-width: 800px) {
-      body {
-        height: auto;
-        min-height: 100dvh;
-        overflow: auto;
-      }
-      header.top-bar {
-        min-height: 0;
-        padding: 10px 12px;
-        flex-wrap: wrap;
-        gap: 10px;
-      }
-      .view-tabs { padding: 0 12px; }
-      .brand-zone { min-width: 0; }
-      .command-deck { flex-basis: 100%; }
-      .route-controls,
-      .session-controls {
-        flex-wrap: wrap;
-      }
-      .control-group.route-provider,
-      .control-group.route-model,
-      .control-group.route-voice {
-        flex: 1 1 100%;
-        width: 100%;
-        max-width: none;
-      }
-      .control-group .control-label { width: 82px; flex: 0 0 82px; }
-      .control-group input,
-      .control-group select,
-      .control-group .select-shell { flex: 1; }
-      .voice-actions { justify-content: flex-start; }
-      .workspace-body {
-        flex-direction: column;
-        flex: none;
-        min-height: 440px;
-      }
-      .application-body {
-        display: block;
-        overflow: visible;
-      }
-      aside.sidebar {
-        width: 100%;
-        height: 190px;
-        border-right: none;
-        border-bottom: 1px solid var(--cp-border);
-      }
-      main.center-pane { min-height: 280px; border-right: none; }
-      section.conversation-pane { height: 320px; }
-      .empty-state { padding: 20px 16px; }
-      .tool-lab {
-        display: block;
-        overflow: visible;
-      }
-      .tool-catalog {
-        padding: 12px;
-        overflow: visible;
-        border-right: 0;
-        border-bottom: 1px solid var(--cp-border);
-      }
-      .tool-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .tool-list-item { min-height: 68px; }
-      .tool-runner { padding: 20px 14px 30px; }
-      .tool-runner-header { align-items: flex-start; }
+      body { height: auto; min-height: 100dvh; overflow-y: auto; overflow-x: hidden; }
+      .app-main, .application-body, .tool-lab, main.center-pane, section.conversation-pane { overflow: visible; height: auto; min-height: 0; }
+      header.top-bar { min-height: 0; padding: 8px 12px; gap: 8px; }
+      .header-status { width: 100%; justify-content: flex-start; }
+      .areas-disclosure .scroll-list { max-height: none; }
+      .tool-list { grid-template-columns: 1fr; }
+      .voice-strip { padding: 8px 12px; gap: 8px; }
+      .voice-actions { margin-left: 0; width: 100%; justify-content: flex-start; }
+      .btn, .view-tab, .select-trigger, .chat-input-bar input, .toggle-control { min-height: 44px; }
+      .btn-icon { width: 44px; min-width: 44px; }
     }
 
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after {
-        animation-duration: 1ms !important;
+        animation-duration: 0.01ms !important;
         animation-iteration-count: 1 !important;
-        transition-duration: 1ms !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
       }
     }
   </style>
 </head>
 <body>
-  <!-- Application command bar -->
   <header class="top-bar">
     <div class="brand-zone">
-      <div class="agent-sprite" id="agent-sprite" data-state="idle" role="img" aria-label="Agent idle">
-        <span class="agent-halo"></span>
-        <span class="agent-head"><i class="agent-eye"></i><i class="agent-eye"></i></span>
-        <span class="agent-wave"><i></i><i></i><i></i></span>
-      </div>
       <div class="brand-copy">
         <span class="brand-eyebrow">Local command</span>
         <span class="brand-title">Voice Supervisor</span>
       </div>
     </div>
 
-    <div class="command-deck">
-      <div class="route-controls">
-        <div class="control-group route-provider">
-          <label class="control-label" for="provider-select">Provider</label>
-          <select id="provider-select" aria-label="LLM Provider"></select>
-        </div>
-        <div class="control-group route-model">
-          <label class="control-label" id="model-label" for="model-input">Model</label>
-          <input type="text" id="model-input" aria-label="Text or cascade model identifier" placeholder="Text model">
-        </div>
-        <div class="control-group route-voice">
-          <label class="control-label" for="voice-mode-select">Voice</label>
-          <select id="voice-mode-select" aria-label="Voice runtime mode"></select>
-        </div>
-      </div>
+    <nav class="view-tabs" role="tablist" aria-label="Supervisor views">
+      <button class="view-tab" id="workspace-tab" type="button" role="tab" aria-selected="true" aria-controls="workspace-view" data-view="workspace">
+        <i data-lucide="layout-dashboard"></i><span>Workspace</span>
+      </button>
+      <button class="view-tab" id="tool-lab-tab" type="button" role="tab" aria-selected="false" aria-controls="tool-lab-view" data-view="tool-lab">
+        <i data-lucide="flask-conical"></i><span>Tool Lab</span>
+      </button>
+    </nav>
 
-      <div class="session-controls">
-        <div class="route-controls">
-          <label class="toggle-control" title="Allow local transcripts to use a hosted LLM">
-            <input type="checkbox" id="allow-cloud-opt" aria-label="Allow Cloud Hybrid">
-            <span class="toggle-track" aria-hidden="true"></span><span>Cloud</span>
-          </label>
-          <label class="toggle-control" title="Mute microphone input">
-            <input type="checkbox" id="mute-mic-opt" aria-label="Mute microphone">
-            <span class="toggle-track" aria-hidden="true"></span><span>Mute</span>
-          </label>
-          <label class="toggle-control" title="Hold the button or Spacebar while speaking">
-            <input type="checkbox" id="ptt-mode-opt" aria-label="Enable Push To Talk mode">
-            <span class="toggle-track" aria-hidden="true"></span><span>PTT</span>
-          </label>
-        </div>
-
-        <div class="voice-actions">
-          <span class="badge" id="route-status-badge">Checking...</span>
-          <canvas id="mic-canvas" width="70" height="22" aria-label="Microphone volume level"></canvas>
-          <button class="btn btn-icon" id="quiet-mode-btn" type="button" aria-label="Toggle Quiet Mode" title="Block proactive spoken notifications">
-            <i data-lucide="bell-off"></i><span class="badge" id="quiet-badge" style="display: none;">On</span>
-          </button>
-          <button class="btn btn-accent" id="mic-toggle-btn" type="button" aria-label="Connect or Disconnect Microphone">
-            <i data-lucide="mic"></i><span id="mic-btn-label">Connect Mic</span>
-          </button>
-          <button class="btn" id="ptt-btn" type="button" disabled aria-label="Hold to talk or commit speech" title="Commit speech or hold to talk in PTT mode">
-            <i data-lucide="radio"></i><span id="ptt-btn-label">Commit</span>
-          </button>
-          <button class="btn btn-danger btn-icon" id="interrupt-btn" type="button" disabled aria-label="Interrupt speech" title="Stop assistant speech">
-            <i data-lucide="square"></i>
-          </button>
-        </div>
-      </div>
+    <div class="header-status">
+      <span class="agent-status" id="agent-sprite" data-state="idle" role="status" aria-live="polite" aria-label="Agent idle">Idle</span>
+      <span class="badge" id="route-status-badge">Checking...</span>
+      <button class="btn" id="route-config-btn" type="button" aria-haspopup="dialog" aria-controls="route-config-dialog" title="Configure provider, model, and voice route">
+        <i data-lucide="sliders-horizontal"></i>
+        <span>Route</span>
+      </button>
     </div>
   </header>
 
-  <nav class="view-tabs" role="tablist" aria-label="Supervisor views">
-    <button class="view-tab" id="workspace-tab" type="button" role="tab" aria-selected="true" aria-controls="workspace-view" data-view="workspace">
-      <i data-lucide="layout-dashboard"></i><span>Workspace</span>
-    </button>
-    <button class="view-tab" id="tool-lab-tab" type="button" role="tab" aria-selected="false" aria-controls="tool-lab-view" data-view="tool-lab">
-      <i data-lucide="flask-conical"></i><span>Tool Lab</span>
-    </button>
-  </nav>
-
+  <div class="app-main">
   <div class="application-body" id="workspace-view" role="tabpanel" aria-labelledby="workspace-tab">
-    <!-- Workspace Body -->
-    <div class="workspace-body">
-    <!-- Left Sidebar: Work Areas -->
-    <aside class="sidebar">
-      <div class="section-header">
-        <span class="section-title">Work Areas</span>
-        <button class="btn" id="btn-new-area" type="button" aria-label="Register Work Area">
-          <i data-lucide="plus"></i>
-          <span>Add Area</span>
-        </button>
-      </div>
-      <div class="scroll-list" id="areas-list" role="region" aria-label="Registered Work Areas">
-        <div class="loading-spinner">Loading work areas...</div>
-      </div>
-    </aside>
-
-    <!-- Center Pane: Tasks -->
     <main class="center-pane">
+      <details class="areas-disclosure" id="areas-disclosure">
+        <summary class="areas-summary">Work Areas</summary>
+        <div class="areas-toolbar">
+          <button class="btn" id="btn-new-area" type="button" aria-label="Register Work Area">
+            <i data-lucide="plus"></i>
+            <span>Add Area</span>
+          </button>
+        </div>
+        <div class="scroll-list" id="areas-list" role="region" aria-label="Registered Work Areas">
+          <div class="loading-spinner">Loading work areas...</div>
+        </div>
+      </details>
+
       <div class="section-header">
         <span class="section-title">Active &amp; Supervised Tasks</span>
-        <div style="display: flex; gap: 6px;">
+        <div class="task-header-actions">
           <button class="btn btn-accent" id="btn-new-task" type="button" aria-label="Dispatch New Task">
             <i data-lucide="plus-circle"></i>
             <span>New Task</span>
@@ -1575,29 +500,27 @@
         <div class="loading-spinner">Loading tasks...</div>
       </div>
     </main>
-    </div>
 
-  <!-- Bottom: Conversation -->
     <section class="conversation-pane" aria-label="Supervisor Conversation">
-    <div class="section-header" style="padding: 4px 12px;">
-      <span class="section-title">Conversation &amp; Dispatch Log</span>
-      <div style="display: flex; align-items: center; gap: 8px;">
-        <span id="session-reset-notice" class="badge badge-warning" style="display: none;">Session Context Reset</span>
-        <button class="btn" id="btn-clear-chat" type="button" aria-label="Clear Chat History">
-          <i data-lucide="trash-2"></i>
-          <span>Clear Log</span>
+      <div class="section-header">
+        <span class="section-title">Conversation &amp; Dispatch Log</span>
+        <div class="conversation-actions">
+          <span id="session-reset-notice" class="badge badge-warning" style="display: none;">Session Context Reset</span>
+          <button class="btn" id="btn-clear-chat" type="button" aria-label="Clear Chat History">
+            <i data-lucide="trash-2"></i>
+            <span>Clear Log</span>
+          </button>
+        </div>
+      </div>
+      <div class="chat-messages" id="chat-messages" role="log" aria-live="polite"></div>
+      <div class="partial-line" id="partial-transcript" style="display: none;"></div>
+      <div class="chat-input-bar">
+        <input type="text" id="chat-input" placeholder="Type instructions or query task progress (e.g. 'What is the progress on PDF work?')..." aria-label="Typed message input">
+        <button class="btn btn-accent" id="btn-send-chat" type="button" aria-label="Send typed message">
+          <i data-lucide="send"></i>
+          <span>Send</span>
         </button>
       </div>
-    </div>
-    <div class="chat-messages" id="chat-messages" role="log" aria-live="polite"></div>
-    <div class="partial-line" id="partial-transcript" style="display: none;"></div>
-    <div class="chat-input-bar">
-      <input type="text" id="chat-input" placeholder="Type instructions or query task progress (e.g. 'What is the progress on PDF work?')..." aria-label="Typed message input">
-      <button class="btn btn-accent" id="btn-send-chat" type="button" aria-label="Send typed message">
-        <i data-lucide="send"></i>
-        <span>Send</span>
-      </button>
-    </div>
     </section>
   </div>
 
@@ -1629,6 +552,7 @@
       </div>
     </div>
   </section>
+  </div>
 
   <!-- Work Area Registration/Edit Modal -->
   <dialog id="area-dialog" aria-labelledby="area-dialog-title">
@@ -1684,17 +608,20 @@
         <label class="control-label" for="task-objective-input">Objective &amp; Constraints *</label>
         <textarea id="task-objective-input" required rows="4" placeholder="Describe the goal clearly..."></textarea>
       </div>
-      <div class="form-group">
-        <label class="control-label" for="task-model-input">Copilot Model</label>
-        <input type="text" id="task-model-input" value="gpt-5.6-sol" placeholder="gpt-5.6-sol">
-      </div>
-      <div class="form-group">
-        <label class="control-label" for="task-context-select">Context</label>
-        <select id="task-context-select">
-          <option value="default">Default</option>
-          <option value="long_context" selected>Long context</option>
-        </select>
-      </div>
+      <details class="advanced-disclosure">
+        <summary>Advanced</summary>
+        <div class="form-group">
+          <label class="control-label" for="task-model-input">Copilot Model</label>
+          <input type="text" id="task-model-input" value="gpt-5.6-sol" placeholder="gpt-5.6-sol">
+        </div>
+        <div class="form-group">
+          <label class="control-label" for="task-context-select">Context</label>
+          <select id="task-context-select">
+            <option value="default">Default</option>
+            <option value="long_context" selected>Long context</option>
+          </select>
+        </div>
+      </details>
       <div class="dialog-actions">
         <button type="button" class="btn" id="task-cancel-btn">Cancel</button>
         <button type="submit" class="btn btn-accent" id="task-dispatch-btn">Dispatch</button>
@@ -1708,7 +635,7 @@
       <span id="detail-dialog-title">Task Details</span>
       <button type="button" class="btn" id="detail-dialog-close" aria-label="Close dialog">✕</button>
     </div>
-    <div id="detail-content" style="display: flex; flex-direction: column; gap: 8px; font-size: 12px; max-height: 60vh; overflow-y: auto;"></div>
+    <div id="detail-content" class="detail-content"></div>
     <div class="dialog-actions">
       <button type="button" class="btn btn-accent" id="detail-open-worktree-btn" style="display: none;">
         <i data-lucide="external-link"></i>
@@ -1718,9 +645,65 @@
     </div>
   </dialog>
 
-  <!-- Lucide icons from local vendor -->
+  <dialog id="route-config-dialog" aria-labelledby="route-config-title">
+    <form id="route-config-form" method="dialog">
+      <div class="dialog-header">
+        <span id="route-config-title">Route configuration</span>
+        <button type="button" class="btn" id="route-config-close" aria-label="Close dialog">✕</button>
+      </div>
+      <div class="form-group">
+        <label class="control-label" for="provider-select">Provider</label>
+        <select id="provider-select" aria-label="LLM Provider"></select>
+      </div>
+      <div class="form-group">
+        <label class="control-label" id="model-label" for="model-input">Model</label>
+        <input type="text" id="model-input" aria-label="Text or cascade model identifier" placeholder="Text model">
+      </div>
+      <div class="form-group">
+        <label class="control-label" for="voice-mode-select">Voice</label>
+        <select id="voice-mode-select" aria-label="Voice runtime mode"></select>
+      </div>
+      <div class="form-row-checkbox">
+        <input type="checkbox" id="allow-cloud-opt" aria-label="Allow Cloud Hybrid">
+        <label for="allow-cloud-opt">Allow Cloud Hybrid</label>
+      </div>
+      <div class="dialog-actions">
+        <button type="submit" class="btn btn-accent" id="route-config-done">Done</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="voice-strip" role="region" aria-label="Voice controls">
+    <div class="voice-strip-toggles">
+      <label class="toggle-control" title="Mute microphone input">
+        <input type="checkbox" id="mute-mic-opt" aria-label="Mute microphone">
+        <span class="toggle-track" aria-hidden="true"></span><span>Mute</span>
+      </label>
+      <label class="toggle-control" title="Hold the button or Spacebar while speaking">
+        <input type="checkbox" id="ptt-mode-opt" aria-label="Enable Push To Talk mode">
+        <span class="toggle-track" aria-hidden="true"></span><span>PTT</span>
+      </label>
+    </div>
+    <canvas id="mic-canvas" width="70" height="22" aria-label="Microphone volume level"></canvas>
+    <div class="voice-actions">
+      <button class="btn btn-icon" id="quiet-mode-btn" type="button" aria-label="Toggle Quiet Mode" title="Block proactive spoken notifications">
+        <i data-lucide="bell-off"></i><span class="badge" id="quiet-badge" style="display: none;">On</span>
+      </button>
+      <button class="btn btn-accent" id="mic-toggle-btn" type="button" aria-label="Connect or Disconnect Microphone">
+        <i data-lucide="mic"></i><span id="mic-btn-label">Connect Mic</span>
+      </button>
+      <button class="btn" id="ptt-btn" type="button" disabled aria-label="Hold to talk or commit speech" title="Commit speech or hold to talk in PTT mode">
+        <i data-lucide="radio"></i><span id="ptt-btn-label">Commit</span>
+      </button>
+      <button class="btn btn-danger btn-icon" id="interrupt-btn" type="button" disabled aria-label="Interrupt speech" title="Stop assistant speech">
+        <i data-lucide="square"></i>
+      </button>
+    </div>
+  </div>
+
+  <script src="/vendor/marked.js"></script>
+  <script src="/vendor/dompurify.js"></script>
   <script src="/vendor/lucide.js"></script>
-  <!-- Application script -->
   <script type="module" src="app.js"></script>
 </body>
 </html>

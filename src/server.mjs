@@ -76,7 +76,12 @@ const server = http.createServer(async (request, response) => {
     }
     if (request.method !== 'GET') return json(response, 404, { error: 'Not found' });
     const files = { '/': 'index.html', '/index.html': 'index.html', '/app.js': 'app.js', '/capture-worklet.js': 'capture-worklet.js' };
-    const file = url.pathname === '/vendor/lucide.js' ? path.join(root, 'node_modules', 'lucide', 'dist', 'umd', 'lucide.js') : files[url.pathname] && path.join(publicDir, files[url.pathname]);
+    const vendorFiles = {
+      '/vendor/dompurify.js': path.join(root, 'node_modules', 'dompurify', 'dist', 'purify.min.js'),
+      '/vendor/lucide.js': path.join(root, 'node_modules', 'lucide', 'dist', 'umd', 'lucide.js'),
+      '/vendor/marked.js': path.join(root, 'node_modules', 'marked', 'lib', 'marked.umd.js'),
+    };
+    const file = vendorFiles[url.pathname] || (files[url.pathname] && path.join(publicDir, files[url.pathname]));
     if (!file || !existsSync(file)) return json(response, 404, { error: 'Not found' });
     response.writeHead(200, { 'Content-Type': file.endsWith('.html') ? 'text/html; charset=utf-8' : 'text/javascript; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Length': statSync(file).size });
     createReadStream(file).pipe(response);

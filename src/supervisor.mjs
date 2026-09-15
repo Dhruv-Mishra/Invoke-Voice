@@ -119,8 +119,7 @@ export class Supervisor extends EventEmitter {
     this.dispatch(task, { ...area }).catch(error => {
       task.state = 'agent_failed';
       task.error = error.message;
-      task.lastObservedAt = this.now();
-      task.observations.push({ id: randomUUID(), at: this.now(), kind: 'error', summary: error.message.slice(0, 1800), source: 'copilot-cli' });
+      this.appendObservation(task, { id: randomUUID(), at: this.now(), kind: 'error', summary: error.message.slice(0, 1800), source: 'copilot-cli' });
       this.save();
     });
     return { taskId: task.id, state: 'dispatching' };
@@ -142,11 +141,15 @@ export class Supervisor extends EventEmitter {
 
   recordAgentEvent(task, event) {
     const observation = { id: randomUUID(), at: this.now(), kind: event.kind || 'progress', summary: String(event.summary || 'Copilot progress').slice(0, 1800), source: 'copilot-cli' };
-    task.observations.push(observation);
-    task.observations = task.observations.slice(-100);
-    task.lastObservedAt = this.now();
+    this.appendObservation(task, observation);
     if (task.state !== 'result_ready') task.state = event.kind === 'result_ready' ? 'result_ready' : 'running';
     this.save();
+  }
+
+  appendObservation(task, observation) {
+    task.observations.push(observation);
+    task.observations = task.observations.slice(-100);
+    task.lastObservedAt = observation.at;
   }
 
   observe(event) {
@@ -163,9 +166,7 @@ export class Supervisor extends EventEmitter {
     }
     if (event.sessionId !== task.sessionId) return false;
     const observation = { id: event.id || randomUUID(), at: this.now(), kind: event.kind, summary: String(event.summary || event.kind).slice(0, 1800), source: event.source || 'vscode-hook' };
-    task.observations.push(observation);
-    task.observations = task.observations.slice(-100);
-    task.lastObservedAt = this.now();
+    this.appendObservation(task, observation);
     if (event.kind === 'UserPromptSubmit' || !['needs_input', 'result_ready'].includes(task.state)) task.state = event.kind === 'Stop' ? 'agent_stopped' : 'running';
     if (['needs_input', 'result_ready'].includes(event.kind)) task.state = event.kind;
     if (event.kind === 'result_ready') task.result = observation.summary;

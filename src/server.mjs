@@ -33,7 +33,7 @@ async function body(request) {
 }
 function config() {
   return { defaults: { provider: process.env.DEFAULT_PROVIDER || 'gemini', voiceMode: 'gemini-live' }, providers: providerProfiles(), voiceModes: [
-    { id: 'gemini-live', label: 'Gemini Live', configured: Boolean(process.env.GEMINI_API_KEY), model: process.env.GEMINI_LIVE_MODEL || 'gemini-2.5-flash-native-audio-preview-12-2025' },
+    { id: 'gemini-live', label: 'Gemini Live', configured: Boolean(process.env.GEMINI_API_KEY), model: process.env.GEMINI_LIVE_MODEL || 'gemini-3.1-flash-live-preview' },
     { id: 'openai-realtime', label: 'OpenAI Realtime', configured: Boolean(process.env.OPENAI_API_KEY), model: process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime' },
     { id: 'local', label: 'Moonshine + Ling + Kokoro', configured: localConfiguration().configured },
   ], local: localConfiguration(), dataDir };

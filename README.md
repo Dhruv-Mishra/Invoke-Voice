@@ -1,74 +1,74 @@
-# Voice Work Supervisor (POC)
+# Voice Work Supervisor
 
-Voice supervisor prototype combining live voice interaction (Gemini Live, OpenAI Realtime, or local offline pipeline) with workspace observation, git-aware work area tracking, and VS Code terminal bridge integration.
+Windows prototype for talking to a work supervisor, starting coding tasks in isolated worktrees, and reading passive progress observations.
 
-> **Verification Notice**: Cloud providers and live voice cannot be verified without active API credentials or downloaded local weights. No substitute models or automatic downloads are run by default.
+## Install
 
-## Quickstart
+Requires Node.js 22 or newer.
 
 ```powershell
-# From the workspace root:
 cd voice-supervisor
-
-# 1. Install Node dependencies
 npm install
+Copy-Item example.env .env   # first setup only; do not overwrite a configured .env
+```
 
-# 2. Configure environment
-Copy-Item example.env .env
-# Edit .env and enter API secrets privately
+Put secrets only in `.env`. The browser never receives provider keys.
 
-# 3. Launch supervisor
+## Gemini Live
+
+Set `GEMINI_API_KEY` in `.env`. The configured voice model is `gemini-3.1-flash-live-preview`.
+
+```powershell
 npm start
-# Or launch the secure Electron desktop wrapper:
-npm run desktop
 ```
-Open the URL printed at startup, normally `http://127.0.0.1:4317`; an occupied port advances to the next available one. Restart the app after changing environment settings. Run one companion instance per data directory.
 
-## Supervision & Work Areas
+Open the printed loopback URL, normally `http://127.0.0.1:4317`, select **Gemini Live**, and connect the microphone. `npm run desktop` starts the same hosted flow in Electron.
 
-1. **Register Work Area**: Register a clean git-repository-rooted directory via the UI (`POST /api/areas`).
-2. **Hook Preview & Observation**: Enable VS Code agent hooks (`chat.hooks.enabled`) if supported by your build and organizational policy. Dispatch creates an isolated worktree and adds its own hook file without replacing existing hooks. Avoid changing the active VS Code window during dispatch. Missing workspace/session acknowledgement leaves the task unconfirmed; no automatic retry.
-3. **Safety Boundaries**: Observations are passive. A `Stop` status indicates halted execution, not task success. All generated reports are unverified; the supervisor never performs automatic git merges or commits.
+## Local Voice
 
-## Local Offline Voice & LLM Setup
+The local route is Moonshine Streaming Tiny through CrispASR, Ling through llama.cpp, and Kokoro-82M through Python. A final transcript is committed after 1 second of silence. The models stay resident while the app runs.
 
-To run locally with zero cloud dependencies:
+Expected assets:
 
-### 1. Download Local Models & CrispASR Runtime
+- `../LocalVoiceStack/LLMs/Ling-3.0-tiny-abliterated-APEX-I-Compact.gguf`
+- `%LOCALAPPDATA%\VoiceSupervisor\models\moonshine-streaming-tiny-q4_k.gguf`
+- `%LOCALAPPDATA%\VoiceSupervisor\models\tokenizer.bin`
+- `%LOCALAPPDATA%\VoiceSupervisor\models\ggml-silero-v6.2.0.bin`
+- `%LOCALAPPDATA%\VoiceSupervisor\runtimes\crispasr.exe`
+
+Provision missing runtimes or Moonshine support files:
+
 ```powershell
-node scripts/models.mjs runtimes    # CrispASR Windows CPU streaming binary
-node scripts/models.mjs moonshine   # Moonshine Q4_K, tokenizer, and Silero VAD v6.2.0
-node scripts/models.mjs ling        # Ling-3.0-Tiny APEX-I-Compact GGUF (~3.99GB)
-# Or download both model packages at once:
-node scripts/models.mjs all
-```
-Files are stored under `%LOCALAPPDATA%\VoiceSupervisor\` outside OneDrive to avoid file lock and sync overhead.
+npm run models -- runtimes
+npm run models -- moonshine
+winget install --exact --id ggml.llamacpp
+winget install --exact --id Python.Python.3.12
 
-### 2. Local LLM Server (llama.cpp b10470+)
-Launch `llama-server` on loopback:
+py -3.12 -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements-local.txt
+```
+
+Kokoro downloads its official weights and voice on first use. Validate Ling once, then start both the LLM server and supervisor:
+
 ```powershell
-llama-server -m "$env:LOCALAPPDATA\VoiceSupervisor\models\Ling-3.0-tiny-abliterated-APEX-I-Compact.gguf" `
-  --port 8081 --host 127.0.0.1 -c 4096 -b 256 -t 4 --alias ling-local --jinja
+npm run local:check
+npm run local
 ```
 
-### 3. Kokoro-82M TTS Worker (Python 3.11)
-```powershell
-py -3.11 -m venv .venv
-.venv\Scripts\Activate.ps1
-pip install -r requirements-local.txt
+Open the printed URL, select **Local** as the text provider and **Moonshine + Ling + Kokoro** as voice mode, then connect the microphone. `LLAMA_THREADS` controls Ling; `LOCAL_THREADS` controls STT/TTS. The defaults reserve CPU capacity for VS Code and builds.
 
-# Warmup worker (downloads official hexgrad/Kokoro-82M weights to Hugging Face cache on first run):
-"" | python scripts/kokoro_worker.py
-```
-Verify that `{"type":"ready"}` is output. Once cached, Kokoro runs completely offline. In `.env`, update:
-```env
-KOKORO_READY=1
-PYTHON_BIN=.venv\Scripts\python.exe
-```
-The adapter sends `enable_thinking: false` on every local request. Select **Local** as text provider and **Moonshine + Ling + Kokoro** as voice mode. Hybrid cloud text requires explicit consent. The supplied Ling checkpoint is third-party modified. The supervisor validates destinations; worker permissions and approvals remain in VS Code. Prompt grants and worktrees are not security sandboxes. Set `HF_HUB_OFFLINE=1` after warm-up for offline model loading. CrispASR uses rolling windows; full-loop latency still needs measurement.
+After Kokoro is cached, set `HF_HUB_OFFLINE=1` for an offline-only voice startup. Cloud coding agents and Kusto still require network access.
 
-Current checks: three focused automated tests, browser/API smoke checks, and exact Moonshine/Silero streaming model loading. Ling inference, Kokoro synthesis, hosted voice and a real VS Code task/session roundtrip remain unverified. Python 3.11 is recommended; this machine currently has only 3.13. No keys are stored by the UI.
+## Coding Tasks
 
-## Security & Architecture
-- **Loopback Enforcement**: Local HTTP, WebSocket, and LLM endpoints strictly require `127.0.0.1` or `localhost`.
-- **Electron Security**: Runs with `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`, same-origin navigation enforcement, and microphone-only permissions.
+1. Enable VS Code agent hooks with `chat.hooks.enabled` if the installed build and policy permit it.
+2. Register a Git repository root as a work area in the supervisor.
+3. Start work by its registered name. The supervisor creates a worktree, invokes `code chat`, and binds progress only after a matching hook acknowledgement.
+
+Status reads do not prompt or interrupt the coding agent. `Stop` is not treated as success, and missing observations become stale/unknown.
+
+The VS Code bridge is prototype-grade: the CLI does not return a native chat session ID or completion result. Copilot CLI/ACP is the preferred next adapter because it supports explicit session IDs, resume, JSONL output, and process ownership. Playwright UI automation should be used only if both native CLI routes fail because it can steal focus and is sensitive to UI changes.
+
+## Verified Here
+
+On 2026-09-15: Gemini 3.1 Live connected and returned 24 kHz audio; CrispASR and Kokoro reached ready together; Kokoro generated PCM; llama.cpp b10970 loaded Ling and completed a request; all three focused Node checks passed. A real VS Code coding-task roundtrip has not yet been run.

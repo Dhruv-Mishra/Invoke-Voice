@@ -8,6 +8,8 @@
   },
   "scripts": {
     "start": "node --env-file-if-exists=.env src/server.mjs",
+    "local": "node --env-file-if-exists=.env scripts/start-local.mjs",
+    "local:check": "node --env-file-if-exists=.env scripts/start-local.mjs --check",
     "test": "node --test test/*.test.mjs",
     "desktop": "electron desktop.cjs",
     "models": "node --env-file-if-exists=.env scripts/models.mjs"

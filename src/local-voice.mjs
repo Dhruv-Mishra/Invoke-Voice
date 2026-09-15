@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { streamReply } from './llm.mjs';
 
 const worker = fileURLToPath(new URL('../scripts/kokoro_worker.py', import.meta.url));
+const bundledPython = fileURLToPath(new URL('../.venv/Scripts/python.exe', import.meta.url));
 export function localConfiguration(env = process.env) {
   const home = path.join(env.LOCALAPPDATA || path.join(os.homedir(), '.local', 'share'), 'VoiceSupervisor');
   const modelDir = env.MODEL_DIR || path.join(home, 'models');
@@ -16,7 +17,9 @@ export function localConfiguration(env = process.env) {
   const moonshineModel = env.MOONSHINE_MODEL || path.join(modelDir, 'moonshine-streaming-tiny-q4_k.gguf');
   const vadModel = env.VAD_MODEL || path.join(modelDir, 'ggml-silero-v6.2.0.bin');
   const sttConfigured = [crispasrBin, moonshineModel, path.join(path.dirname(moonshineModel), 'tokenizer.bin'), vadModel].every(existsSync);
-  return { configured: sttConfigured && env.KOKORO_READY === '1', sttConfigured, ttsConfigured: env.KOKORO_READY === '1', crispasrBin, moonshineModel, vadModel, model: env.LOCAL_LLM_MODEL || 'ling-local', sttStreamingArchitecture: 'CrispASR rolling-window streaming' };
+  const pythonBin = (!env.PYTHON_BIN || env.PYTHON_BIN === 'python') && existsSync(bundledPython) ? bundledPython : (env.PYTHON_BIN || 'python');
+  const ttsConfigured = existsSync(pythonBin) || env.KOKORO_READY === '1';
+  return { configured: sttConfigured && ttsConfigured, sttConfigured, ttsConfigured, pythonBin, crispasrBin, moonshineModel, vadModel, model: env.LOCAL_LLM_MODEL || 'ling-local', sttStreamingArchitecture: 'CrispASR rolling-window streaming' };
 }
 
 export async function createLocalVoice({ send, callTool, provider = 'local', model, allowCloud = false, env = process.env }) {
@@ -86,7 +89,7 @@ export async function createLocalVoice({ send, callTool, provider = 'local', mod
     finally { if (turn === token) generating = false; }
   }
   try {
-    tts = spawn(env.PYTHON_BIN || 'python', ['-u', worker], { windowsHide: true, env: { ...env, LOCAL_THREADS: env.LOCAL_THREADS || '4' }, stdio: ['pipe', 'pipe', 'pipe'] });
+    tts = spawn(config.pythonBin, ['-u', worker], { windowsHide: true, env: { ...env, LOCAL_THREADS: env.LOCAL_THREADS || '4' }, stdio: ['pipe', 'pipe', 'pipe'] });
     let diagnostic = '';
     tts.stderr.on('data', chunk => { diagnostic = (diagnostic + chunk.toString()).slice(-1000); });
     tts.stdin.on('error', () => fail('Kokoro input pipe closed'));
@@ -109,7 +112,7 @@ export async function createLocalVoice({ send, callTool, provider = 'local', mod
       });
     });
     tts.on('exit', () => { if (!closed) fail('Kokoro stopped unexpectedly'); });
-    stt = spawn(config.crispasrBin, ['--backend', 'moonshine-streaming', '-m', config.moonshineModel, '--stream', '--stream-json', '--vad', '--vad-model', config.vadModel, '--stream-step', env.CRISPASR_STREAM_STEP_MS || '500', '--stream-length', '10000', '--stream-final-on-silence-ms', env.END_SILENCE_MS || '800', '-t', env.LOCAL_THREADS || '4'], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+    stt = spawn(config.crispasrBin, ['--backend', 'moonshine-streaming', '-m', config.moonshineModel, '--stream', '--stream-json', '--vad', '--vad-model', config.vadModel, '--stream-step', env.CRISPASR_STREAM_STEP_MS || '400', '--stream-length', '10000', '--stream-final-on-silence-ms', env.END_SILENCE_MS || '1000', '-t', env.LOCAL_THREADS || '4'], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     let sttDiagnostic = '';
     stt.stderr.on('data', chunk => { sttDiagnostic = (sttDiagnostic + chunk.toString()).slice(-1000); });
     stt.on('error', error => fail(`CrispASR failed: ${error.message}`));

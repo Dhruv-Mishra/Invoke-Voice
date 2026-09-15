@@ -55,6 +55,7 @@ const pttBtnLabel = document.getElementById('ptt-btn-label');
 const interruptBtn = document.getElementById('interrupt-btn');
 const routeStatusBadge = document.getElementById('route-status-badge');
 const sessionResetNotice = document.getElementById('session-reset-notice');
+const agentSprite = document.getElementById('agent-sprite');
 
 const areasList = document.getElementById('areas-list');
 const btnNewArea = document.getElementById('btn-new-area');
@@ -78,6 +79,8 @@ const newTaskDialog = document.getElementById('new-task-dialog');
 const newTaskForm = document.getElementById('new-task-form');
 const taskAreaSelect = document.getElementById('task-area-select');
 const taskObjectiveInput = document.getElementById('task-objective-input');
+const taskModelInput = document.getElementById('task-model-input');
+const taskContextSelect = document.getElementById('task-context-select');
 const taskCancelBtn = document.getElementById('task-cancel-btn');
 const taskDialogClose = document.getElementById('task-dialog-close');
 
@@ -93,6 +96,115 @@ const chatInput = document.getElementById('chat-input');
 const btnSendChat = document.getElementById('btn-send-chat');
 const btnClearChat = document.getElementById('btn-clear-chat');
 
+const viewTabs = [...document.querySelectorAll('.view-tab')];
+const workspaceView = document.getElementById('workspace-view');
+const toolLabView = document.getElementById('tool-lab-view');
+const toolCount = document.getElementById('tool-count');
+const toolList = document.getElementById('tool-list');
+const toolName = document.getElementById('tool-name');
+const toolDescription = document.getElementById('tool-description');
+const toolKindBadge = document.getElementById('tool-kind-badge');
+const toolForm = document.getElementById('tool-form');
+const toolRunStatus = document.getElementById('tool-run-status');
+const toolResult = document.getElementById('tool-result');
+let availableTools = [];
+let selectedTool = null;
+
+const selectShells = new Set();
+function closeSelectShells(except = null) {
+  for (const shell of selectShells) if (shell !== except) shell.classList.remove('open');
+}
+
+function enhanceSelect(select) {
+  if (select.dataset.enhanced === 'true') return;
+  select.dataset.enhanced = 'true';
+  const shell = document.createElement('div');
+  shell.className = 'select-shell';
+  select.before(shell);
+  shell.appendChild(select);
+  select.classList.add('select-native');
+
+  const trigger = document.createElement('button');
+  trigger.type = 'button';
+  trigger.className = 'select-trigger';
+  trigger.setAttribute('aria-haspopup', 'listbox');
+  trigger.setAttribute('aria-expanded', 'false');
+  const menu = document.createElement('div');
+  menu.className = 'select-menu';
+  menu.setAttribute('role', 'listbox');
+  shell.append(trigger, menu);
+  selectShells.add(shell);
+
+  const close = () => {
+    shell.classList.remove('open');
+    trigger.setAttribute('aria-expanded', 'false');
+  };
+  const sync = () => {
+    const selected = select.selectedOptions[0];
+    trigger.textContent = selected?.textContent || 'Select';
+    trigger.disabled = select.disabled;
+    trigger.setAttribute('aria-label', select.getAttribute('aria-label') || selected?.textContent || 'Select');
+    menu.replaceChildren();
+    for (const option of select.options) {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = `select-option${option.selected ? ' selected' : ''}`;
+      item.textContent = option.textContent;
+      item.disabled = option.disabled;
+      item.setAttribute('role', 'option');
+      item.setAttribute('aria-selected', String(option.selected));
+      item.addEventListener('click', () => {
+        select.value = option.value;
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+        close();
+        trigger.focus();
+      });
+      menu.appendChild(item);
+    }
+  };
+
+  trigger.addEventListener('click', () => {
+    const opening = !shell.classList.contains('open');
+    closeSelectShells(shell);
+    shell.classList.toggle('open', opening);
+    trigger.setAttribute('aria-expanded', String(opening));
+  });
+  trigger.addEventListener('keydown', event => {
+    if (event.key === 'Escape') { close(); return; }
+    if (['ArrowDown', 'Enter', ' '].includes(event.key) && !shell.classList.contains('open')) {
+      event.preventDefault();
+      shell.classList.add('open');
+      trigger.setAttribute('aria-expanded', 'true');
+      menu.querySelector('.selected, .select-option:not(:disabled)')?.focus();
+    }
+  });
+  menu.addEventListener('keydown', event => {
+    if (event.key === 'Escape') { close(); trigger.focus(); return; }
+    if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return;
+    event.preventDefault();
+    const options = [...menu.querySelectorAll('.select-option:not(:disabled)')];
+    const current = options.indexOf(document.activeElement);
+    const next = event.key === 'ArrowDown' ? (current + 1) % options.length : (current - 1 + options.length) % options.length;
+    options[next]?.focus();
+  });
+  select.addEventListener('change', sync);
+  new MutationObserver(sync).observe(select, { childList: true, subtree: true, attributes: true });
+  sync();
+}
+
+document.querySelectorAll('select').forEach(enhanceSelect);
+document.addEventListener('click', event => {
+  if (![...selectShells].some(shell => shell.contains(event.target))) closeSelectShells();
+});
+
+function setAgentState(state) {
+  if (!agentSprite) return;
+  const next = ['idle', 'connecting', 'listening', 'thinking', 'speaking'].includes(state) ? state : 'idle';
+  agentSprite.dataset.state = next;
+  agentSprite.setAttribute('aria-label', `Agent ${next}`);
+  agentSprite.title = `Agent ${next}`;
+}
+
 // Safe icon refreshment
 function updateIcons() {
   if (window.lucide && typeof window.lucide.createIcons === 'function') {
@@ -100,6 +212,29 @@ function updateIcons() {
   }
 }
 updateIcons();
+
+function activateView(viewName) {
+  const isToolLab = viewName === 'tool-lab';
+  workspaceView.hidden = isToolLab;
+  toolLabView.hidden = !isToolLab;
+  for (const tab of viewTabs) {
+    const selected = tab.dataset.view === viewName;
+    tab.setAttribute('aria-selected', String(selected));
+    tab.tabIndex = selected ? 0 : -1;
+  }
+}
+
+viewTabs.forEach((tab, index) => {
+  tab.addEventListener('click', () => activateView(tab.dataset.view));
+  tab.addEventListener('keydown', event => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    let nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? viewTabs.length - 1 : index + (event.key === 'ArrowRight' ? 1 : -1);
+    nextIndex = (nextIndex + viewTabs.length) % viewTabs.length;
+    viewTabs[nextIndex].focus();
+    activateView(viewTabs[nextIndex].dataset.view);
+  });
+});
 
 // Microphone Level Visualizer
 const canvasCtx = micCanvas.getContext('2d');
@@ -175,9 +310,11 @@ function updateRouteReadiness() {
     if (isServerReady) {
       routeStatusBadge.textContent = 'Voice Live';
       routeStatusBadge.className = 'badge badge-success';
+      if (!isVoiceThinking && activeSources.length === 0) setAgentState('listening');
     } else {
       routeStatusBadge.textContent = 'Connecting...';
       routeStatusBadge.className = 'badge badge-warning';
+      setAgentState('connecting');
     }
   } else {
     routeStatusBadge.textContent = status.label;
@@ -188,13 +325,14 @@ function updateRouteReadiness() {
       routeStatusBadge.className = 'badge badge-warning';
       micToggleBtn.disabled = true;
     }
+    setAgentState('idle');
   }
 
   const mode = voiceModeSelect?.value;
   const vm = appConfig?.voiceModes?.find(v => v.id === mode);
   const isIntegrated = isIntegratedVoiceMode(mode);
   if (modelLabel) {
-    modelLabel.textContent = isIntegrated ? 'Text Model' : 'Text/Cascade Model';
+    modelLabel.textContent = 'Model';
   }
   if (isIntegrated && vm?.model) {
     modelInput.title = `Text chat model (${providerSelect.value}). Realtime voice uses env model: ${vm.model}`;
@@ -262,10 +400,12 @@ function scheduleAudioBuffer(buffer, token) {
   source.buffer = buffer;
   source.connect(ctx.destination);
   source.start(nextPlayTime);
+  setAgentState('speaking');
   activeSources.push(source);
   source.onended = () => {
     const idx = activeSources.indexOf(source);
     if (idx !== -1) activeSources.splice(idx, 1);
+    if (isServerReady && activeSources.length === 0 && !isVoiceThinking) setAgentState('listening');
   };
   nextPlayTime += buffer.duration;
 }
@@ -405,6 +545,7 @@ async function startVoiceSession() {
     micToggleBtn.className = 'btn btn-danger';
     routeStatusBadge.textContent = 'Connecting...';
     routeStatusBadge.className = 'badge badge-warning';
+    setAgentState('connecting');
 
     audioContext = new (window.AudioContext || window.webkitAudioContext)();
     if (audioContext.state === 'suspended') {
@@ -485,13 +626,16 @@ async function startVoiceSession() {
           interruptBtn.disabled = false;
           routeStatusBadge.textContent = 'Voice Live';
           routeStatusBadge.className = 'badge badge-success';
+          setAgentState('listening');
           sessionResetNotice.style.display = 'none';
           appendMessage('system', 'Voice session initialized & ready.');
         } else if (data.type === 'audio') {
           isVoiceThinking = false;
+          setAgentState('speaking');
           queueAudioChunk(data, playbackGeneration);
         } else if (data.type === 'transcript') {
-          if (data.role === 'user' && !data.partial) isVoiceThinking = true;
+          if (data.role === 'user' && !data.partial) { isVoiceThinking = true; setAgentState('thinking'); }
+          else if (data.role === 'user') setAgentState('listening');
           if (data.partial) {
             partialTranscript.style.display = 'block';
             partialTranscript.textContent = `${data.role}: ${data.text}...`;
@@ -502,6 +646,7 @@ async function startVoiceSession() {
           }
         } else if (data.type === 'interrupted') {
           isVoiceThinking = false;
+          setAgentState('listening');
           clearPlayback();
           partialTranscript.style.display = 'none';
           appendMessage('system', '[Speech interrupted]');
@@ -510,6 +655,7 @@ async function startVoiceSession() {
           appendMessage('tool', `Tool [${data.name}]: ${resultStr}`);
         } else if (data.type === 'state') {
           isVoiceThinking = data.state === 'thinking';
+          setAgentState(data.state === 'thinking' ? 'thinking' : 'listening');
           routeStatusBadge.textContent = `Voice: ${data.state}`;
         } else if (data.type === 'error') {
           appendMessage('system', `Voice Error: ${data.message || 'Unknown error'}`);
@@ -550,6 +696,7 @@ function stopVoiceSession() {
   isServerReady = false;
   isCapturing = false;
   isPttHeld = false;
+  setAgentState('idle');
   if (pttBtn) pttBtn.classList.remove('btn-accent');
 
   if (voiceSocket) {
@@ -790,8 +937,17 @@ function renderAreas() {
   if (!appState.areas || appState.areas.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'empty-state';
-    empty.textContent = 'No work areas registered.';
+    const icon = document.createElement('i');
+    icon.setAttribute('data-lucide', 'folder-kanban');
+    const title = document.createElement('span');
+    title.className = 'empty-title';
+    title.textContent = 'No work areas';
+    const detail = document.createElement('span');
+    detail.className = 'empty-detail';
+    detail.textContent = 'Repositories you supervise appear here.';
+    empty.append(icon, title, detail);
     areasList.appendChild(empty);
+    updateIcons();
     return;
   }
 
@@ -939,8 +1095,17 @@ function renderTasks() {
   if (!appState.tasks || appState.tasks.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'empty-state';
-    empty.textContent = 'No tasks dispatched.';
+    const icon = document.createElement('i');
+    icon.setAttribute('data-lucide', 'circle-dashed');
+    const title = document.createElement('span');
+    title.className = 'empty-title';
+    title.textContent = 'No tasks in flight';
+    const detail = document.createElement('span');
+    detail.className = 'empty-detail';
+    detail.textContent = 'Agent sessions and progress appear here.';
+    empty.append(icon, title, detail);
     tasksList.appendChild(empty);
+    updateIcons();
     return;
   }
 
@@ -965,7 +1130,7 @@ function renderTasks() {
     titleGroup.appendChild(titleSpan);
 
     const stateBadge = document.createElement('span');
-    stateBadge.className = `badge badge-${task.state === 'completed' ? 'success' : task.state === 'failed' ? 'danger' : 'accent'}`;
+    stateBadge.className = `badge badge-${['completed', 'result_ready'].includes(task.state) ? 'success' : ['failed', 'agent_failed'].includes(task.state) ? 'danger' : 'accent'}`;
     stateBadge.textContent = task.state || 'unknown';
     titleGroup.appendChild(stateBadge);
 
@@ -1082,6 +1247,8 @@ function showTaskDetail(task) {
   addField('Title', task.title);
   addField('Task ID', task.id, true);
   addField('State', task.state);
+  addField('Model', task.model);
+  addField('Context', task.context);
   addField('Stale', task.stale ? 'Yes' : 'No');
   addField('Worktree', task.worktree, true);
   addField('Session ID', task.sessionId, true);
@@ -1137,19 +1304,188 @@ detailCloseBtn.addEventListener('click', () => taskDetailDialog.close());
 detailDialogClose.addEventListener('click', () => taskDetailDialog.close());
 
 // Tools API Calls
+async function callSupervisorTool(name, args = {}, requestId = crypto.randomUUID()) {
+  const response = await fetch('/api/tools', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, args, requestId })
+  });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+  return result;
+}
+
+const actionTools = new Set(['start_work', 'open_work', 'invoke_vscode']);
+
+function toolLabel(name) {
+  return name.replaceAll('_', ' ').replace(/\b\w/g, character => character.toUpperCase());
+}
+
+function addToolChoice(select, value, label) {
+  const option = document.createElement('option');
+  option.value = value;
+  option.textContent = label;
+  select.appendChild(option);
+}
+
+function createToolField(propertyName, schema, required) {
+  const field = document.createElement('div');
+  field.className = 'tool-field';
+  const id = `tool-arg-${propertyName}`;
+  const label = document.createElement('label');
+  label.className = 'tool-field-label';
+  label.htmlFor = id;
+  label.textContent = toolLabel(propertyName);
+  if (required) {
+    const marker = document.createElement('span');
+    marker.className = 'tool-field-required';
+    marker.textContent = ' *';
+    label.appendChild(marker);
+  }
+
+  let control;
+  if (propertyName === 'areaId' && appState.areas.length) {
+    control = document.createElement('select');
+    for (const area of appState.areas) addToolChoice(control, area.id, `${area.name} / ${area.id.slice(0, 8)}`);
+  } else if (propertyName === 'taskId' && appState.tasks.length) {
+    control = document.createElement('select');
+    for (const task of [...appState.tasks].reverse()) addToolChoice(control, task.id, `${task.title} / ${task.state}`);
+  } else if (schema.enum) {
+    control = document.createElement('select');
+    for (const value of schema.enum) addToolChoice(control, value, toolLabel(value));
+    if (propertyName === 'context') control.value = appConfig?.defaults?.copilotContext || 'long_context';
+  } else if (['objective', 'prompt'].includes(propertyName)) {
+    control = document.createElement('textarea');
+    control.rows = 4;
+  } else {
+    control = document.createElement('input');
+    control.type = 'text';
+    if (propertyName === 'model') control.value = appConfig?.defaults?.copilotModel || 'gpt-5.6-sol';
+  }
+  control.id = id;
+  control.name = propertyName;
+  control.required = required;
+  control.setAttribute('aria-label', toolLabel(propertyName));
+
+  const help = document.createElement('p');
+  help.className = 'tool-field-help';
+  help.textContent = schema.description || schema.type || 'Argument';
+  field.append(label, control, help);
+  return { field, control };
+}
+
+function selectToolDefinition(definition) {
+  selectedTool = definition;
+  const { name, description, parameters } = definition.function;
+  toolName.textContent = name;
+  toolDescription.textContent = description;
+  toolKindBadge.textContent = actionTools.has(name) ? 'Action' : 'Read only';
+  toolKindBadge.className = actionTools.has(name) ? 'badge badge-warning' : 'badge badge-success';
+  toolRunStatus.textContent = 'Idle';
+  toolRunStatus.className = 'badge';
+  toolResult.textContent = JSON.stringify({ name, args: {} }, null, 2);
+  for (const shell of selectShells) if (toolForm.contains(shell)) selectShells.delete(shell);
+  toolForm.replaceChildren();
+
+  for (const [propertyName, schema] of Object.entries(parameters.properties || {})) {
+    const { field, control } = createToolField(propertyName, schema, parameters.required?.includes(propertyName));
+    toolForm.appendChild(field);
+    if (control.tagName === 'SELECT') enhanceSelect(control);
+  }
+
+  const actions = document.createElement('div');
+  actions.className = 'tool-actions';
+  const run = document.createElement('button');
+  run.type = 'submit';
+  run.className = 'btn btn-accent';
+  run.innerHTML = '<i data-lucide="play"></i><span>Run Tool</span>';
+  actions.appendChild(run);
+  toolForm.appendChild(actions);
+
+  for (const item of toolList.querySelectorAll('.tool-list-item')) {
+    item.setAttribute('aria-selected', String(item.dataset.tool === name));
+  }
+  updateIcons();
+}
+
+function renderToolCatalog() {
+  toolList.replaceChildren();
+  toolCount.textContent = String(availableTools.length);
+  for (const definition of availableTools) {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'tool-list-item';
+    item.dataset.tool = definition.function.name;
+    item.setAttribute('role', 'option');
+    item.setAttribute('aria-selected', 'false');
+    const icon = document.createElement('span');
+    icon.className = 'tool-list-icon';
+    icon.innerHTML = `<i data-lucide="${actionTools.has(definition.function.name) ? 'play' : 'scan-search'}"></i>`;
+    const copy = document.createElement('span');
+    const name = document.createElement('span');
+    name.className = 'tool-list-name';
+    name.textContent = definition.function.name;
+    const description = document.createElement('span');
+    description.className = 'tool-list-description';
+    description.textContent = definition.function.description;
+    copy.append(name, description);
+    item.append(icon, copy);
+    item.addEventListener('click', () => selectToolDefinition(definition));
+    toolList.appendChild(item);
+  }
+  if (availableTools.length) selectToolDefinition(availableTools[0]);
+  updateIcons();
+}
+
+async function loadTools() {
+  try {
+    const response = await fetch('/api/tools');
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+    availableTools = result;
+    renderToolCatalog();
+  } catch (error) {
+    toolName.textContent = 'Tools unavailable';
+    toolDescription.textContent = error.message;
+    toolRunStatus.textContent = 'Error';
+    toolRunStatus.className = 'badge badge-danger';
+  }
+}
+
+toolForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  if (!selectedTool) return;
+  const name = selectedTool.function.name;
+  if (actionTools.has(name) && !window.confirm(`Run ${name}? This tool can change local session state or open VS Code.`)) return;
+  const args = {};
+  for (const [key, value] of new FormData(toolForm)) {
+    if (typeof value !== 'string' || value.trim()) args[key] = typeof value === 'string' ? value.trim() : value;
+  }
+  const requestId = crypto.randomUUID();
+  const startedAt = performance.now();
+  const submit = toolForm.querySelector('button[type="submit"]');
+  submit.disabled = true;
+  toolRunStatus.textContent = 'Running';
+  toolRunStatus.className = 'badge badge-warning';
+  toolResult.textContent = JSON.stringify({ request: { name, args, requestId } }, null, 2);
+  try {
+    const result = await callSupervisorTool(name, args, requestId);
+    toolRunStatus.textContent = `${Math.round(performance.now() - startedAt)} ms`;
+    toolRunStatus.className = 'badge badge-success';
+    toolResult.textContent = JSON.stringify({ request: { name, args, requestId }, result }, null, 2);
+    if (name === 'start_work') await loadState();
+  } catch (error) {
+    toolRunStatus.textContent = 'Failed';
+    toolRunStatus.className = 'badge badge-danger';
+    toolResult.textContent = JSON.stringify({ request: { name, args, requestId }, error: error.message }, null, 2);
+  } finally {
+    submit.disabled = false;
+  }
+});
+
 async function openWorktree(taskId) {
   try {
-    const res = await fetch('/api/tools', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: 'open_work',
-        args: { taskId },
-        requestId: crypto.randomUUID()
-      })
-    });
-    const result = await res.json();
-    if (!res.ok) throw new Error(result.error || `HTTP ${res.status}`);
+    const result = await callSupervisorTool('open_work', { taskId });
     appendMessage('system', `Opened worktree: ${result.opened || taskId}`);
   } catch (err) {
     alert(`Could not open worktree: ${err.message}`);
@@ -1158,17 +1494,7 @@ async function openWorktree(taskId) {
 
 async function queryTaskStatus(taskId) {
   try {
-    const res = await fetch('/api/tools', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: 'get_work_status',
-        args: { taskId },
-        requestId: crypto.randomUUID()
-      })
-    });
-    const result = await res.json();
-    if (!res.ok) throw new Error(result.error || `HTTP ${res.status}`);
+    const result = await callSupervisorTool('get_work_status', { taskId });
     appendMessage('tool', `Status [${taskId.slice(0, 8)}]: state=${result.state}, stale=${result.stale}`);
     await loadState();
   } catch (err) {
@@ -1183,6 +1509,8 @@ btnNewTask.addEventListener('click', () => {
     return;
   }
   taskObjectiveInput.value = '';
+  taskModelInput.value = appConfig?.defaults?.copilotModel || 'gpt-5.6-sol';
+  taskContextSelect.value = appConfig?.defaults?.copilotContext || 'long_context';
   newTaskDialog.showModal();
 });
 
@@ -1193,20 +1521,12 @@ newTaskForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   const areaId = taskAreaSelect.value;
   const objective = taskObjectiveInput.value.trim();
+  const model = taskModelInput.value.trim();
+  const context = taskContextSelect.value;
   if (!areaId || !objective) return;
 
   try {
-    const res = await fetch('/api/tools', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: 'start_work',
-        args: { areaId, objective },
-        requestId: crypto.randomUUID()
-      })
-    });
-    const result = await res.json();
-    if (!res.ok) throw new Error(result.error || `HTTP ${res.status}`);
+    const result = await callSupervisorTool('start_work', { areaId, objective, model, context });
     newTaskDialog.close();
     appendMessage('system', `Dispatched task [${result.taskId}]: state=${result.state}`);
     await loadState();
@@ -1358,5 +1678,6 @@ modelInput.addEventListener('change', () => {
 window.addEventListener('DOMContentLoaded', async () => {
   await loadConfig();
   await loadState();
+  await loadTools();
   initEventSource();
 });

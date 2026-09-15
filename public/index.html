@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+   <link rel="icon" href="data:," />
   <title>Voice Work Supervisor</title>
   <script>
     (() => {
@@ -360,7 +361,15 @@
       border-left: 4px solid var(--cp-success);
     }
 
+    .task-card.state-result_ready {
+      border-left: 4px solid var(--cp-success);
+    }
+
     .task-card.state-failed {
+      border-left: 4px solid var(--cp-danger);
+    }
+
+    .task-card.state-agent_failed {
       border-left: 4px solid var(--cp-danger);
     }
 
@@ -552,114 +561,988 @@
       vertical-align: middle;
     }
 
-    /* Responsive adjustments */
+    /* Refined application shell */
+    body {
+      background: var(--cp-bg);
+    }
+
+    header.top-bar {
+      min-height: 76px;
+      padding: 10px 16px;
+      flex-wrap: nowrap;
+      gap: 20px;
+      background: var(--cp-panel-strong);
+      box-shadow: 0 1px 0 var(--cp-border);
+      animation: shell-enter 320ms ease-out both;
+      position: relative;
+      z-index: 20;
+    }
+
+    .brand-zone {
+      min-width: 210px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-copy {
+      display: grid;
+      gap: 1px;
+    }
+
+    .brand-eyebrow {
+      color: var(--cp-accent);
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+
+    .brand-title {
+      display: block;
+      font-size: 16px;
+      font-weight: 650;
+      line-height: 1.2;
+    }
+
+    .agent-sprite {
+      width: 46px;
+      height: 46px;
+      position: relative;
+      flex: 0 0 46px;
+      display: grid;
+      place-items: center;
+      animation: agent-float 3.8s ease-in-out infinite;
+    }
+
+    .agent-halo {
+      position: absolute;
+      inset: 2px;
+      border: 1px solid var(--cp-border);
+      border-radius: 50%;
+      transition: border-color 180ms ease, transform 180ms ease;
+    }
+
+    .agent-head {
+      width: 30px;
+      height: 27px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+      position: relative;
+      border: 1px solid var(--cp-border-strong);
+      border-radius: 8px;
+      background: var(--cp-surface);
+      box-shadow: 0 4px 12px var(--cp-highlight);
+    }
+
+    .agent-head::before {
+      content: "";
+      width: 1px;
+      height: 6px;
+      position: absolute;
+      top: -7px;
+      background: var(--cp-border-strong);
+    }
+
+    .agent-head::after {
+      content: "";
+      width: 4px;
+      height: 4px;
+      position: absolute;
+      top: -10px;
+      border-radius: 50%;
+      background: var(--cp-accent);
+    }
+
+    .agent-eye {
+      width: 4px;
+      height: 6px;
+      border-radius: 4px;
+      background: var(--cp-accent);
+      animation: agent-blink 4.8s ease-in-out infinite;
+    }
+
+    .agent-wave {
+      position: absolute;
+      bottom: 1px;
+      display: flex;
+      align-items: flex-end;
+      gap: 2px;
+      height: 7px;
+      opacity: 0;
+      transition: opacity 160ms ease;
+    }
+
+    .agent-wave i {
+      width: 2px;
+      height: 3px;
+      border-radius: 2px;
+      background: var(--cp-accent);
+    }
+
+    .agent-sprite[data-state="listening"] .agent-halo,
+    .agent-sprite[data-state="speaking"] .agent-halo {
+      border-color: var(--cp-success);
+      animation: agent-pulse 1.8s ease-out infinite;
+    }
+
+    .agent-sprite[data-state="thinking"] .agent-halo,
+    .agent-sprite[data-state="connecting"] .agent-halo {
+      border-color: var(--cp-accent);
+      border-style: dashed;
+      animation: agent-spin 3s linear infinite;
+    }
+
+    .agent-sprite[data-state="speaking"] .agent-wave {
+      opacity: 1;
+    }
+
+    .agent-sprite[data-state="speaking"] .agent-wave i {
+      animation: agent-level 520ms ease-in-out infinite alternate;
+    }
+
+    .agent-sprite[data-state="speaking"] .agent-wave i:nth-child(2) { animation-delay: 110ms; }
+    .agent-sprite[data-state="speaking"] .agent-wave i:nth-child(3) { animation-delay: 220ms; }
+
+    .command-deck {
+      min-width: 0;
+      flex: 1;
+      display: grid;
+      gap: 8px;
+    }
+
+    .route-controls,
+    .session-controls,
+    .voice-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .route-controls {
+      flex: 1;
+    }
+
+    .session-controls {
+      justify-content: space-between;
+    }
+
+    .header-controls {
+      display: contents;
+    }
+
+    .control-group {
+      gap: 6px;
+    }
+
+    .control-group.route-provider { width: 150px; }
+    .control-group.route-model { flex: 1; min-width: 150px; max-width: 260px; }
+    .control-group.route-voice { width: 235px; }
+
+    .control-group.route-model input {
+      width: 100% !important;
+    }
+
+    select,
+    input[type="text"],
+    textarea {
+      min-height: 34px;
+      padding: 7px 10px;
+      border-radius: 7px;
+      transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
+    }
+
+    textarea { resize: vertical; }
+
+    .select-shell {
+      min-width: 0;
+      position: relative;
+      flex: 1;
+    }
+
+    .select-native {
+      width: 1px !important;
+      height: 1px !important;
+       max-width: calc(100vw - 24px);
+      min-height: 0 !important;
+      position: absolute;
+      inset: auto;
+      opacity: 0;
+       right: 0;
+    }
+
+    .select-trigger {
+      width: 100%;
+      min-height: 34px;
+      padding: 7px 30px 7px 10px;
+      position: relative;
+      overflow: hidden;
+      border: 1px solid var(--cp-border);
+      border-radius: 7px;
+      background: var(--cp-surface);
+      color: var(--cp-text);
+      font: inherit;
+      font-size: 12px;
+      text-align: left;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      cursor: pointer;
+      transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+    }
+
+    .select-trigger::after {
+      content: "";
+      width: 6px;
+      height: 6px;
+      position: absolute;
+      top: 12px;
+      right: 11px;
+      border-right: 1px solid var(--cp-text-muted);
+      border-bottom: 1px solid var(--cp-text-muted);
+      transform: rotate(45deg);
+      transition: transform 180ms ease, top 180ms ease;
+    }
+
+    .select-shell.open .select-trigger {
+      border-color: var(--cp-accent);
+      background: var(--cp-bg-elevated);
+      box-shadow: 0 0 0 3px var(--cp-accent-soft);
+    }
+
+    .select-shell.open .select-trigger::after {
+      top: 15px;
+      transform: rotate(225deg);
+    }
+
+    .select-menu {
+      width: max-content;
+      min-width: 100%;
+      max-width: min(360px, calc(100vw - 48px));
+      max-height: 240px;
+      padding: 5px;
+      position: absolute;
+      top: calc(100% + 6px);
+      right: 0;
+      z-index: 100;
+      overflow-y: auto;
+      border: 1px solid var(--cp-border);
+      border-radius: 8px;
+      background: var(--cp-panel-strong);
+      box-shadow: var(--cp-shadow);
+      opacity: 0;
+      visibility: hidden;
+      transform: translateY(-5px) scale(0.98);
+      transform-origin: top left;
+      transition: opacity 150ms ease, visibility 150ms ease, transform 180ms ease;
+    }
+
+    .select-shell.open .select-menu {
+      opacity: 1;
+      visibility: visible;
+      transform: translateY(0) scale(1);
+    }
+
+    .select-option {
+      width: 100%;
+      min-height: 31px;
+      padding: 6px 26px 6px 8px;
+      position: relative;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--cp-text);
+      font: inherit;
+      font-size: 12px;
+      text-align: left;
+      white-space: nowrap;
+      cursor: pointer;
+      transition: background 120ms ease, color 120ms ease;
+    }
+
+    .select-option:hover,
+    .select-option:focus-visible {
+      outline: none;
+      background: var(--cp-surface-soft);
+    }
+
+    .select-option.selected {
+      color: var(--cp-accent);
+      background: var(--cp-accent-soft);
+    }
+
+    .select-option.selected::after {
+      content: "✓";
+      position: absolute;
+      right: 9px;
+      color: var(--cp-accent);
+    }
+
+    .select-option:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    .form-group .select-shell {
+      width: 100%;
+    }
+
+    .toggle-control {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--cp-text-muted);
+      font-size: 11px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .toggle-control input {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .toggle-track {
+      width: 27px;
+      height: 16px;
+      padding: 2px;
+      border: 1px solid var(--cp-border);
+      border-radius: 8px;
+      background: var(--cp-surface-soft);
+      transition: background 160ms ease, border-color 160ms ease;
+    }
+
+    .toggle-track::after {
+      content: "";
+      display: block;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--cp-text-muted);
+      transition: transform 180ms ease, background 180ms ease;
+    }
+
+    .toggle-control input:checked + .toggle-track {
+      border-color: var(--cp-accent);
+      background: var(--cp-accent-soft);
+    }
+
+    .toggle-control input:checked + .toggle-track::after {
+      transform: translateX(11px);
+      background: var(--cp-accent);
+    }
+
+    .btn {
+      min-height: 34px;
+      border-radius: 7px;
+      padding: 7px 10px;
+      transition: transform 150ms ease, background 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+    }
+
+    .btn:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px var(--cp-highlight);
+    }
+
+    .btn-icon {
+      width: 34px;
+      padding: 0;
+      justify-content: center;
+    }
+
+    .badge {
+      min-height: 24px;
+      padding: 3px 8px;
+      border-radius: 7px;
+    }
+
+    canvas#mic-canvas {
+      width: 64px;
+      height: 20px;
+      border: none;
+      background: var(--cp-surface-soft);
+    }
+
+    .view-tabs {
+      min-height: 43px;
+      padding: 0 14px;
+      display: flex;
+      align-items: stretch;
+      gap: 18px;
+      flex-shrink: 0;
+      border-bottom: 1px solid var(--cp-border);
+      background: var(--cp-bg-elevated);
+    }
+
+    .view-tab {
+      padding: 0 2px;
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      border: 0;
+      background: transparent;
+      color: var(--cp-text-muted);
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .view-tab::after {
+      content: "";
+      height: 2px;
+      position: absolute;
+      right: 0;
+      bottom: -1px;
+      left: 0;
+      background: var(--cp-accent);
+      transform: scaleX(0);
+      transition: transform 180ms ease;
+    }
+
+    .view-tab:hover,
+    .view-tab[aria-selected="true"] { color: var(--cp-text); }
+
+    .view-tab[aria-selected="true"]::after { transform: scaleX(1); }
+
+    .view-tab svg {
+      width: 15px;
+      height: 15px;
+    }
+
+    [hidden] { display: none !important; }
+
+    .tool-lab {
+      min-height: 0;
+      flex: 1;
+      display: grid;
+      grid-template-columns: 280px minmax(0, 1fr);
+      overflow: hidden;
+      background: var(--cp-bg);
+      animation: shell-enter 260ms ease-out both;
+    }
+
+    .tool-catalog {
+      min-width: 0;
+      padding: 18px 12px;
+      overflow-y: auto;
+      border-right: 1px solid var(--cp-border);
+      background: var(--cp-bg-elevated);
+    }
+
+    .tool-catalog-header,
+    .tool-runner-header,
+    .tool-output-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .tool-catalog-header { padding: 0 6px 12px; }
+
+    .tool-list {
+      display: grid;
+      gap: 6px;
+    }
+
+    .tool-list-item {
+      width: 100%;
+      padding: 10px;
+      display: grid;
+      grid-template-columns: 30px minmax(0, 1fr);
+      gap: 9px;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--cp-text);
+      text-align: left;
+      cursor: pointer;
+      transition: background 150ms ease, border-color 150ms ease, transform 150ms ease;
+    }
+
+    .tool-list-item:hover { background: var(--cp-surface-soft); }
+
+    .tool-list-item[aria-selected="true"] {
+      border-color: var(--cp-border);
+      background: var(--cp-surface);
+      box-shadow: 0 4px 14px var(--cp-highlight);
+      transform: translateX(2px);
+    }
+
+    .tool-list-icon {
+      width: 30px;
+      height: 30px;
+      display: grid;
+      place-items: center;
+      border-radius: 7px;
+      background: var(--cp-accent-soft);
+      color: var(--cp-accent);
+    }
+
+    .tool-list-icon svg {
+      width: 15px;
+      height: 15px;
+    }
+
+    .tool-list-name {
+      display: block;
+      overflow: hidden;
+      font: 600 12px Consolas, "Courier New", monospace;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .tool-list-description {
+      margin-top: 3px;
+      display: -webkit-box;
+      overflow: hidden;
+      color: var(--cp-text-muted);
+      font-size: 11px;
+      line-height: 1.35;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+    }
+
+    .tool-runner {
+      min-width: 0;
+      padding: 24px clamp(18px, 4vw, 52px);
+      overflow-y: auto;
+    }
+
+    .tool-runner-inner {
+      width: min(860px, 100%);
+      margin: 0 auto;
+    }
+
+    .tool-runner-header {
+      min-height: 54px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--cp-border);
+    }
+
+    .tool-runner-title {
+      font: 600 18px Consolas, "Courier New", monospace;
+    }
+
+    .tool-runner-description {
+      margin-top: 5px;
+      color: var(--cp-text-muted);
+      font-size: 12px;
+    }
+
+    .tool-form {
+      padding: 20px 0;
+      display: grid;
+      gap: 15px;
+    }
+
+    .tool-field {
+      display: grid;
+      gap: 6px;
+    }
+
+    .tool-field-label {
+      color: var(--cp-text);
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .tool-field-required { color: var(--cp-accent); }
+
+    .tool-field-help {
+      color: var(--cp-text-muted);
+      font-size: 11px;
+    }
+
+    .tool-field input,
+    .tool-field textarea,
+    .tool-field select,
+    .tool-field .select-shell { width: 100%; }
+
+    .tool-field input,
+    .tool-field select { min-height: 38px; }
+
+    .tool-field textarea {
+      min-height: 94px;
+      padding: 9px 10px;
+      resize: vertical;
+    }
+
+    .tool-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+
+    .tool-output {
+      padding-top: 17px;
+      border-top: 1px solid var(--cp-border);
+    }
+
+    .tool-output pre {
+      min-height: 150px;
+      max-height: 310px;
+      margin-top: 10px;
+      padding: 14px;
+      overflow: auto;
+      border: 1px solid var(--cp-border);
+      border-radius: 8px;
+      background: var(--cp-bg-elevated);
+      color: var(--cp-text);
+      font-size: 11px;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .workspace-body {
+      min-height: 0;
+      background: var(--cp-bg);
+    }
+
+    .application-body {
+      min-height: 0;
+      flex: 1;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(320px, 26vw);
+      overflow: hidden;
+      animation: shell-enter 420ms 70ms ease-out both;
+    }
+
+    aside.sidebar {
+      width: 252px;
+      background: var(--cp-bg-elevated);
+    }
+
+    .section-header {
+      min-height: 49px;
+      padding: 10px 14px;
+      background: transparent;
+    }
+
+    .section-title {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--cp-text-muted);
+    }
+
+    .scroll-list,
+    .task-table-wrapper {
+      padding: 10px;
+      gap: 8px;
+    }
+
+    .item-row,
+    .task-card {
+      border-radius: 8px;
+      box-shadow: none;
+      transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+    }
+
+    .item-row:hover,
+    .task-card:hover {
+      transform: translateY(-1px);
+      border-color: var(--cp-border-strong);
+      box-shadow: 0 6px 18px var(--cp-highlight);
+    }
+
+    main.center-pane {
+      background: var(--cp-bg);
+    }
+
+    .task-card {
+      padding: 12px 14px;
+      gap: 8px;
+      background: var(--cp-bg-elevated);
+    }
+
+    section.conversation-pane {
+      width: 100%;
+      height: auto;
+      min-width: 0;
+      border-top: none;
+      border-left: 1px solid var(--cp-border);
+      background: var(--cp-bg-elevated);
+    }
+
+    .chat-messages {
+      padding: 10px 14px;
+      gap: 8px;
+    }
+
+    .chat-bubble {
+      padding: 8px 11px;
+      border-radius: 8px;
+      animation: message-enter 180ms ease-out both;
+    }
+
+    .chat-input-bar {
+      padding: 10px 14px;
+      background: var(--cp-surface);
+    }
+
+    .chat-input-bar input {
+      min-height: 38px;
+    }
+
+    dialog {
+      border-radius: 8px;
+      border-color: var(--cp-border);
+      animation: dialog-enter 180ms ease-out both;
+    }
+
+    .empty-state {
+      margin: auto;
+      max-width: 360px;
+      padding: 40px 24px;
+      font-style: normal;
+      line-height: 1.6;
+      display: grid;
+      place-items: center;
+      gap: 8px;
+      color: var(--cp-text-muted);
+    }
+
+    .empty-state svg {
+      width: 28px;
+      height: 28px;
+      color: var(--cp-border-strong);
+      stroke-width: 1.4;
+    }
+
+    .empty-title {
+      color: var(--cp-text);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .empty-detail {
+      max-width: 240px;
+      color: var(--cp-text-muted);
+      font-size: 11px;
+      text-align: center;
+    }
+
+    .chat-messages:empty::before {
+      content: "Ready when you are";
+      margin: auto;
+      color: var(--cp-text-muted);
+      font-size: 11px;
+    }
+
+    @keyframes shell-enter {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes dialog-enter {
+      from { opacity: 0; transform: translateY(8px) scale(0.99); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    @keyframes message-enter {
+      from { opacity: 0; transform: translateY(3px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes agent-float {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-2px); }
+    }
+
+    @keyframes agent-blink {
+      0%, 46%, 50%, 100% { transform: scaleY(1); }
+      48% { transform: scaleY(0.15); }
+    }
+
+    @keyframes agent-pulse {
+      0% { transform: scale(0.88); opacity: 1; }
+      100% { transform: scale(1.08); opacity: 0; }
+    }
+
+    @keyframes agent-spin { to { transform: rotate(360deg); } }
+
+    @keyframes agent-level {
+      from { height: 2px; }
+      to { height: 7px; }
+    }
+
+    @media (max-width: 1080px) {
+      header.top-bar { align-items: flex-start; }
+      .brand-zone { min-width: 190px; }
+      .session-controls { align-items: flex-start; }
+      .voice-actions { flex-wrap: wrap; justify-content: flex-end; }
+      .control-group.route-voice { width: 200px; }
+      .application-body {
+        grid-template-columns: 1fr;
+        overflow: auto;
+      }
+      .workspace-body { min-height: 420px; }
+      section.conversation-pane {
+        height: 270px;
+        border-top: 1px solid var(--cp-border);
+        border-left: none;
+      }
+    }
+
     @media (max-width: 800px) {
       body {
         height: auto;
         min-height: 100dvh;
         overflow: auto;
       }
-      .control-group:has(select) {
+      header.top-bar {
+        min-height: 0;
+        padding: 10px 12px;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+      .view-tabs { padding: 0 12px; }
+      .brand-zone { min-width: 0; }
+      .command-deck { flex-basis: 100%; }
+      .route-controls,
+      .session-controls {
+        flex-wrap: wrap;
+      }
+      .control-group.route-provider,
+      .control-group.route-model,
+      .control-group.route-voice {
+        flex: 1 1 100%;
         width: 100%;
+        max-width: none;
       }
-      .control-group select {
-        flex: 1;
-      }
-      .control-label {
-        flex-shrink: 0;
-      }
+      .control-group .control-label { width: 82px; flex: 0 0 82px; }
+      .control-group input,
+      .control-group select,
+      .control-group .select-shell { flex: 1; }
+      .voice-actions { justify-content: flex-start; }
       .workspace-body {
         flex-direction: column;
         flex: none;
-        min-height: 360px;
+        min-height: 440px;
+      }
+      .application-body {
+        display: block;
+        overflow: visible;
       }
       aside.sidebar {
         width: 100%;
-        height: 180px;
+        height: 190px;
         border-right: none;
         border-bottom: 1px solid var(--cp-border);
+      }
+      main.center-pane { min-height: 280px; border-right: none; }
+      section.conversation-pane { height: 320px; }
+      .empty-state { padding: 20px 16px; }
+      .tool-lab {
+        display: block;
+        overflow: visible;
+      }
+      .tool-catalog {
+        padding: 12px;
+        overflow: visible;
+        border-right: 0;
+        border-bottom: 1px solid var(--cp-border);
+      }
+      .tool-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .tool-list-item { min-height: 68px; }
+      .tool-runner { padding: 20px 14px 30px; }
+      .tool-runner-header { align-items: flex-start; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 1ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 1ms !important;
       }
     }
   </style>
 </head>
 <body>
-  <!-- Utilitarian Top Bar -->
+  <!-- Application command bar -->
   <header class="top-bar">
-    <div class="brand-title">
-      <i data-lucide="mic"></i>
-      <span>Voice Work Supervisor</span>
+    <div class="brand-zone">
+      <div class="agent-sprite" id="agent-sprite" data-state="idle" role="img" aria-label="Agent idle">
+        <span class="agent-halo"></span>
+        <span class="agent-head"><i class="agent-eye"></i><i class="agent-eye"></i></span>
+        <span class="agent-wave"><i></i><i></i><i></i></span>
+      </div>
+      <div class="brand-copy">
+        <span class="brand-eyebrow">Local command</span>
+        <span class="brand-title">Voice Supervisor</span>
+      </div>
     </div>
 
-    <div class="header-controls">
-      <!-- Route and Providers -->
-      <div class="control-group">
-        <label class="control-label" for="provider-select">Provider</label>
-        <select id="provider-select" aria-label="LLM Provider"></select>
+    <div class="command-deck">
+      <div class="route-controls">
+        <div class="control-group route-provider">
+          <label class="control-label" for="provider-select">Provider</label>
+          <select id="provider-select" aria-label="LLM Provider"></select>
+        </div>
+        <div class="control-group route-model">
+          <label class="control-label" id="model-label" for="model-input">Model</label>
+          <input type="text" id="model-input" aria-label="Text or cascade model identifier" placeholder="Text model">
+        </div>
+        <div class="control-group route-voice">
+          <label class="control-label" for="voice-mode-select">Voice</label>
+          <select id="voice-mode-select" aria-label="Voice runtime mode"></select>
+        </div>
       </div>
 
-      <div class="control-group">
-        <label class="control-label" id="model-label" for="model-input">Text/Cascade Model</label>
-        <input type="text" id="model-input" style="width: 140px;" aria-label="Text or cascade model identifier" placeholder="Text model">
+      <div class="session-controls">
+        <div class="route-controls">
+          <label class="toggle-control" title="Allow local transcripts to use a hosted LLM">
+            <input type="checkbox" id="allow-cloud-opt" aria-label="Allow Cloud Hybrid">
+            <span class="toggle-track" aria-hidden="true"></span><span>Cloud</span>
+          </label>
+          <label class="toggle-control" title="Mute microphone input">
+            <input type="checkbox" id="mute-mic-opt" aria-label="Mute microphone">
+            <span class="toggle-track" aria-hidden="true"></span><span>Mute</span>
+          </label>
+          <label class="toggle-control" title="Hold the button or Spacebar while speaking">
+            <input type="checkbox" id="ptt-mode-opt" aria-label="Enable Push To Talk mode">
+            <span class="toggle-track" aria-hidden="true"></span><span>PTT</span>
+          </label>
+        </div>
+
+        <div class="voice-actions">
+          <span class="badge" id="route-status-badge">Checking...</span>
+          <canvas id="mic-canvas" width="70" height="22" aria-label="Microphone volume level"></canvas>
+          <button class="btn btn-icon" id="quiet-mode-btn" type="button" aria-label="Toggle Quiet Mode" title="Block proactive spoken notifications">
+            <i data-lucide="bell-off"></i><span class="badge" id="quiet-badge" style="display: none;">On</span>
+          </button>
+          <button class="btn btn-accent" id="mic-toggle-btn" type="button" aria-label="Connect or Disconnect Microphone">
+            <i data-lucide="mic"></i><span id="mic-btn-label">Connect Mic</span>
+          </button>
+          <button class="btn" id="ptt-btn" type="button" disabled aria-label="Hold to talk or commit speech" title="Commit speech or hold to talk in PTT mode">
+            <i data-lucide="radio"></i><span id="ptt-btn-label">Commit</span>
+          </button>
+          <button class="btn btn-danger btn-icon" id="interrupt-btn" type="button" disabled aria-label="Interrupt speech" title="Stop assistant speech">
+            <i data-lucide="square"></i>
+          </button>
+        </div>
       </div>
-
-      <div class="control-group">
-        <label class="control-label" for="voice-mode-select">Voice Mode</label>
-        <select id="voice-mode-select" aria-label="Voice runtime mode"></select>
-      </div>
-
-      <!-- Cloud hybrid opt-in -->
-      <div class="control-group" title="Required to route local voice transcripts to hosted LLM">
-        <input type="checkbox" id="allow-cloud-opt" aria-label="Allow Cloud Hybrid">
-        <label for="allow-cloud-opt" style="font-size: 11px; cursor: pointer;">Allow Cloud Hybrid</label>
-      </div>
-
-      <!-- Mute Mic Toggle -->
-      <div class="control-group" title="Mute microphone input">
-        <input type="checkbox" id="mute-mic-opt" aria-label="Mute microphone">
-        <label for="mute-mic-opt" style="font-size: 11px; cursor: pointer;">Mute</label>
-      </div>
-
-      <!-- Real PTT Mode Toggle -->
-      <div class="control-group" title="Push To Talk: gate microphone until button or Spacebar is held">
-        <input type="checkbox" id="ptt-mode-opt" aria-label="Enable Push To Talk mode">
-        <label for="ptt-mode-opt" style="font-size: 11px; cursor: pointer;">PTT Mode</label>
-      </div>
-
-      <!-- Quiet Mode Toggle -->
-      <button class="btn" id="quiet-mode-btn" type="button" aria-label="Toggle Quiet Mode" title="Block proactive spoken notifications">
-        <i data-lucide="bell-off"></i>
-        <span>Quiet</span>
-        <span class="badge" id="quiet-badge" style="display: none;">Active</span>
-      </button>
-
-      <!-- Live Mic Level Visualizer -->
-      <canvas id="mic-canvas" width="70" height="22" aria-label="Microphone volume level"></canvas>
-
-      <!-- Mic Connect / Disconnect -->
-      <button class="btn btn-accent" id="mic-toggle-btn" type="button" aria-label="Connect or Disconnect Microphone">
-        <i data-lucide="mic"></i>
-        <span id="mic-btn-label">Connect Mic</span>
-      </button>
-
-      <!-- Push-To-Talk / Commit Button -->
-      <button class="btn" id="ptt-btn" type="button" disabled aria-label="Hold to talk or commit speech" title="Commit speech (or hold to talk in PTT mode)">
-        <i data-lucide="radio"></i>
-        <span id="ptt-btn-label">Commit</span>
-      </button>
-
-      <!-- Stop Talking / Interrupt -->
-      <button class="btn btn-danger" id="interrupt-btn" type="button" disabled aria-label="Interrupt speech" title="Stop assistant speech immediately">
-        <i data-lucide="square"></i>
-        <span>Stop Talking</span>
-      </button>
-
-      <!-- Route Readiness Badge -->
-      <span class="badge" id="route-status-badge">Checking...</span>
     </div>
   </header>
 
-  <!-- Workspace Body -->
-  <div class="workspace-body">
+  <nav class="view-tabs" role="tablist" aria-label="Supervisor views">
+    <button class="view-tab" id="workspace-tab" type="button" role="tab" aria-selected="true" aria-controls="workspace-view" data-view="workspace">
+      <i data-lucide="layout-dashboard"></i><span>Workspace</span>
+    </button>
+    <button class="view-tab" id="tool-lab-tab" type="button" role="tab" aria-selected="false" aria-controls="tool-lab-view" data-view="tool-lab">
+      <i data-lucide="flask-conical"></i><span>Tool Lab</span>
+    </button>
+  </nav>
+
+  <div class="application-body" id="workspace-view" role="tabpanel" aria-labelledby="workspace-tab">
+    <!-- Workspace Body -->
+    <div class="workspace-body">
     <!-- Left Sidebar: Work Areas -->
     <aside class="sidebar">
       <div class="section-header">
@@ -692,10 +1575,10 @@
         <div class="loading-spinner">Loading tasks...</div>
       </div>
     </main>
-  </div>
+    </div>
 
   <!-- Bottom: Conversation -->
-  <section class="conversation-pane" aria-label="Supervisor Conversation">
+    <section class="conversation-pane" aria-label="Supervisor Conversation">
     <div class="section-header" style="padding: 4px 12px;">
       <span class="section-title">Conversation &amp; Dispatch Log</span>
       <div style="display: flex; align-items: center; gap: 8px;">
@@ -714,6 +1597,36 @@
         <i data-lucide="send"></i>
         <span>Send</span>
       </button>
+    </div>
+    </section>
+  </div>
+
+  <section class="tool-lab" id="tool-lab-view" role="tabpanel" aria-labelledby="tool-lab-tab" hidden>
+    <aside class="tool-catalog" aria-label="Available LLM tools">
+      <div class="tool-catalog-header">
+        <span class="section-title">LLM Tools</span>
+        <span class="badge" id="tool-count">0</span>
+      </div>
+      <div class="tool-list" id="tool-list" role="listbox" aria-label="Tool selector"></div>
+    </aside>
+    <div class="tool-runner">
+      <div class="tool-runner-inner">
+        <div class="tool-runner-header">
+          <div>
+            <h2 class="tool-runner-title" id="tool-name">Loading tools...</h2>
+            <p class="tool-runner-description" id="tool-description"></p>
+          </div>
+          <span class="badge" id="tool-kind-badge">Function</span>
+        </div>
+        <form class="tool-form" id="tool-form"></form>
+        <div class="tool-output">
+          <div class="tool-output-header">
+            <span class="section-title">Request &amp; Result</span>
+            <span class="badge" id="tool-run-status">Idle</span>
+          </div>
+          <pre id="tool-result" aria-live="polite">Select a tool to inspect its arguments.</pre>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -770,6 +1683,17 @@
       <div class="form-group">
         <label class="control-label" for="task-objective-input">Objective &amp; Constraints *</label>
         <textarea id="task-objective-input" required rows="4" placeholder="Describe the goal clearly..."></textarea>
+      </div>
+      <div class="form-group">
+        <label class="control-label" for="task-model-input">Copilot Model</label>
+        <input type="text" id="task-model-input" value="gpt-5.6-sol" placeholder="gpt-5.6-sol">
+      </div>
+      <div class="form-group">
+        <label class="control-label" for="task-context-select">Context</label>
+        <select id="task-context-select">
+          <option value="default">Default</option>
+          <option value="long_context" selected>Long context</option>
+        </select>
       </div>
       <div class="dialog-actions">
         <button type="button" class="btn" id="task-cancel-btn">Cancel</button>

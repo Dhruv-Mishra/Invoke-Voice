@@ -9,17 +9,23 @@ import { streamReply } from './llm.mjs';
 
 const worker = fileURLToPath(new URL('../scripts/kokoro_worker.py', import.meta.url));
 const bundledPython = fileURLToPath(new URL('../.venv/Scripts/python.exe', import.meta.url));
+const defaultMoonshineModel = fileURLToPath(new URL('../../LocalVoiceStack/STT_Models/moonshine-streaming-small-q4_k.gguf', import.meta.url));
 export function localConfiguration(env = process.env) {
   const home = path.join(env.LOCALAPPDATA || path.join(os.homedir(), '.local', 'share'), 'VoiceSupervisor');
   const modelDir = env.MODEL_DIR || path.join(home, 'models');
   const runtimeDir = env.RUNTIME_DIR || path.join(home, 'runtimes');
   const crispasrBin = env.CRISPASR_BIN || path.join(runtimeDir, 'crispasr.exe');
-  const moonshineModel = env.MOONSHINE_MODEL || path.join(modelDir, 'moonshine-streaming-tiny-q4_k.gguf');
+  const requestedMoonshineModel = env.MOONSHINE_MODEL ? path.resolve(env.MOONSHINE_MODEL) : defaultMoonshineModel;
+  const unsupportedQ8 = path.basename(requestedMoonshineModel).toLowerCase() === 'moonshine-streaming-small-q8_0.gguf';
+  const moonshineModel = unsupportedQ8 && existsSync(defaultMoonshineModel) ? defaultMoonshineModel : requestedMoonshineModel;
+  const sttWarning = unsupportedQ8 && moonshineModel !== requestedMoonshineModel ? 'Small Q8_0 crashes CrispASR 0.8.32; using canonical Small Q4_K.' : null;
+  const siblingTokenizer = path.join(path.dirname(moonshineModel), 'tokenizer.bin');
+  const moonshineTokenizer = existsSync(siblingTokenizer) ? siblingTokenizer : path.join(modelDir, 'tokenizer.bin');
   const vadModel = env.VAD_MODEL || path.join(modelDir, 'ggml-silero-v6.2.0.bin');
-  const sttConfigured = [crispasrBin, moonshineModel, path.join(path.dirname(moonshineModel), 'tokenizer.bin'), vadModel].every(existsSync);
+  const sttConfigured = [crispasrBin, moonshineModel, moonshineTokenizer, vadModel].every(existsSync);
   const pythonBin = (!env.PYTHON_BIN || env.PYTHON_BIN === 'python') && existsSync(bundledPython) ? bundledPython : (env.PYTHON_BIN || 'python');
   const ttsConfigured = existsSync(pythonBin) || env.KOKORO_READY === '1';
-  return { configured: sttConfigured && ttsConfigured, sttConfigured, ttsConfigured, pythonBin, crispasrBin, moonshineModel, vadModel, model: env.LOCAL_LLM_MODEL || 'ling-local', sttStreamingArchitecture: 'CrispASR rolling-window streaming' };
+  return { configured: sttConfigured && ttsConfigured, sttConfigured, ttsConfigured, pythonBin, crispasrBin, requestedMoonshineModel, moonshineModel, moonshineTokenizer, sttWarning, vadModel, model: env.LOCAL_LLM_MODEL || 'ling-local', ttsModel: env.KOKORO_REPO || 'hexgrad/Kokoro-82M', ttsVoice: env.KOKORO_VOICE || 'af_heart', sttStreamingArchitecture: 'CrispASR rolling-window streaming' };
 }
 
 export async function createLocalVoice({ send, callTool, provider = 'local', model, allowCloud = false, env = process.env }) {
@@ -112,7 +118,7 @@ export async function createLocalVoice({ send, callTool, provider = 'local', mod
       });
     });
     tts.on('exit', () => { if (!closed) fail('Kokoro stopped unexpectedly'); });
-    stt = spawn(config.crispasrBin, ['--backend', 'moonshine-streaming', '-m', config.moonshineModel, '--stream', '--stream-json', '--vad', '--vad-model', config.vadModel, '--stream-step', env.CRISPASR_STREAM_STEP_MS || '400', '--stream-length', '10000', '--stream-final-on-silence-ms', env.END_SILENCE_MS || '1000', '-t', env.LOCAL_THREADS || '4'], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+    stt = spawn(config.crispasrBin, ['--backend', 'moonshine-streaming', '-m', config.moonshineModel, '--cache-dir', path.dirname(config.moonshineTokenizer), '--stream', '--stream-json', '--vad', '--vad-model', config.vadModel, '--stream-step', env.CRISPASR_STREAM_STEP_MS || '400', '--stream-length', '10000', '--stream-final-on-silence-ms', env.END_SILENCE_MS || '1000', '-t', env.LOCAL_THREADS || '4'], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     let sttDiagnostic = '';
     stt.stderr.on('data', chunk => { sttDiagnostic = (sttDiagnostic + chunk.toString()).slice(-1000); });
     stt.on('error', error => fail(`CrispASR failed: ${error.message}`));

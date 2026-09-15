@@ -2,6 +2,8 @@
 
 Windows prototype for talking to a work supervisor, starting coding tasks in isolated worktrees, and reading passive progress observations.
 
+See [usage instructions.md](usage%20instructions.md) for the concise operating guide and tool list.
+
 ## Install
 
 Requires Node.js 22 or newer.
@@ -14,7 +16,7 @@ Copy-Item example.env .env   # first setup only; do not overwrite a configured .
 
 Put secrets only in `.env`. The browser never receives provider keys.
 
-## Gemini Live
+## Hosted Voice
 
 Set `GEMINI_API_KEY` in `.env`. The configured voice model is `gemini-3.1-flash-live-preview`.
 
@@ -22,17 +24,17 @@ Set `GEMINI_API_KEY` in `.env`. The configured voice model is `gemini-3.1-flash-
 npm start
 ```
 
-Open the printed loopback URL, normally `http://127.0.0.1:4317`, select **Gemini Live**, and connect the microphone. `npm run desktop` starts the same hosted flow in Electron.
+Open the printed loopback URL, normally `http://127.0.0.1:4317`, select **Gemini Live**, and connect the microphone. `npm run desktop` starts the same hosted flow in Electron. The app opens on the local route by default.
 
 ## Local Voice
 
-The local route is Moonshine Streaming Tiny through CrispASR, Ling through llama.cpp, and Kokoro-82M through Python. A final transcript is committed after 1 second of silence. The models stay resident while the app runs.
+The default route is Moonshine Streaming Small through CrispASR, Ling through llama.cpp, and Kokoro-82M through Python. A final transcript is committed after 1 second of silence.
 
 Expected assets:
 
 - `../LocalVoiceStack/LLMs/Ling-3.0-tiny-abliterated-APEX-I-Compact.gguf`
-- `%LOCALAPPDATA%\VoiceSupervisor\models\moonshine-streaming-tiny-q4_k.gguf`
-- `%LOCALAPPDATA%\VoiceSupervisor\models\tokenizer.bin`
+- `../LocalVoiceStack/STT_Models/moonshine-streaming-small-q4_k.gguf`
+- `../LocalVoiceStack/STT_Models/tokenizer.bin`
 - `%LOCALAPPDATA%\VoiceSupervisor\models\ggml-silero-v6.2.0.bin`
 - `%LOCALAPPDATA%\VoiceSupervisor\runtimes\crispasr.exe`
 
@@ -55,20 +57,22 @@ npm run local:check
 npm run local
 ```
 
-Open the printed URL, select **Local** as the text provider and **Moonshine + Ling + Kokoro** as voice mode, then connect the microphone. `LLAMA_THREADS` controls Ling; `LOCAL_THREADS` controls STT/TTS. The defaults reserve CPU capacity for VS Code and builds.
+Open the printed URL and connect the microphone. Local text and voice are preselected. `LLAMA_CONTEXT=8192`, memory mapping, and KV cache reuse are enabled; model IDs, paths, voices, and thread counts remain configurable in `.env`.
 
-After Kokoro is cached, set `HF_HUB_OFFLINE=1` for an offline-only voice startup. Cloud coding agents and Kusto still require network access.
+`moonshine-streaming-small-Q8_0.gguf` currently crashes CrispASR 0.8.32 on both CPU and Vulkan. The app detects that exact override and uses the installed, verified canonical Small Q4_K instead; `/api/config` reports the requested path, effective path, and warning.
+
+After Kokoro is cached, set `HF_HUB_OFFLINE=1` for offline-only voice startup. Copilot coding sessions still require network access.
 
 ## Coding Tasks
 
-1. Enable VS Code agent hooks with `chat.hooks.enabled` if the installed build and policy permit it.
-2. Register a Git repository root as a work area in the supervisor.
-3. Start work by its registered name. The supervisor creates a worktree, invokes `code chat`, and binds progress only after a matching hook acknowledgement.
+1. Run `npm run copilot:check` to verify Copilot CLI authentication and lifecycle.
+2. Register a Git repository root as a work area.
+3. Start work by voice, chat, or **New Task**, selecting a Copilot model and context.
 
-Status reads do not prompt or interrupt the coding agent. `Stop` is not treated as success, and missing observations become stale/unknown.
+The supervisor owns the Copilot CLI process, assigns an explicit session ID, persists JSONL progress, and records tool/build updates and the final result. Status reads are passive; missing active observations become stale/unknown.
 
-The VS Code bridge is prototype-grade: the CLI does not return a native chat session ID or completion result. Copilot CLI/ACP is the preferred next adapter because it supports explicit session IDs, resume, JSONL output, and process ownership. Playwright UI automation should be used only if both native CLI routes fail because it can steal focus and is sensitive to UI changes.
+The `invoke_vscode` tool currently opens a text note with the requested prompt, model, context, and directory. It intentionally does not claim to start a VS Code agent. `open_work` opens a real Copilot worktree in VS Code.
 
 ## Verified Here
 
-On 2026-09-15: Gemini 3.1 Live connected and returned 24 kHz audio; CrispASR and Kokoro reached ready together; Kokoro generated PCM; llama.cpp b10970 loaded Ling and completed a request; all three focused Node checks passed. A real VS Code coding-task roundtrip has not yet been run.
+On 2026-09-15: Gemini 3.1 Live returned 24 kHz audio; canonical Moonshine Small Q4_K and Kokoro reached ready together; llama.cpp b10970 loaded Ling; focused tests passed; and the supervisor completed a real isolated Copilot CLI task with a persisted session ID and result.

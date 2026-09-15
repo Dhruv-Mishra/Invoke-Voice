@@ -10,8 +10,9 @@ from kokoro import KPipeline
 
 torch.set_num_threads(int(os.environ.get("LOCAL_THREADS", "4")))
 voice = os.environ.get("KOKORO_VOICE", "af_heart")
+repo = os.environ.get("KOKORO_REPO", "hexgrad/Kokoro-82M")
 with contextlib.redirect_stdout(sys.stderr):
-    pipeline = KPipeline(lang_code="a", repo_id="hexgrad/Kokoro-82M", device="cpu")
+    pipeline = KPipeline(lang_code="a", repo_id=repo, device="cpu")
     list(pipeline("Ready.", voice=voice))
 print(json.dumps({"type": "ready"}), flush=True)
 

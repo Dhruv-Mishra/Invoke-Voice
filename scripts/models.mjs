@@ -29,14 +29,14 @@ export const RUNTIME_DIR = process.env.RUNTIME_DIR
 export const TARGETS = {
   moonshine: {
     id: 'moonshine',
-    description: 'Moonshine Streaming Tiny Q4_K, tokenizer, and Silero VAD v6.2.0',
+    description: 'Moonshine Streaming Small Q4_K, tokenizer, and Silero VAD v6.2.0',
     files: [
       {
-        repo: 'cstr/moonshine-streaming-tiny-GGUF',
-        name: 'moonshine-streaming-tiny-q4_k.gguf',
+        repo: 'cstr/moonshine-streaming-small-GGUF',
+        name: 'moonshine-streaming-small-q4_k.gguf',
       },
       {
-        repo: 'cstr/moonshine-streaming-tiny-GGUF',
+        repo: 'cstr/moonshine-streaming-small-GGUF',
         name: 'tokenizer.bin',
       },
       {
@@ -285,7 +285,7 @@ Default Runtime Directory:
   ${RUNTIME_DIR}
 
 Available Targets:
-  moonshine   Moonshine Streaming Tiny Q4_K, tokenizer.bin, and Silero VAD v6.2.0
+  moonshine   Moonshine Streaming Small Q4_K, tokenizer.bin, and Silero VAD v6.2.0
   ling        Ling-3.0-Tiny abliterated APEX-I-Compact GGUF (~3.99GB)
   all         Download both moonshine and ling model files
   runtimes    Download and extract CrispASR Windows x86_64 CPU streaming CLI

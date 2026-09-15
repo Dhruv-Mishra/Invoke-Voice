@@ -3,15 +3,31 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { Supervisor } from '../src/supervisor.mjs';
+import { Supervisor, tools } from '../src/supervisor.mjs';
 
-test('dispatch is idempotent, status is passive, and only matching host evidence binds a task', async () => {
+test('exports the canonical LLM tool schemas', () => {
+  assert.deepEqual(tools.map(tool => tool.function.name), ['list_work', 'start_work', 'get_work_status', 'open_work', 'invoke_vscode']);
+  assert.equal(tools.find(tool => tool.function.name === 'start_work').function.parameters.properties.context.enum.includes('long_context'), true);
+});
+
+test('Copilot dispatch is idempotent, records progress, and exposes passive status', async () => {
   const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-supervisor-test-'));
   let dispatches = 0;
-  const bridge = { verifyRepo: async () => {}, prepare: async () => ({ worktree: dataDir, branch: 'voice/test' }), dispatch: async () => { dispatches += 1; }, open: async () => {} };
+  let vscodeRequest;
+  const bridge = {
+    verifyRepo: async () => {},
+    prepare: async () => ({ worktree: dataDir, branch: 'voice/test' }),
+    dispatch: async (task, area, report) => {
+      dispatches += 1;
+      report({ kind: 'progress', summary: 'Running tests.' });
+      return { result: 'Checks passed', sessionLog: path.join(dataDir, `${task.id}.jsonl`) };
+    },
+    invokeVSCode: async request => { vscodeRequest = request; return { invoked: true }; },
+    open: async () => {},
+  };
   try {
     let clock = Date.now();
-    const supervisor = new Supervisor({ dataDir, bridge, now: () => clock });
+    const supervisor = new Supervisor({ dataDir, bridge, now: () => clock, env: { COPILOT_MODEL: 'test-model' } });
     assert.equal((await supervisor.callTool('list_work')).tasks.length, 0);
     await assert.rejects(supervisor.callTool('start_work', { areaId: 'missing', objective: 'fix' }, { requestId: 'test' }));
     const area = await supervisor.registerArea({ name: 'PDF', repoPath: dataDir });
@@ -20,21 +36,15 @@ test('dispatch is idempotent, status is passive, and only matching host evidence
     await supervisor.callTool('start_work', args, { requestId: 'request-1' });
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(dispatches, 1);
-    clock += 31000;
-    assert.equal(supervisor.status(receipt.taskId).state, 'dispatch_unconfirmed');
-    const event = { id: 'event-1', taskId: receipt.taskId, cwd: dataDir, sessionId: 'actual-session', kind: 'UserPromptSubmit', prompt: 'unrelated prompt' };
-    assert.equal(supervisor.observe(event), false);
-    event.prompt = `[voice-task:${receipt.taskId}] Add tests`;
-    assert.equal(supervisor.observe(event), true);
-    assert.equal(supervisor.observe(event), false);
-    assert.equal(supervisor.observe({ ...event, id: 'wrong-session', sessionId: 'other' }), false);
-    clock += 121000;
-    assert.equal((await supervisor.callTool('get_work_status', { taskId: receipt.taskId })).state, 'unknown');
-    supervisor.observe({ ...event, id: 'event-2', kind: 'Stop' });
-    assert.equal(supervisor.status(receipt.taskId).state, 'agent_stopped');
-    supervisor.observe({ ...event, id: 'event-3', kind: 'result_ready', summary: 'Checks passed' });
-    supervisor.observe({ ...event, id: 'event-4', kind: 'Stop' });
-    assert.equal(supervisor.status(receipt.taskId).state, 'result_ready');
+    const status = await supervisor.callTool('get_work_status', { taskId: receipt.taskId });
+    assert.equal(status.state, 'result_ready');
+    assert.equal(status.result, 'Checks passed');
+    assert.equal(status.model, 'test-model');
+    assert.equal(status.context, 'long_context');
+    assert.equal(status.observations.at(-2).summary, 'Running tests.');
+    await supervisor.callTool('invoke_vscode', { areaId: area.id, prompt: 'Draft a fix', model: 'gpt-5.4', context: 'default' }, { requestId: 'vscode-1' });
+    assert.equal(vscodeRequest.directory, dataDir);
+    assert.equal(vscodeRequest.prompt, 'Draft a fix');
     const restored = new Supervisor({ dataDir, bridge });
     assert.equal(restored.snapshot().tasks.length, 1);
     assert.equal(dispatches, 1);

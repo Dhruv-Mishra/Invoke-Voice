@@ -9,6 +9,7 @@ const modelPath = path.resolve(root, process.env.LOCAL_LLM_PATH || '../LocalVoic
 const serverUrl = new URL(process.env.LOCAL_LLM_URL || 'http://127.0.0.1:8081/v1');
 const executable = process.env.LLAMA_SERVER_BIN || 'llama-server';
 const threads = process.env.LLAMA_THREADS || String(Math.max(1, Math.min(12, os.availableParallelism() - 4)));
+const contextSize = process.env.LLAMA_CONTEXT || '8192';
 const checkOnly = process.argv.includes('--check');
 
 if (!existsSync(modelPath)) throw new Error(`Ling model not found: ${modelPath}`);
@@ -30,13 +31,15 @@ if (!await healthy()) {
     '--host', serverUrl.hostname,
     '--port', serverUrl.port || '8081',
     '--alias', process.env.LOCAL_LLM_MODEL || 'ling-local',
-    '--ctx-size', '4096',
+    '--ctx-size', contextSize,
     '--batch-size', '256',
     '--ubatch-size', '256',
     '--threads', threads,
     '--threads-batch', threads,
     '--parallel', '1',
     '--flash-attn', 'auto',
+    '--load-mode', process.env.LLAMA_LOAD_MODE || 'mmap',
+    '--cache-reuse', process.env.LLAMA_CACHE_REUSE || '256',
     '--reasoning', 'off',
     '--no-reasoning-preserve',
     '--cors-origins', 'localhost',

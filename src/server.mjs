@@ -5,7 +5,7 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { WebSocketServer } from 'ws';
-import { Supervisor } from './supervisor.mjs';
+import { Supervisor, tools } from './supervisor.mjs';
 import { createVSCodeBridge } from './vscode-bridge.mjs';
 import { providerProfiles, streamReply } from './llm.mjs';
 import { createRealtimeVoice } from './realtime.mjs';
@@ -32,7 +32,9 @@ async function body(request) {
   return JSON.parse(raw);
 }
 function config() {
-  return { defaults: { provider: process.env.DEFAULT_PROVIDER || 'gemini', voiceMode: 'gemini-live' }, providers: providerProfiles(), voiceModes: [
+  const voiceMode = process.env.DEFAULT_VOICE_MODE || 'local';
+  const provider = voiceMode === 'local' ? 'local' : (process.env.DEFAULT_PROVIDER || 'local');
+  return { defaults: { provider, voiceMode, copilotModel: process.env.COPILOT_MODEL || 'gpt-5.6-sol', copilotContext: process.env.COPILOT_CONTEXT || 'long_context' }, providers: providerProfiles(), voiceModes: [
     { id: 'gemini-live', label: 'Gemini Live', configured: Boolean(process.env.GEMINI_API_KEY), model: process.env.GEMINI_LIVE_MODEL || 'gemini-3.1-flash-live-preview' },
     { id: 'openai-realtime', label: 'OpenAI Realtime', configured: Boolean(process.env.OPENAI_API_KEY), model: process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime' },
     { id: 'local', label: 'Moonshine + Ling + Kokoro', configured: localConfiguration().configured },
@@ -48,6 +50,7 @@ const server = http.createServer(async (request, response) => {
   try {
     if (request.method === 'GET' && url.pathname === '/api/config') return json(response, 200, config());
     if (request.method === 'GET' && url.pathname === '/api/state') return json(response, 200, supervisor.snapshot());
+    if (request.method === 'GET' && url.pathname === '/api/tools') return json(response, 200, tools);
     if (request.method === 'GET' && url.pathname === '/api/events') {
       response.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
       clients.add(response);

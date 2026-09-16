@@ -125,14 +125,24 @@ You do not need to push the repository to GitHub to test the installed app. Buil
 
 GitHub Releases is the distribution channel for installers; generated `release/` files remain ignored and should not be committed. This repository is public, so anyone with the release URL can download its assets. A private repository uses the same workflow, but downloaders must be authenticated collaborators.
 
-Install and authenticate the GitHub CLI once (`gh auth login`). From a clean, committed `master` branch, publish the next beta with:
+Install and authenticate the GitHub CLI once (`gh auth login`). From a clean, committed `master` branch, validate and build on this Windows machine, then upload the installer directly to GitHub Releases with:
+```powershell
+npm run release:beta:local
+```
+This local path runs the full test suite and `npm run dist:win`, smoke-tests the packaged executable, writes a SHA-256 checksum, commits the generated version, atomically pushes the commit and tag, and uploads both files with `gh release create`. It does not consume GitHub Actions minutes.
+
+To run the same release entirely on a GitHub-hosted Windows runner instead, use:
 ```powershell
 npm run release:beta
 ```
-The command pushes any committed local commits, dispatches the Windows GitHub Actions build, waits for it to finish, and then leaves the installer plus its SHA-256 checksum on [GitHub Releases](https://github.com/Dhruv-Mishra/VoiceOrchestration/releases). The workflow runs `npm ci`, the full test suite, and `npm run dist:win` before it commits the generated version, creates the tag, or publishes anything.
+The hosted command pushes any committed local commits, dispatches the GitHub Actions build, waits for it to finish, and publishes the same assets on [GitHub Releases](https://github.com/Dhruv-Mishra/VoiceOrchestration/releases).
 
 The default `prerelease` increment advances `0.1.1-beta.0` to `0.1.1-beta.1`; from the current stable `0.1.0`, it starts `0.1.1-beta.0`. Start a fresh patch or minor beta line explicitly:
 ```powershell
+npm run release:beta:local -- prepatch
+npm run release:beta:local -- preminor
+
+# Or use the GitHub-hosted runner
 npm run release:beta -- prepatch
 npm run release:beta -- preminor
 ```

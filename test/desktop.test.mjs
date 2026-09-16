@@ -49,12 +49,20 @@ test('beta publisher builds before atomically pushing its version tag and prerel
   const config = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
   const workflow = readFileSync(path.join(root, '.github', 'workflows', 'beta-release.yml'), 'utf8');
   const publisher = readFileSync(path.join(root, 'scripts', 'publish-beta.mjs'), 'utf8');
+  const localPublisher = readFileSync(path.join(root, 'scripts', 'publish-beta-local.mjs'), 'utf8');
   assert.equal(config.scripts['release:beta'], 'node scripts/publish-beta.mjs');
+  assert.equal(config.scripts['release:beta:local'], 'node scripts/publish-beta-local.mjs');
   assert.match(publisher, /git', \['status', '--porcelain'/);
   assert.match(publisher, /releaseBranch = process\.env\.RELEASE_BRANCH \|\| 'master'/);
   assert.ok(workflow.indexOf('run: npm run dist:win') < workflow.indexOf('git push --atomic'));
   assert.match(workflow, /permissions:\s+contents: write/);
   assert.match(workflow, /--generate-notes --prerelease --latest=false/);
+  assert.ok(localPublisher.indexOf("runNpm(['test'])") < localPublisher.indexOf("run('git', ['commit'"));
+  assert.ok(localPublisher.indexOf("runNpm(['run', 'dist:win'])") < localPublisher.indexOf("run('git', ['push'"));
+  assert.ok(localPublisher.indexOf('SUPERVISOR_PACKAGED_EXE: packagedExecutable') < localPublisher.indexOf("run('git', ['commit'"));
+  assert.match(localPublisher, /'ls-remote', '--exit-code', '--tags'/);
+  assert.match(localPublisher, /gh release upload.*--clobber/s);
+  assert.match(localPublisher, /'release', 'create'.*'--verify-tag'/s);
 });
 
 test('desktop allows setup documentation sources but rejects arbitrary URLs and protocols', context => {

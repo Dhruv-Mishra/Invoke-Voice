@@ -9,7 +9,7 @@ import {
   SlidersHorizontal, Sparkles, Square, Trash2, X,
 } from 'lucide';
 import VoiceSprite from './VoiceSprite.js';
-import { applyTheme, themes } from './themes.js';
+import { applyTheme, motionPreference, themes } from './themes.js';
 import './theme.css';
 
 window.DOMPurify = DOMPurify;
@@ -47,6 +47,7 @@ function savePreference(key, value) {
 
 const themeKey = 'voice-supervisor-theme-v2';
 const soundsKey = 'voice-supervisor-sounds-v1';
+const motionKey = 'voice-supervisor-motion-v1';
 const savedTheme = readPreference(themeKey);
 const savedSounds = readPreference(soundsKey);
 const theme = ref(themes.find(item => item.id === savedTheme) || themes[0]);
@@ -136,7 +137,9 @@ function onTheme(event) {
   stopSound();
   theme.value = next;
   applyTheme(next);
-  for (const input of document.querySelectorAll('input[name="appearance"]')) input.checked = input.value === next.id;
+  for (const button of document.querySelectorAll('button[data-appearance]')) {
+    button.setAttribute('aria-pressed', String(button.dataset.appearance === next.id));
+  }
   syncSoundControls();
   savePreference(themeKey, next.id);
 }
@@ -145,18 +148,19 @@ function renderThemeOptions() {
   const options = document.querySelector('.appearance-options');
   if (!options) return;
   options.replaceChildren(...themes.map(item => {
-    const label = document.createElement('label');
-    label.className = 'appearance-option';
-    const input = document.createElement('input');
-    input.type = 'radio';
-    input.name = 'appearance';
-    input.value = item.id;
-    input.checked = item.id === theme.value.id;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'appearance-option';
+    button.dataset.appearance = item.id;
+    button.setAttribute('aria-pressed', String(item.id === theme.value.id));
+    button.addEventListener('click', () => window.dispatchEvent(new CustomEvent('voice-supervisor:theme', { detail: { id: item.id } })));
     const image = document.createElement('img');
     image.src = item.sprite;
     image.alt = '';
-    label.append(input, image, document.createTextNode(item.label));
-    return label;
+    const label = document.createElement('span');
+    label.textContent = item.label;
+    button.append(image, label);
+    return button;
   }));
 }
 
@@ -185,6 +189,9 @@ const VoiceHome = {
 applyTheme(theme.value);
 renderThemeOptions();
 syncSoundControls();
+const motionSelect = document.getElementById('motion-preference');
+motionSelect.value = motionPreference(readPreference(motionKey));
+document.documentElement.dataset.motion = motionSelect.value;
 const homeApp = createApp(VoiceHome);
 homeApp.mount('#voice-personality-app');
 const listeners = new AbortController();
@@ -193,6 +200,11 @@ window.addEventListener('voice-supervisor:agent-state', onState, listenerOptions
 window.addEventListener('voice-supervisor:theme', onTheme, listenerOptions);
 document.addEventListener('click', onInteraction, listenerOptions);
 document.addEventListener('change', onSoundPreference, listenerOptions);
+motionSelect.addEventListener('change', () => {
+  const preference = motionPreference(motionSelect.value);
+  document.documentElement.dataset.motion = preference;
+  savePreference(motionKey, preference);
+}, listenerOptions);
 document.addEventListener('visibilitychange', stopSound, listenerOptions);
 window.addEventListener('blur', stopSound, listenerOptions);
 window.addEventListener('pagehide', stopSound, listenerOptions);

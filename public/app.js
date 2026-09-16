@@ -1,6 +1,8 @@
 // Voice Work Supervisor Frontend Application
 // Follows Clawpilot theme and local-only zero-build plain JS architecture
 
+import { createConversationUI } from './conversation-ui.js';
+
 let appConfig = null;
 let appState = { areas: [], tasks: [] };
 let conversation = []; // [{role, content}]
@@ -177,6 +179,7 @@ function setAgentState(state) {
   if (label) label.textContent = next;
   agentSprite.setAttribute('aria-label', `Agent ${next}`);
   agentSprite.title = `Agent ${next}`;
+  document.querySelector('.voice-strip').dataset.state = next;
   const active = isVoiceStarting || Boolean(voiceSocket);
   const microphoneLabel = active ? 'Disconnect microphone' : micToggleBtn.disabled ? `Microphone unavailable: ${routeStatusBadge.textContent}` : 'Connect microphone';
   micToggleBtn.title = microphoneLabel;
@@ -278,13 +281,7 @@ document.getElementById('dock-route-btn').addEventListener('click', () => {
   routeConfigBtn.click();
 });
 document.getElementById('calendar-date').textContent = new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric' }).format(new Date());
-document.querySelectorAll('input[name="appearance"]').forEach(input => {
-  input.checked = input.value === document.documentElement.dataset.appearance;
-  input.addEventListener('change', () => {
-    window.dispatchEvent(new CustomEvent('voice-supervisor:theme', { detail: { id: input.value } }));
-    drawMicLevel(0);
-  });
-});
+window.addEventListener('voice-supervisor:theme', () => drawMicLevel(0));
 
 const conversationDialog = document.getElementById('conversation-dialog');
 function openConversation(text) {
@@ -292,6 +289,7 @@ function openConversation(text) {
   if (!conversationDialog.open) conversationDialog.showModal();
   chatInput.focus();
 }
+const conversationUI = createConversationUI(document, openConversation);
 document.getElementById('open-chat-btn').addEventListener('click', () => openConversation());
 document.getElementById('close-chat-btn').addEventListener('click', () => conversationDialog.close());
 window.addEventListener('voice-supervisor:compose', event => openConversation(event.detail?.text));
@@ -351,6 +349,7 @@ activateView('home');
 // Microphone Level Visualizer
 const canvasCtx = micCanvas.getContext('2d');
 function drawMicLevel(level) {
+  if (micCanvas.hidden) return;
   const width = micCanvas.width;
   const height = micCanvas.height;
   canvasCtx.clearRect(0, 0, width, height);
@@ -461,6 +460,7 @@ function appendMessage(role, text, options = {}) {
   }
   chatMessages.appendChild(bubble);
   chatMessages.scrollTop = chatMessages.scrollHeight;
+  conversationUI.message(role, text, bubble);
 }
 
 function notifyReset(reason) {
@@ -482,6 +482,7 @@ function handleRouteSwitch(reason) {
   }
   conversation = [];
   chatMessages.replaceChildren();
+  conversationUI.clear();
   partialTranscript.style.display = 'none';
   partialTranscript.textContent = '';
   notifyReset(reason);
@@ -812,12 +813,14 @@ async function startVoiceSession() {
           if (data.partial) {
             partialTranscript.style.display = 'block';
             partialTranscript.textContent = `${data.role}: ${data.text}...`;
+            conversationUI.preview(data.role || 'assistant', data.text);
           } else {
             partialTranscript.style.display = 'none';
             partialTranscript.textContent = '';
             appendMessage(data.role || 'assistant', data.text);
           }
         } else if (data.type === 'interrupted') {
+          conversationUI.clearCaption();
           isVoiceThinking = false;
           setAgentState('listening');
           clearPlayback();
@@ -830,6 +833,7 @@ async function startVoiceSession() {
           setAgentState(['thinking', 'speaking', 'listening'].includes(data.state) ? data.state : 'listening');
           routeStatusBadge.textContent = `Voice: ${data.state}`;
         } else if (data.type === 'error') {
+          conversationUI.clearCaption();
           appendMessage('system', `Voice Error: ${data.message || 'Unknown error'}`);
           if (data.fatal) {
             stopVoiceSession();
@@ -864,6 +868,7 @@ async function startVoiceSession() {
 }
 
 function stopVoiceSession() {
+  conversationUI.clearCaption();
   currentSessionToken++;
   isVoiceStarting = false;
   pendingCommit = false;
@@ -986,6 +991,7 @@ window.addEventListener('blur', endPttHold);
 document.addEventListener('visibilitychange', () => { if (document.hidden) endPttHold(); });
 
 interruptBtn.addEventListener('click', () => {
+  conversationUI.clearCaption();
   clearPlayback();
   if (voiceSocket && voiceSocket.readyState === WebSocket.OPEN) {
     voiceSocket.send(JSON.stringify({ type: 'interrupt' }));
@@ -2470,10 +2476,12 @@ async function sendChatMessage() {
             accumulated += evt.text;
             renderSafeMarkdown(assistantBubble, accumulated);
             chatMessages.scrollTop = chatMessages.scrollHeight;
+            conversationUI.preview('assistant', accumulated);
           } else if (evt.type === 'tool') {
             const toolStr = typeof evt.result === 'object' ? JSON.stringify(evt.result) : String(evt.result);
             appendMessage('tool', `Tool [${evt.name}]: ${toolStr}`, { plain: typeof evt.result === 'object' });
           } else if (evt.type === 'error') {
+            conversationUI.clearCaption();
             appendMessage('system', `Chat Error: ${evt.message}`);
           } else if (evt.type === 'done') {
             // Done
@@ -2484,11 +2492,13 @@ async function sendChatMessage() {
 
     if (chatToken === currentChatToken && !abortController.signal.aborted && accumulated) {
       conversation.push({ role: 'assistant', content: accumulated });
+      conversationUI.message('assistant', accumulated, assistantBubble);
     }
   } catch (err) {
     if (chatToken !== currentChatToken || abortController.signal.aborted || err.name === 'AbortError') {
       return;
     }
+    conversationUI.clearCaption();
     appendMessage('system', `Error sending message: ${err.message}`);
   } finally {
     if (currentChatAbortController === abortController) {
@@ -2513,6 +2523,7 @@ btnClearChat.addEventListener('click', () => {
   currentChatToken++;
   conversation = [];
   chatMessages.replaceChildren();
+  conversationUI.clear();
   partialTranscript.style.display = 'none';
   sessionResetNotice.style.display = 'none';
 });

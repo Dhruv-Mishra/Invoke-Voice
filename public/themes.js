@@ -30,7 +30,7 @@ const defaultTokens = {
 
 const themeDefaults = Object.freeze({
   background: alpineBackground,
-  sprite: new URL('./copilot_icon.webp', import.meta.url).href,
+  sprite: new URL('./copilot-icon.webp', import.meta.url).href,
   tokens: Object.freeze(defaultTokens),
   animations: defaultAnimations,
   sounds: Object.freeze({ navigation: null, action: null }),
@@ -51,10 +51,15 @@ export function defineTheme(definition) {
 export const themes = Object.freeze([
   { id: 'alpine', label: 'Alpine' },
   { id: 'opal', label: 'Opal',
-    sprite: new URL('./opal-sprite.png', import.meta.url).href,
+    sprite: new URL('./opal-icon.webp', import.meta.url).href,
     animations: { idle: 'sprite-think' },
     tokens: { '--cp-accent': '#537bce', '--cp-panel': 'rgba(255, 255, 255, 0.57)' } },
+  { id: 'jarvis', label: 'Jarvis', sprite: new URL('./jarvis-icon.webp', import.meta.url).href },
 ].map(defineTheme));
+
+export function motionPreference(value) {
+  return ['system', 'reduce', 'full'].includes(value) ? value : 'system';
+}
 
 const appliedTokens = new Set();
 

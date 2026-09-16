@@ -12,6 +12,8 @@
         param || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
       document.documentElement.setAttribute("data-theme", theme);
       try {
+        const motion = localStorage.getItem("voice-supervisor-motion-v1");
+        document.documentElement.dataset.motion = ['system', 'reduce', 'full'].includes(motion) ? motion : 'system';
         const personality = localStorage.getItem("voice-supervisor-personality-v1") || "copilot";
         document.documentElement.setAttribute("data-personality", personality);
       } catch (_) {
@@ -453,36 +455,34 @@
       .btn-icon { width: 44px; min-width: 44px; }
     }
 
-    @media (prefers-reduced-motion: reduce) {
-      *, *::before, *::after {
-        animation-duration: 0.01ms !important;
-        animation-iteration-count: 1 !important;
-        transition-duration: 0.01ms !important;
-        scroll-behavior: auto !important;
-      }
-    }
   </style>
 </head>
 <body data-view="home">
   <header class="top-bar">
+    <div class="sidebar-brand"><i data-lucide="sparkles" aria-hidden="true"></i><span>Supervisor</span></div>
     <nav class="view-tabs" role="tablist" aria-label="Supervisor views">
-      <button class="view-tab" id="home-tab" type="button" role="tab" aria-selected="true" aria-controls="voice-personality-app" data-view="home">
+      <button class="view-tab" id="home-tab" type="button" role="tab" title="Home" aria-selected="true" aria-controls="voice-personality-app" data-view="home">
         <i data-lucide="house"></i><span>Home</span>
       </button>
-      <button class="view-tab" id="workspace-tab" type="button" role="tab" aria-selected="false" aria-controls="workspace-view" data-view="workspace" tabindex="-1">
+      <button class="view-tab" id="workspace-tab" type="button" role="tab" title="Tasks" aria-selected="false" aria-controls="workspace-view" data-view="workspace" tabindex="-1">
         <i data-lucide="check-square"></i><span>Tasks</span>
       </button>
-      <button class="view-tab" id="calendar-tab" type="button" role="tab" aria-selected="false" aria-controls="calendar-view" data-view="calendar" tabindex="-1">
+      <button class="view-tab" id="calendar-tab" type="button" role="tab" title="Calendar" aria-selected="false" aria-controls="calendar-view" data-view="calendar" tabindex="-1">
         <i data-lucide="calendar-days"></i><span>Calendar</span>
       </button>
-      <button class="view-tab" id="files-tab" type="button" role="tab" aria-selected="false" aria-controls="files-view" data-view="files" tabindex="-1">
+      <button class="view-tab" id="files-tab" type="button" role="tab" title="Files" aria-selected="false" aria-controls="files-view" data-view="files" tabindex="-1">
         <i data-lucide="file"></i><span>Files</span>
       </button>
-      <button class="view-tab" id="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settings-view" data-view="settings" tabindex="-1">
+      <button class="view-tab" id="settings-tab" type="button" role="tab" title="Settings" aria-selected="false" aria-controls="settings-view" data-view="settings" tabindex="-1">
         <i data-lucide="settings"></i><span>Settings</span>
       </button>
     </nav>
-    <div class="sidebar-footer"><p>Less searching.<br>More doing.</p></div>
+    <section class="sidebar-history" aria-labelledby="history-title">
+      <div class="history-header"><h2 id="history-title">Chat history</h2><button class="btn btn-icon" id="history-compose-btn" type="button" title="Compose message" aria-label="Compose message"><i data-lucide="edit-2"></i></button></div>
+      <p class="history-empty" id="history-empty">No messages yet</p>
+      <div id="chat-history" class="history-list" role="list" aria-label="Current conversation"></div>
+    </section>
+    <div class="sidebar-footer"><span>Current session</span></div>
     <div class="header-status">
       <span class="badge" id="route-status-badge">Checking...</span>
       <button class="btn" id="route-config-btn" type="button" aria-haspopup="dialog" aria-controls="route-config-dialog" title="Configure provider, model, and voice route">
@@ -492,10 +492,10 @@
     </div>
   </header>
 
-  <main id="voice-personality-app" role="tabpanel" aria-labelledby="home-tab"></main>
-
   <div class="app-main">
-  <div class="application-body" id="workspace-view" role="tabpanel" aria-labelledby="workspace-tab">
+  <div class="page-views">
+  <main id="voice-personality-app" role="tabpanel" aria-labelledby="home-tab"></main>
+  <div class="application-body" id="workspace-view" role="tabpanel" aria-labelledby="workspace-tab" hidden>
     <main class="center-pane">
       <details class="areas-disclosure" id="areas-disclosure">
         <summary class="areas-summary">Work Areas</summary>
@@ -587,21 +587,25 @@
       </div>
 
       <section class="settings-section">
-        <h3 class="settings-section-title">Appearance</h3>
-        <div class="appearance-options" role="radiogroup" aria-label="Theme"></div>
-        <div class="form-row-checkbox">
+        <h2 class="settings-section-title"><i data-lucide="sparkles" aria-hidden="true"></i>Appearance</h2>
+        <div class="setting-row"><span id="avatar-label">Assistant avatar</span><div class="appearance-options" role="group" aria-labelledby="avatar-label"></div></div>
+        <div class="setting-row"><label for="motion-preference">Motion</label><select id="motion-preference"><option value="system">Use device setting</option><option value="reduce">Reduced motion</option><option value="full">Full motion</option></select></div>
+        <div class="form-row-checkbox setting-row">
           <input type="checkbox" id="theme-sounds" data-theme-sounds>
           <label for="theme-sounds">Interaction sounds</label>
         </div>
       </section>
+      <section class="settings-section">
+      <h2 class="settings-section-title"><i data-lucide="sliders-horizontal" aria-hidden="true"></i>Voice &amp; tools</h2>
       <div class="utility-toolbar">
         <button class="btn" type="button" id="settings-route-btn"><i data-lucide="sliders-horizontal"></i>Voice &amp; model</button>
         <button class="btn" type="button" data-open-view="tool-lab"><i data-lucide="flask-conical"></i>Tool Lab</button>
       </div>
+      </section>
 
       <form id="settings-form" class="settings-form">
         <section class="settings-section settings-defaults">
-          <h3 class="settings-section-title">General &amp; Coding Agent Defaults</h3>
+          <h2 class="settings-section-title"><i data-lucide="folder-kanban" aria-hidden="true"></i>Coding defaults</h2>
           <div class="form-group">
             <label class="control-label" for="settings-default-area">Default Work Area</label>
             <select id="settings-default-area" aria-label="Default Work Area"></select>
@@ -625,7 +629,7 @@
         </section>
 
         <section class="settings-section">
-          <h3 class="settings-section-title">Notification Scenarios</h3>
+          <h2 class="settings-section-title"><i data-lucide="message-square" aria-hidden="true"></i>Notifications</h2>
           <span class="field-hint">Select which task events trigger notifications.</span>
           <div class="form-row-checkbox">
             <input type="checkbox" id="settings-notify-completed">
@@ -642,7 +646,7 @@
         </section>
 
         <section class="settings-section">
-          <h3 class="settings-section-title">Delivery Channels</h3>
+          <h2 class="settings-section-title"><i data-lucide="send" aria-hidden="true"></i>Delivery</h2>
           <span class="field-hint">Choose how notifications are delivered when triggered.</span>
           <div class="form-row-checkbox">
             <input type="checkbox" id="settings-browser-notifications">
@@ -664,7 +668,7 @@
       </form>
 
       <section class="settings-section">
-        <h3 class="settings-section-title">MCP Integrations</h3>
+        <h2 class="settings-section-title"><i data-lucide="plus-circle" aria-hidden="true"></i>Integrations</h2>
         <span class="field-hint">Configured MCP tools and integrations.</span>
         <div class="integrations-table-wrapper">
           <table class="integrations-table" aria-label="MCP Integrations">
@@ -683,6 +687,15 @@
       </section>
     </div>
   </section>
+  </div>
+  <div class="caption-region">
+    <div id="closed-caption" class="closed-caption" hidden>
+      <span id="caption-speaker" class="caption-speaker"></span>
+      <p id="caption-text" tabindex="0" aria-label="Current caption"></p>
+      <button type="button" id="dismiss-caption-btn" class="btn btn-icon" aria-label="Dismiss caption" title="Dismiss caption"><i data-lucide="x"></i></button>
+    </div>
+    <span id="caption-announcement" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></span>
+  </div>
   </div>
 
   <dialog id="conversation-dialog" aria-labelledby="conversation-title">
@@ -873,7 +886,9 @@
 
   <div class="voice-strip" role="region" aria-label="Voice controls">
     <button type="button" class="dock-utility" id="voice-options-btn" aria-label="Voice options" title="Voice options" aria-expanded="false" aria-controls="voice-options"><i data-lucide="sliders-horizontal"></i></button>
-    <canvas id="mic-canvas" width="600" height="96" aria-label="Microphone volume level"></canvas>
+    <canvas id="mic-canvas" width="600" height="96" aria-label="Microphone volume level" hidden></canvas>
+    <div class="dock-bars dock-bars-left" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div>
+    <div class="dock-bars dock-bars-right" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div>
     <button class="btn btn-accent" id="mic-toggle-btn" type="button" aria-label="Connect or Disconnect Microphone" title="Connect microphone">
       <i data-lucide="mic"></i><span id="mic-btn-label">Connect Mic</span>
     </button>

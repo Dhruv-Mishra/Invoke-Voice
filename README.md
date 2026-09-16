@@ -19,19 +19,44 @@ The copy never overwrites `.env`. Put provider keys and local paths there; do no
 
 ## Build And Run
 
-Quick path:
+Quick path (release mode):
 ```powershell
 npm start
 ```
-`npm start` builds the browser app, then starts the supervisor at the printed loopback URL, normally `http://127.0.0.1:4317`.
+`npm start` builds current frontend production assets, then starts the supervisor at the printed loopback URL, normally `http://127.0.0.1:4317`. Built assets are served directly with accurate MIME types and security headers.
 
-Explicit build and test path:
+Debug mode (live Vite middleware, no second process needed):
+```powershell
+npm start -debug
+# or
+npm run dev
+```
+Debug mode mounts Vite dev middleware directly on the backend loopback server (`http://127.0.0.1:4317`). Frontend and backend share the exact same port and origin, preventing routing, API, and WebSocket drift.
+
+Explicit preflight and test path:
 ```powershell
 npm run build
 npm test
 npm start
 ```
-`npm run build` and `npm test` are the explicit preflight; the final `npm start` runs the built app.
+`npm run build` explicitly builds `dist/`; `npm test` runs deterministic backend, provider, startup, and browser tests.
+
+### Startup Command Contract
+
+The unified startup flow (`scripts/start.mjs`) handles lifecycle, modes, and clean shutdown (SIGINT/SIGTERM):
+
+| Command / Flag | Mode | Description |
+| --- | --- | --- |
+| `npm start` | Release | Default production flow; rebuilds and serves current `dist/` assets. |
+| `npm start -debug` | Debug | Mounts Vite dev middleware on backend server; instant HMR and live modules. |
+| `npm start -- -debug` | Debug | Alternative syntax for debug mode via npm flag forwarding. |
+| `npm run dev` | Debug | Shortcut for debug mode (`scripts/start.mjs --debug`). |
+| `npm run local` | Release + Local | Starts or connects to `llama-server` for Ling, then launches supervisor. |
+| `npm start -local` | Release + Local | Starts unified supervisor with local voice stack. |
+| `npm start -debug -local` | Debug + Local | Vite live middleware with local `llama-server` and speech stack. |
+| `npm run local:check` | Local Check | Validates Ling local LLM generation (`READY`) and exits. |
+| `--port <num>`, `-p <num>` | Any | Binds to custom port (defaults to `PORT` env or 4317). |
+| `--build` | Release | Forces frontend rebuild even if `dist/index.html` already exists. |
 
 ## Local Voice
 
@@ -63,16 +88,18 @@ Set relevant keys in `.env` using [`example.env`](example.env), then choose a pr
 
 ## Development And Desktop
 
-Run the backend and Vite in separate PowerShell sessions:
+Unified debug workflow (single PowerShell session):
 ```powershell
-# session 1
-npm start
-
-# session 2
+npm start -debug
+# or
 npm run dev
 ```
-`npm run dev` serves the frontend at `http://127.0.0.1:4318` and proxies `/api` and `/voice` to `http://127.0.0.1:4317`. The backend must already be running; port 4318 is strict.
+`npm start -debug` runs the backend and mounts Vite dev middleware directly on the loopback server (`http://127.0.0.1:4317`). Live source updates, HMR, and direct backend APIs run on one origin with zero configuration.
 
+Standalone Vite dev server (optional):
+If running Vite independently, `npm run build` once, then `npx vite --host 127.0.0.1` proxies to `PORT` (default 4317).
+
+Electron desktop:
 ```powershell
 npm run desktop
 ```
@@ -80,7 +107,8 @@ Electron builds first and starts its own loopback supervisor. It does not start 
 
 ## Architecture Map
 
-- [`src/server.mjs`](src/server.mjs): loopback HTTP, SSE, WebSocket, provider config, and persisted state.
+- [`scripts/start.mjs`](scripts/start.mjs): unified startup coordinator owning flags, builds, local LLM lifecycle, and shutdown.
+- [`src/server.mjs`](src/server.mjs): loopback HTTP, Vite middleware, SSE, WebSocket, provider config, and persisted state.
 - [`src/llm.mjs`](src/llm.mjs), [`src/local-voice.mjs`](src/local-voice.mjs), [`src/realtime.mjs`](src/realtime.mjs): text, local voice, and realtime adapters.
 - [`scripts/start-local.mjs`](scripts/start-local.mjs), [`desktop.cjs`](desktop.cjs): local and Electron launch.
 - [`public/main.js`](public/main.js), [`public/app.js`](public/app.js): UI plus app-scoped transport/audio state.

@@ -16,8 +16,8 @@ export default defineConfig({
     port: 4318,
     strictPort: true,
     proxy: {
-      '/api': 'http://127.0.0.1:4317',
-      '/voice': { target: 'ws://127.0.0.1:4317', ws: true },
+      '/api': `http://127.0.0.1:${process.env.PORT || 4317}`,
+      '/voice': { target: `ws://127.0.0.1:${process.env.PORT || 4317}`, ws: true, changeOrigin: true },
     },
   },
 });

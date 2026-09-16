@@ -1,12 +1,61 @@
+# Dependencies
 node_modules/
+
+# Build and packaging outputs
 dist/
 release/
+
+# Local configuration and secrets
 .env
 .env.*
 !example.env
+
+# Local runtimes, models, and search indexes
 .venv/
 models/
 runtimes/
-*.log
-__pycache__/
 .zvec-grep/
+
+# Test and browser artifacts
+coverage/
+.nyc_output/
+test-results/
+playwright-report/
+blob-report/
+.playwright-mcp/
+screenshots/
+artifacts/
+
+# Logs and diagnostics
+*.log
+*.log.*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.dmp
+*.trace
+
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Temporary and backup files
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+*~
+
+# Editor and operating-system metadata
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+Desktop.ini

@@ -169,98 +169,6 @@ function backendLabel(id) {
   return id === 'agency' ? 'Agency' : id === 'copilot' ? 'Copilot' : (id || 'Copilot');
 }
 
-const selectShells = new Set();
-function closeSelectShells(except = null) {
-  for (const shell of selectShells) if (shell !== except) shell.classList.remove('open');
-}
-
-function enhanceSelect(select) {
-  if (select.dataset.enhanced === 'true') return;
-  select.dataset.enhanced = 'true';
-  const shell = document.createElement('div');
-  shell.className = 'select-shell';
-  select.before(shell);
-  shell.appendChild(select);
-  select.classList.add('select-native');
-
-  const trigger = document.createElement('button');
-  trigger.type = 'button';
-  trigger.className = 'select-trigger';
-  trigger.setAttribute('aria-haspopup', 'listbox');
-  trigger.setAttribute('aria-expanded', 'false');
-  const menu = document.createElement('div');
-  menu.className = 'select-menu';
-  menu.setAttribute('role', 'listbox');
-  shell.append(trigger, menu);
-  selectShells.add(shell);
-
-  const close = () => {
-    shell.classList.remove('open');
-    trigger.setAttribute('aria-expanded', 'false');
-  };
-  const sync = () => {
-    const selected = select.selectedOptions[0];
-    trigger.textContent = selected?.textContent || 'Select';
-    trigger.disabled = select.disabled;
-    trigger.setAttribute('aria-label', select.getAttribute('aria-label') || selected?.textContent || 'Select');
-    menu.replaceChildren();
-    for (const option of select.options) {
-      const item = document.createElement('button');
-      item.type = 'button';
-      item.className = `select-option${option.selected ? ' selected' : ''}`;
-      item.textContent = option.textContent;
-      item.disabled = option.disabled;
-      item.setAttribute('role', 'option');
-      item.setAttribute('aria-selected', String(option.selected));
-      item.addEventListener('click', () => {
-        select.value = option.value;
-        select.dispatchEvent(new Event('change', { bubbles: true }));
-        close();
-        trigger.focus();
-      });
-      menu.appendChild(item);
-    }
-  };
-  select.refreshEnhanced = sync;
-
-  trigger.addEventListener('click', () => {
-    const opening = !shell.classList.contains('open');
-    closeSelectShells(shell);
-    shell.classList.toggle('open', opening);
-    trigger.setAttribute('aria-expanded', String(opening));
-  });
-  trigger.addEventListener('keydown', event => {
-    if (event.key === 'Escape') { close(); return; }
-    if (['ArrowDown', 'Enter', ' '].includes(event.key) && !shell.classList.contains('open')) {
-      event.preventDefault();
-      shell.classList.add('open');
-      trigger.setAttribute('aria-expanded', 'true');
-      menu.querySelector('.selected, .select-option:not(:disabled)')?.focus();
-    }
-  });
-  menu.addEventListener('keydown', event => {
-    if (event.key === 'Escape') { close(); trigger.focus(); return; }
-    if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return;
-    event.preventDefault();
-    const options = [...menu.querySelectorAll('.select-option:not(:disabled)')];
-    const current = options.indexOf(document.activeElement);
-    const next = event.key === 'ArrowDown' ? (current + 1) % options.length : (current - 1 + options.length) % options.length;
-    options[next]?.focus();
-  });
-  select.addEventListener('change', sync);
-  new MutationObserver(sync).observe(select, { childList: true, subtree: true, attributes: true });
-  sync();
-}
-
-function refreshSelect(select) {
-  select?.refreshEnhanced?.();
-}
-
-document.querySelectorAll('select').forEach(enhanceSelect);
-document.addEventListener('click', event => {
-  if (![...selectShells].some(shell => shell.contains(event.target))) closeSelectShells();
-});
-
 function setAgentState(state) {
   if (!agentSprite) return;
   const next = ['idle', 'connecting', 'listening', 'thinking', 'speaking'].includes(state) ? state : 'idle';
@@ -1269,7 +1177,6 @@ function populateSettingsView() {
       });
     }
     settingsDefaultBackend.value = appState.settings?.defaultBackend || appConfig?.defaults?.codingBackend || 'copilot';
-    refreshSelect(settingsDefaultBackend);
   }
 
   if (appConfig) {
@@ -1286,11 +1193,6 @@ function populateSettingsView() {
       settingsCopilotContext.value = appConfig.defaults.copilotContext;
     }
   }
-  refreshSelect(settingsDefaultArea);
-  refreshSelect(settingsDefaultBackend);
-  refreshSelect(settingsCopilotModel);
-  refreshSelect(settingsCopilotContext);
-
   const s = appState.settings || {};
   if (settingsNotifyCompleted) settingsNotifyCompleted.checked = s.notifyCompleted !== false;
   if (settingsNotifyNeedsInput) settingsNotifyNeedsInput.checked = s.notifyNeedsInput !== false;
@@ -1377,7 +1279,6 @@ async function loadConfig() {
     });
     if (appConfig.defaults?.provider) {
       providerSelect.value = appConfig.defaults.provider;
-      refreshSelect(providerSelect);
     }
 
     voiceModeSelect.replaceChildren();
@@ -1390,7 +1291,6 @@ async function loadConfig() {
     });
     if (appConfig.defaults?.voiceMode) {
       voiceModeSelect.value = appConfig.defaults.voiceMode;
-      refreshSelect(voiceModeSelect);
     }
 
     const currentProv = appConfig.providers?.find(p => p.id === providerSelect.value);
@@ -1593,7 +1493,6 @@ async function openAreaModal(area = null) {
       if (areaCustomAgentGroup) areaCustomAgentGroup.style.display = 'flex';
       areaAgentInput.value = currentAgent;
     }
-    refreshSelect(areaAgentSelect);
   } else {
     areaDialogTitle.textContent = 'Register Work Area';
     areaIdInput.value = '';
@@ -1616,7 +1515,6 @@ async function openAreaModal(area = null) {
       areaAgentSelect.value = 'agent';
       if (areaCustomAgentGroup) areaCustomAgentGroup.style.display = 'none';
     }
-    refreshSelect(areaAgentSelect);
   }
   areaDialog.showModal();
   updateIcons();
@@ -2242,13 +2140,11 @@ function selectToolDefinition(definition) {
   toolRunStatus.textContent = 'Idle';
   toolRunStatus.className = 'badge';
   toolResult.textContent = 'Ready';
-  for (const shell of selectShells) if (toolForm.contains(shell)) selectShells.delete(shell);
   toolForm.replaceChildren();
 
   for (const [propertyName, schema] of Object.entries(parameters.properties || {})) {
-    const { field, control } = createToolField(propertyName, schema, parameters.required?.includes(propertyName));
+    const { field } = createToolField(propertyName, schema, parameters.required?.includes(propertyName));
     toolForm.appendChild(field);
-    if (control.tagName === 'SELECT') enhanceSelect(control);
   }
 
   const actions = document.createElement('div');
@@ -2420,7 +2316,6 @@ async function updateTaskAgents(areaId) {
     if (currentArea?.agent && [...taskAgentSelect.options].some(o => o.value === currentArea.agent)) {
       taskAgentSelect.value = currentArea.agent;
     }
-    refreshSelect(taskAgentSelect);
   } catch (_) {
     const opt = document.createElement('option');
     opt.value = 'agent';
@@ -2450,11 +2345,9 @@ btnNewTask.addEventListener('click', async () => {
   } else {
     taskAreaSelect.value = appState.areas[0]?.id || '';
   }
-  refreshSelect(taskAreaSelect);
 
   if (taskBackendSelect) {
     taskBackendSelect.value = appState.settings?.defaultBackend || appConfig?.defaults?.codingBackend || 'copilot';
-    refreshSelect(taskBackendSelect);
   }
 
   taskObjectiveInput.value = '';
@@ -2464,8 +2357,6 @@ btnNewTask.addEventListener('click', async () => {
   if (taskContextSelect) {
     taskContextSelect.value = appState.settings?.copilotContext || appConfig?.defaults?.copilotContext || 'default';
   }
-  refreshSelect(taskModelSelect);
-  refreshSelect(taskContextSelect);
 
   const effectiveAreaId = taskAreaSelect.value || appState.settings?.defaultAreaId || appState.areas[0]?.id;
   await updateTaskAgents(effectiveAreaId);

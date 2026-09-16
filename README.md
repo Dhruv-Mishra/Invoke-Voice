@@ -1,106 +1,104 @@
 # Voice Work Supervisor
 
-Windows prototype for talking to a work supervisor, starting coding tasks in isolated worktrees, and reading passive progress observations.
+Windows Node/Vue voice console for local or hosted voice and coding sessions. The server is loopback-only; provider keys stay in the server process.
 
-See [usage instructions.md](usage%20instructions.md) for the concise operating guide and tool list.
+## Prerequisites And Install
 
-## Install
+- Windows PowerShell and Node.js 22 or newer.
+- Local voice is optional; it additionally needs `llama-server`, Python 3.12, `tar`, and first-run network access for models and Kokoro.
+- Coding sessions need an authenticated GitHub Copilot CLI; Agency is optional.
 
-Requires Node.js 22 or newer.
-
+From this directory, install dependencies and create `.env` only when it is absent:
 ```powershell
-cd voice-supervisor
-npm install
-Copy-Item example.env .env   # first setup only; do not overwrite a configured .env
+npm ci
+if (-not (Test-Path -LiteralPath .env)) {
+    Copy-Item -LiteralPath example.env -Destination .env
+}
 ```
+The copy never overwrites `.env`. Put provider keys and local paths there; do not commit them.
 
-Put secrets only in `.env`. The browser never receives provider keys.
+## Build And Run
 
-Build the local zvec-grep index once, then use hybrid code search:
-
-```powershell
-npm run search:setup
-npm run search -- "where task status is rendered"
-```
-
-The generated `.zvec-grep/` index and embedding model stay local. The setup command also starts the search-only MCP endpoint at `http://127.0.0.1:7999/mcp`; workspace Copilot and VS Code sessions discover it through `.github/mcp.json`.
-
-## Hosted Voice
-
-Set `GEMINI_API_KEY` in `.env`. The configured hosted voice model is `gemini-3.8-live`; the local voice flow remains the application default. Gemini tools run non-blocking and return independently with `WHEN_IDLE` scheduling so results do not cut off active speech.
-
+Quick path:
 ```powershell
 npm start
 ```
+`npm start` builds the browser app, then starts the supervisor at the printed loopback URL, normally `http://127.0.0.1:4317`.
 
-Open the printed loopback URL, normally `http://127.0.0.1:4317`, select **Gemini Live**, and connect the microphone. `npm run desktop` starts the same hosted flow in Electron. The app opens on the local route by default.
+Explicit build and test path:
+```powershell
+npm run build
+npm test
+npm start
+```
+`npm run build` and `npm test` are the explicit preflight; the final `npm start` runs the built app.
 
 ## Local Voice
 
-The default route is Moonshine Streaming Small through CrispASR, Ling through llama.cpp, and Kokoro-82M through Python. A final transcript is committed after 800 ms of silence.
-
-Expected assets:
-
-- `../LocalVoiceStack/LLMs/Ling-3.0-tiny-abliterated-APEX-I-Compact.gguf`
-- `../LocalVoiceStack/STT_Models/moonshine-streaming-small-q4_k.gguf`
-- `../LocalVoiceStack/STT_Models/tokenizer.bin`
-- `%LOCALAPPDATA%\VoiceSupervisor\models\ggml-silero-v6.2.0.bin`
-- `%LOCALAPPDATA%\VoiceSupervisor\runtimes\crispasr.exe`
-
-Provision missing runtimes or Moonshine support files:
-
+Provision the model assets and runtimes:
 ```powershell
+npm run models -- all
 npm run models -- runtimes
-npm run models -- moonshine
 winget install --exact --id ggml.llamacpp
 winget install --exact --id Python.Python.3.12
-
 py -3.12 -m venv .venv
-.venv\Scripts\python.exe -m pip install -r requirements-local.txt
+.\.venv\Scripts\python.exe -m pip install -r requirements-local.txt
 ```
+`all` downloads Ling, Moonshine Q4_K, its tokenizer, and Silero VAD; `runtimes` downloads the CrispASR Windows runtime. Use `npm run models -- ling` or `npm run models -- moonshine` for one group.
 
-Kokoro downloads its official weights and voice on first use. Validate Ling once, then start both the LLM server and supervisor:
+Downloads go to `%LOCALAPPDATA%\VoiceSupervisor\models` and `%LOCALAPPDATA%\VoiceSupervisor\runtimes`. The checked-in [`example.env`](example.env) instead points `LOCAL_LLM_PATH` and `MOONSHINE_MODEL` to sibling `..\LocalVoiceStack`; keep that layout or change them to fully expanded absolute paths. `MODEL_DIR`, `RUNTIME_DIR`, `CRISPASR_BIN`, and `VAD_MODEL` override remaining paths.
 
+Kokoro downloads its Hugging Face weights and voice on first use. After caching, `$env:HF_HUB_OFFLINE = '1'` enables offline voice startup.
+
+Check Ling, then start local llama.cpp and the supervisor:
 ```powershell
 npm run local:check
 npm run local
 ```
+`local:check` proves only that Ling returns text; it does not validate microphone, CrispASR, or Kokoro. `local` starts or reuses a healthy loopback llama.cpp server, then starts the supervisor. CrispASR 0.8.32 requires canonical Moonshine Small Q4_K; a Q8_0 override falls back to Q4_K when available and `/api/config` reports requested/effective paths.
 
-Open the printed URL and connect the microphone. Local text and voice are preselected. Ling remains resident in llama.cpp, while the supervisor warms the compact tool-free voice prefix, a clean CrispASR standby, and the shared Kokoro worker during startup. Set `PREWARM_LOCAL_VOICE=0` to defer speech model loading until the first call.
+## Hosted Providers
 
-Conversational voice turns omit all tool schemas and produce one short spoken response. The foreground model makes one general decision: answer directly, or acknowledge work for the planner; there are no prompt-specific command patterns. Complete clauses stream into Kokoro while Ling is still generating, so synthesis overlaps the remainder of the response. Requests that need supervised work enter a separate planner queue only after the browser confirms that acknowledgement finished playing. Two llama slots keep that background planning from blocking a new conversation. Task notifications wait for the next quiet playback window and remain queued until the browser confirms they were heard.
+Set relevant keys in `.env` using [`example.env`](example.env), then choose a provider in the UI or with `DEFAULT_PROVIDER` and `DEFAULT_VOICE_MODE`. Hosted text and realtime voice adapters are configured there; Anthropic, Azure OpenAI, and custom OpenAI-compatible endpoints are text-only. Local transcripts reach hosted text only when **Allow Cloud Hybrid** is enabled.
 
-`LLAMA_CONTEXT=8192`, `LLAMA_PARALLEL=2`, prompt caching, memory mapping, and 32-token prefix reuse are enabled. Startup seeds the exact short voice instruction prefix, and llama.cpp reuses matching system and conversation KV prefixes. New user audio, novel transcript tokens, and generated output still require compute and cannot be safely cached across arbitrary prompts. The local STT defaults use a 500 ms stream step, a 1000 ms partial-decode interval, a six-second partial tail, an eight-second rolling window, 500 ms final silence, and accumulated-prefix finalization to avoid a second full encoder pass. Crisp uses twelve threads and Kokoro uses eight based on local end-to-end measurements. Override `CRISPASR_STREAM_STEP_MS`, `CRISPASR_PARTIAL_DECODE_MS`, `CRISPASR_PARTIAL_TAIL_SEC`, `CRISPASR_STREAM_LENGTH_MS`, `END_SILENCE_MS`, `CRISPASR_FINAL_MODE`, `CRISPASR_THREADS`, or `KOKORO_THREADS` in `.env` only when tuning for different hardware.
+## Development And Desktop
 
-`moonshine-streaming-small-Q8_0.gguf` currently crashes CrispASR 0.8.32 on both CPU and Vulkan. The app detects that exact override and uses the installed, verified canonical Small Q4_K instead; `/api/config` reports the requested path, effective path, and warning.
+Run the backend and Vite in separate PowerShell sessions:
+```powershell
+# session 1
+npm start
 
-After Kokoro is cached, set `HF_HUB_OFFLINE=1` for offline-only voice startup. Copilot and Agency coding sessions still require network access.
+# session 2
+npm run dev
+```
+`npm run dev` serves the frontend at `http://127.0.0.1:4318` and proxies `/api` and `/voice` to `http://127.0.0.1:4317`. The backend must already be running; port 4318 is strict.
 
-## Interface And Themes
+```powershell
+npm run desktop
+```
+Electron builds first and starts its own loopback supervisor. It does not start `llama-server`; for local desktop voice, start llama.cpp at `LOCAL_LLM_URL` first. Closing the window stops its supervisor.
 
-Home opens the voice assistant; Tasks keeps the existing dispatch and work-area controls. The keyboard button opens the conversation. Suggestions prefill a message for review before sending. Files accepts local text, Markdown, JSON, CSV, and log documents up to 100 KB; content is sent only when you press Send. Calendar reports its disconnected state until a calendar integration exists.
+## Architecture Map
 
-Settings > Appearance switches between Alpine and Opal without remounting audio or transport. Add themes in `public/themes.js`: each supplies a background bitmap, transparent sprite, state-to-animation map, and `--cp-*` tokens for colors, opacity, and typography. `public/VoiceSprite.js` is a presentation-only Vue component. Animation respects reduced-motion preferences.
+- [`src/server.mjs`](src/server.mjs): loopback HTTP, SSE, WebSocket, provider config, and persisted state.
+- [`src/llm.mjs`](src/llm.mjs), [`src/local-voice.mjs`](src/local-voice.mjs), [`src/realtime.mjs`](src/realtime.mjs): text, local voice, and realtime adapters.
+- [`scripts/start-local.mjs`](scripts/start-local.mjs), [`desktop.cjs`](desktop.cjs): local and Electron launch.
+- [`public/main.js`](public/main.js), [`public/app.js`](public/app.js): UI plus app-scoped transport/audio state.
+- [`public/themes.js`](public/themes.js), [`public/VoiceSprite.js`](public/VoiceSprite.js): shared theme registry and presentation-only sprite.
 
-The bundled Alpine background adapts Bernard Spragg's [Misty Lake Pukaki and Mt Cook](https://commons.wikimedia.org/wiki/File:Misty_Lake_Pukaki_and_Mt_Cook._%2817717782294%29.jpg), CC0. The Aurora sprite is generated artwork; Opal uses the provided `center_sprite.jpeg`. These approximate the supplied visual reference, rather than reproducing its unavailable original artwork.
+## Add A Theme
 
-## Coding Tasks
+Add one entry to `themes` in [`public/themes.js`](public/themes.js). Tokens, assets, animations, and preferences inherit shared defaults; keep transport/audio state in [`public/app.js`](public/app.js):
+```js
+{ id: 'forest', label: 'Forest',
+  tokens: { '--cp-accent': '#25734d', '--cp-accent-hover': '#1b583a' },
+  sprite: new URL('./forest.webp', import.meta.url).href,
+  background: new URL('./forest-background.webp', import.meta.url).href,
+  sounds: { navigation: new URL('./forest-tap.wav', import.meta.url).href },
+  preferences: { soundVolume: 0.2 } },
+```
+Use real assets under `public`; `background: null` removes the image. Optional `animations` override individual voice states. Sound files are optional: `navigation` and `action` are shared event slots, and extra buttons can opt in with `data-theme-sound="action"`. Built-in themes stay silent; custom sounds are opt-in and local, theme audio is muted during calls, and choices persist locally.
 
-1. Install and authenticate GitHub Copilot CLI. Install Agency when that backend is needed.
-2. Run `npm run copilot:check` or `npm run agency:check` to verify start and same-thread continuation.
-3. Register a Git repository root as a work area.
-4. Start work by voice, chat, or **New Task**, selecting Copilot CLI or Agency, a model, context, and repository agent.
+Use native `<select>` controls; progressive `appearance: base-select` CSS is allowed, but do not add wrappers or mirrored state for theme edits.
 
-Both backends use the same supervisor contract. The supervisor owns the process, assigns and persists an explicit session ID, records JSONL progress and final results, and resumes that session through **Continue Thread** or `send_work_message`. Agency runs Copilot-compatible sessions with Agency Hub reporting and default Agency MCPs disabled; repository MCP configuration remains available. Status reads are passive, and missing active observations become stale/unknown. Work-area instructions and `.github/agents/*.agent.md` choices are passed through. Worktrees open in a separate VS Code window.
-
-The **Settings** view controls the default work area, coding backend, Copilot-compatible model and context, and completion/input/failure notification channels. Ordinary chat requests do not need a work area; coding dispatches may omit one only when a default is configured. Finished or stale tasks and unused work areas can be deleted. Neither backend exposes reliable noninteractive cancellation, so the app reports cancellation as unsupported rather than pretending it succeeded.
-
-Azure DevOps and Teams MCP connections are intentionally marked **planned**, not connected. Start Azure DevOps read-only, scoped to work items assigned to the authenticated user. Start Teams with read/list operations; sending a message should require an exact recipient/body preview and one-time confirmation. Add authenticated local access before attaching corporate credentials, and do not grant these business mutations to coding workers.
-
-The `invoke_vscode` tool currently opens a text note with the requested prompt, model, context, and directory. It intentionally does not claim to start a VS Code agent. `open_work` opens a real Copilot worktree in VS Code.
-
-## Verified Here
-
-On 2026-09-15: Gemini 3.1 Live returned 24 kHz audio; canonical Moonshine Small Q4_K and Kokoro reached ready together; llama.cpp b10970 loaded Ling; focused tests passed; and the supervisor completed a real isolated Copilot CLI task with a persisted session ID and result.
-
-On 2026-09-16: a paced 3.35-second spoken fixture traversed the production local WebSocket with an exact transcript in 3420 ms from commit to final STT, 1827 ms from final transcript to first assistant PCM, and 5246 ms total. The comparable four-thread, full-redecode baseline was 7313 ms, 2086 ms, and 9399 ms respectively.
+See [`example.env`](example.env) for the complete configuration surface.

@@ -1,7 +1,7 @@
 import { defaultAnimations } from './VoiceSprite.js';
 
 const alpineBackground = new URL('./alpine-lake.webp', import.meta.url).href;
-const alpineTokens = {
+const defaultTokens = {
   '--cp-bg': '#e8f2f7',
   '--cp-bg-elevated': '#eff6fa',
   '--cp-surface': '#ffffff',
@@ -28,20 +28,46 @@ const alpineTokens = {
   '--cp-font': '"Segoe UI", Aptos, Calibri, sans-serif',
 };
 
+const themeDefaults = Object.freeze({
+  background: alpineBackground,
+  sprite: new URL('./copilot_icon.webp', import.meta.url).href,
+  tokens: Object.freeze(defaultTokens),
+  animations: defaultAnimations,
+  sounds: Object.freeze({ navigation: null, action: null }),
+  preferences: Object.freeze({ colorScheme: 'light', soundsEnabled: false, soundVolume: 0.2 }),
+});
+
+export function defineTheme(definition) {
+  return Object.freeze({
+    ...themeDefaults,
+    ...definition,
+    tokens: Object.freeze({ ...themeDefaults.tokens, ...definition.tokens }),
+    animations: Object.freeze({ ...themeDefaults.animations, ...definition.animations }),
+    sounds: Object.freeze({ ...themeDefaults.sounds, ...definition.sounds }),
+    preferences: Object.freeze({ ...themeDefaults.preferences, ...definition.preferences }),
+  });
+}
+
 export const themes = Object.freeze([
-  { id: 'alpine', label: 'Alpine', background: alpineBackground,
-    sprite: new URL('./aurora-sprite.png', import.meta.url).href,
-    animations: defaultAnimations, tokens: alpineTokens },
-  { id: 'opal', label: 'Opal', background: alpineBackground,
+  { id: 'alpine', label: 'Alpine' },
+  { id: 'opal', label: 'Opal',
     sprite: new URL('./opal-sprite.png', import.meta.url).href,
-    animations: { ...defaultAnimations, idle: 'sprite-think' },
-    tokens: { ...alpineTokens, '--cp-accent': '#537bce', '--cp-panel': 'rgba(255, 255, 255, 0.57)' } },
-]);
+    animations: { idle: 'sprite-think' },
+    tokens: { '--cp-accent': '#537bce', '--cp-panel': 'rgba(255, 255, 255, 0.57)' } },
+].map(defineTheme));
+
+const appliedTokens = new Set();
 
 export function applyTheme(theme) {
   const root = document.documentElement;
-  for (const [token, value] of Object.entries(theme.tokens)) root.style.setProperty(token, value);
-  root.style.setProperty('--cp-background-image', `url("${theme.background}")`);
+  for (const token of appliedTokens) root.style.removeProperty(token);
+  appliedTokens.clear();
+  for (const [token, value] of Object.entries(theme.tokens)) {
+    if (!token.startsWith('--cp-') || value == null) continue;
+    root.style.setProperty(token, value);
+    appliedTokens.add(token);
+  }
+  root.style.setProperty('--cp-background-image', theme.background ? `url(${JSON.stringify(theme.background)})` : 'none');
   root.dataset.appearance = theme.id;
-  root.style.colorScheme = 'light';
+  root.style.colorScheme = theme.preferences.colorScheme;
 }

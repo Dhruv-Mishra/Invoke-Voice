@@ -1,4 +1,4 @@
-import { createApp, h, onBeforeUnmount, onMounted, ref } from 'vue';
+import { createApp, h, ref } from 'vue';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 import {
@@ -37,30 +37,132 @@ const suggestions = [
 
 function icon(name) { return h('i', { 'data-lucide': name, 'aria-hidden': 'true' }); }
 
+function readPreference(key) {
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+
+function savePreference(key, value) {
+  try { localStorage.setItem(key, value); } catch {}
+}
+
+const themeKey = 'voice-supervisor-theme-v2';
+const soundsKey = 'voice-supervisor-sounds-v1';
+const savedTheme = readPreference(themeKey);
+const savedSounds = readPreference(soundsKey);
+const theme = ref(themes.find(item => item.id === savedTheme) || themes[0]);
+const state = ref('idle');
+let soundsEnabled = savedSounds === 'true' ? true : savedSounds === 'false' ? false : null;
+let interactionAudio = null;
+let soundTimeout;
+
+function soundSource(kind) {
+  const source = theme.value.sounds[kind];
+  if (typeof source !== 'string' || !source) return null;
+  try {
+    const url = new URL(source, import.meta.url);
+    return url.origin === location.origin && ['http:', 'https:'].includes(url.protocol) ? url.href : null;
+  } catch { return null; }
+}
+
+function syncSoundControls() {
+  const available = Boolean(soundSource('navigation') || soundSource('action'));
+  for (const input of document.querySelectorAll('input[type="checkbox"][data-theme-sounds]')) {
+    input.checked = available && (soundsEnabled ?? theme.value.preferences.soundsEnabled);
+    input.disabled = !available;
+    input.title = available ? '' : 'This theme has no interaction sounds.';
+  }
+}
+
+function stopSound() {
+  clearTimeout(soundTimeout);
+  const audio = interactionAudio;
+  interactionAudio = null;
+  if (!audio) return;
+  audio.onended = null;
+  audio.onerror = null;
+  audio.pause();
+  audio.removeAttribute('src');
+  audio.load();
+}
+
+function voiceBusy() {
+  return state.value !== 'idle' || document.getElementById('mic-toggle-btn')?.getAttribute('aria-pressed') === 'true';
+}
+
+function playSound(kind) {
+  if (!(soundsEnabled ?? theme.value.preferences.soundsEnabled) || voiceBusy()
+    || document.hidden || !document.hasFocus() || interactionAudio) return;
+  const source = soundSource(kind);
+  const volume = Math.max(0, Math.min(1, Number(theme.value.preferences.soundVolume) || 0));
+  if (!source || !volume) return;
+  const audio = new Audio();
+  interactionAudio = audio;
+  const finish = () => { if (interactionAudio === audio) stopSound(); };
+  audio.preload = 'none';
+  audio.volume = volume;
+  audio.onended = finish;
+  audio.onerror = finish;
+  soundTimeout = window.setTimeout(finish, 1500);
+  audio.src = source;
+  try { audio.play()?.catch(finish); } catch { finish(); }
+}
+
+function onInteraction(event) {
+  if (!event.isTrusted || event.defaultPrevented) return;
+  const button = event.target instanceof Element ? event.target.closest('button') : null;
+  if (!button || button.disabled || button.getAttribute('aria-disabled') === 'true') return;
+  if (button.id === 'mic-toggle-btn' || button.closest('#voice-options')) return;
+  const kind = button.dataset.themeSound || (button.matches('[data-view], [data-open-view]') ? 'navigation' : null);
+  if (kind === 'navigation' || kind === 'action') playSound(kind);
+}
+
+function onSoundPreference(event) {
+  const input = event.target;
+  if (!(input instanceof HTMLInputElement) || !input.matches('input[type="checkbox"][data-theme-sounds]') || input.disabled) return;
+  soundsEnabled = input.checked;
+  savePreference(soundsKey, String(soundsEnabled));
+  stopSound();
+  syncSoundControls();
+}
+
+function onState(event) {
+  state.value = stateCopy[event.detail?.state] ? event.detail.state : 'idle';
+  if (voiceBusy()) stopSound();
+}
+
+function onTheme(event) {
+  const next = themes.find(item => item.id === event.detail?.id);
+  if (!next) return;
+  stopSound();
+  theme.value = next;
+  applyTheme(next);
+  for (const input of document.querySelectorAll('input[name="appearance"]')) input.checked = input.value === next.id;
+  syncSoundControls();
+  savePreference(themeKey, next.id);
+}
+
+function renderThemeOptions() {
+  const options = document.querySelector('.appearance-options');
+  if (!options) return;
+  options.replaceChildren(...themes.map(item => {
+    const label = document.createElement('label');
+    label.className = 'appearance-option';
+    const input = document.createElement('input');
+    input.type = 'radio';
+    input.name = 'appearance';
+    input.value = item.id;
+    input.checked = item.id === theme.value.id;
+    const image = document.createElement('img');
+    image.src = item.sprite;
+    image.alt = '';
+    label.append(input, image, document.createTextNode(item.label));
+    return label;
+  }));
+}
+
 const VoiceHome = {
   name: 'VoiceHome',
   setup() {
-    let savedTheme;
-    try { savedTheme = localStorage.getItem('voice-supervisor-theme-v2'); } catch {}
-    const theme = ref(themes.find(item => item.id === savedTheme) || themes[0]);
-    const state = ref('idle');
-    const onState = event => { state.value = stateCopy[event.detail?.state] ? event.detail.state : 'idle'; };
-    const onTheme = event => {
-      const next = themes.find(item => item.id === event.detail?.id);
-      if (!next) return;
-      theme.value = next;
-      applyTheme(next);
-      try { localStorage.setItem('voice-supervisor-theme-v2', next.id); } catch {}
-    };
-    onMounted(() => {
-      applyTheme(theme.value);
-      window.addEventListener('voice-supervisor:agent-state', onState);
-      window.addEventListener('voice-supervisor:theme', onTheme);
-    });
-    onBeforeUnmount(() => {
-      window.removeEventListener('voice-supervisor:agent-state', onState);
-      window.removeEventListener('voice-supervisor:theme', onTheme);
-    });
     return () => h('div', { class: 'home-composition' }, [
       h('section', { class: 'assistant-stage', 'aria-label': 'Voice assistant' }, [
         h(VoiceSprite, { state: state.value, source: theme.value.sprite, animations: theme.value.animations }),
@@ -72,7 +174,7 @@ const VoiceHome = {
       h('aside', { class: 'suggestions', 'aria-labelledby': 'suggestions-title' }, [
         h('h2', { id: 'suggestions-title' }, 'Try saying:'),
         ...suggestions.map(([glyph, label, prompt]) => h('button', {
-          class: 'suggestion', type: 'button',
+          class: 'suggestion', type: 'button', 'data-theme-sound': 'action',
           onClick: () => window.dispatchEvent(new CustomEvent('voice-supervisor:compose', { detail: { text: prompt } })),
         }, [icon(glyph), h('span', label)])),
       ]),
@@ -80,5 +182,23 @@ const VoiceHome = {
   },
 };
 
-createApp(VoiceHome).mount('#voice-personality-app');
+applyTheme(theme.value);
+renderThemeOptions();
+syncSoundControls();
+const homeApp = createApp(VoiceHome);
+homeApp.mount('#voice-personality-app');
+const listeners = new AbortController();
+const listenerOptions = { signal: listeners.signal };
+window.addEventListener('voice-supervisor:agent-state', onState, listenerOptions);
+window.addEventListener('voice-supervisor:theme', onTheme, listenerOptions);
+document.addEventListener('click', onInteraction, listenerOptions);
+document.addEventListener('change', onSoundPreference, listenerOptions);
+document.addEventListener('visibilitychange', stopSound, listenerOptions);
+window.addEventListener('blur', stopSound, listenerOptions);
+window.addEventListener('pagehide', stopSound, listenerOptions);
+if (import.meta.hot) import.meta.hot.dispose(() => {
+  listeners.abort();
+  stopSound();
+  homeApp.unmount();
+});
 await import('./app.js');

@@ -4,15 +4,26 @@ import json
 import os
 import sys
 
+os.environ["HF_HUB_OFFLINE"] = "1"
+
 import numpy as np
 import torch
-from kokoro import KPipeline
+import spacy.util
+from kokoro import KModel, KPipeline
 
 torch.set_num_threads(int(os.environ.get("LOCAL_THREADS", "4")))
 voice = os.environ.get("KOKORO_VOICE", "af_heart")
 repo = os.environ.get("KOKORO_REPO", "hexgrad/Kokoro-82M")
+if not spacy.util.is_package("en_core_web_sm"):
+    raise RuntimeError("English speech dependencies are missing. Run local setup in Settings.")
 with contextlib.redirect_stdout(sys.stderr):
-    pipeline = KPipeline(lang_code="a", repo_id=repo, device="cpu")
+    local_dir = os.environ.get("KOKORO_LOCAL_DIR")
+    if local_dir:
+        model = KModel(repo_id=repo, config=os.path.join(local_dir, "config.json"), model=os.path.join(local_dir, "kokoro-v1_0.pth")).to("cpu").eval()
+        voice = os.path.join(local_dir, "af_heart.pt")
+        pipeline = KPipeline(lang_code="a", repo_id=repo, model=model, device="cpu")
+    else:
+        pipeline = KPipeline(lang_code="a", repo_id=repo, device="cpu")
     list(pipeline("Ready.", voice=voice))
 print(json.dumps({"type": "ready"}), flush=True)
 

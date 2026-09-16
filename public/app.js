@@ -242,7 +242,38 @@ function updateIcons() {
 }
 updateIcons();
 
+const viewDialog = document.getElementById('view-dialog');
+const desktopViews = window.matchMedia('(min-width: 761px)');
+const homeView = document.getElementById('voice-personality-app');
+const viewTitles = { workspace: 'Tasks', calendar: 'Calendar', files: 'Files', settings: 'Settings', 'tool-lab': 'Tool Lab' };
+let viewOpener = null;
+
+function syncViewPresentation() {
+  const viewName = document.body.dataset.view;
+  const open = viewName !== 'home';
+  const modal = open && desktopViews.matches;
+  const focused = viewDialog.contains(document.activeElement) ? document.activeElement : null;
+  homeView.hidden = open && !desktopViews.matches;
+  if (viewDialog.open && (!open || viewDialog.matches(':modal') !== modal)) viewDialog.close();
+  viewDialog.setAttribute('role', desktopViews.matches ? 'dialog' : 'region');
+  if (modal) viewDialog.setAttribute('aria-modal', 'true');
+  else viewDialog.removeAttribute('aria-modal');
+  for (const tab of viewTabs) {
+    if (desktopViews.matches && tab.dataset.view !== 'home') tab.setAttribute('aria-haspopup', 'dialog');
+    else tab.removeAttribute('aria-haspopup');
+  }
+  if (open && !viewDialog.open) {
+    if (modal) viewDialog.showModal();
+    else viewDialog.show();
+    if (focused?.getClientRects().length) focused.focus({ preventScroll: true });
+    else if (modal) document.getElementById('close-view-btn').focus({ preventScroll: true });
+  }
+}
+
 function activateView(viewName) {
+  if (viewName !== 'home' && !Object.hasOwn(viewTitles, viewName)) return;
+  const previous = document.body.dataset.view;
+  if (previous === 'home' && viewName !== 'home') viewOpener = document.activeElement;
   document.body.dataset.view = viewName;
   workspaceView.hidden = viewName !== 'workspace';
   toolLabView.hidden = viewName !== 'tool-lab';
@@ -257,8 +288,48 @@ function activateView(viewName) {
   if (viewName === 'settings') {
     populateSettingsView();
   }
+  document.getElementById('view-dialog-title').textContent = viewTitles[viewName] || 'Supervisor';
+  syncViewPresentation();
+  if (previous !== viewName && viewName !== 'home') {
+    if (desktopViews.matches) document.getElementById('close-view-btn').focus({ preventScroll: true });
+    else if (viewDialog.contains(document.activeElement)) {
+      const panel = document.getElementById(`${viewName}-view`);
+      panel.tabIndex = -1;
+      panel.focus({ preventScroll: true });
+    }
+  }
+  syncSetupVisibility();
+  if (viewName === 'home' && previous !== 'home') {
+    const restore = viewOpener?.isConnected && viewOpener.getClientRects().length ? viewOpener : document.getElementById('home-tab');
+    restore.focus({ preventScroll: true });
+    viewOpener = null;
+  }
   updateIcons();
 }
+
+document.getElementById('close-view-btn').addEventListener('click', () => activateView('home'));
+viewDialog.addEventListener('cancel', event => {
+  event.preventDefault();
+  activateView('home');
+});
+viewDialog.addEventListener('close', () => {
+  if (!viewDialog.open && document.body.dataset.view !== 'home') activateView('home');
+});
+viewDialog.addEventListener('keydown', event => {
+  if (event.key !== 'Tab' || !viewDialog.matches(':modal')) return;
+  const controls = [...viewDialog.querySelectorAll('button, a[href], input, select, textarea, summary, [tabindex]')]
+    .filter(element => !element.disabled && element.tabIndex >= 0 && element.getClientRects().length && !element.closest('[inert]'));
+  const first = controls[0];
+  const last = controls.at(-1);
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last?.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first?.focus();
+  }
+});
+desktopViews.addEventListener('change', syncViewPresentation);
 
 viewTabs.forEach((tab, index) => {
   tab.addEventListener('click', () => activateView(tab.dataset.view));
@@ -289,7 +360,8 @@ function openConversation(text) {
   if (!conversationDialog.open) conversationDialog.showModal();
   chatInput.focus();
 }
-const conversationUI = createConversationUI(document, openConversation);
+const conversationUI = createConversationUI(document);
+document.getElementById('history-compose-btn').addEventListener('click', () => btnNewTask.click());
 document.getElementById('open-chat-btn').addEventListener('click', () => openConversation());
 document.getElementById('close-chat-btn').addEventListener('click', () => conversationDialog.close());
 window.addEventListener('voice-supervisor:compose', event => openConversation(event.detail?.text));
@@ -343,6 +415,134 @@ documentInput.addEventListener('change', async () => {
     feedback.textContent = `${file.name} is ready to send.`;
   } catch (error) { feedback.textContent = error.message; }
   documentInput.value = '';
+});
+
+const setupElements = Object.fromEntries(['status', 'message', 'error', 'progress-region', 'progress', 'progress-label', 'platform', 'cache', 'runtime', 'components', 'consent', 'consent-label', 'install-btn', 'install-label', 'refresh-btn', 'log-details', 'log']
+  .map(name => [name, document.getElementById(`setup-${name}`)]));
+let setupSnapshot = null;
+let setupRequest = null;
+let setupPoll;
+let setupHttpError = '';
+
+function setupVisible() {
+  return !document.hidden && document.body.dataset.view === 'settings' && viewDialog.open;
+}
+
+function setupBytes(value) {
+  const bytes = Math.max(0, Number(value) || 0);
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+  return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+}
+
+function renderSetup() {
+  const snapshot = setupSnapshot;
+  const running = snapshot?.status === 'running';
+  const ready = snapshot?.status === 'ready';
+  const supported = snapshot?.supported === true;
+  const busy = Boolean(setupRequest);
+  setupElements.status.textContent = setupHttpError ? 'Status unavailable' : snapshot ? (supported ? snapshot.status : 'Unsupported platform') : busy ? 'Checking' : 'Not checked';
+  setupElements.status.className = `badge${setupHttpError || snapshot?.status === 'error' ? ' badge-danger' : ready ? ' badge-success' : running ? ' badge-accent' : ''}`;
+  setupElements.message.textContent = snapshot
+    ? [snapshot.stage, snapshot.message].filter(Boolean).join(': ') || (ready ? 'Local voice is installed.' : 'Local voice is not installed.')
+    : busy ? 'Checking local voice setup...' : 'Local voice setup status is unavailable.';
+  setupElements.error.textContent = setupHttpError || snapshot?.error || '';
+  setupElements.error.hidden = !setupElements.error.textContent;
+  setupElements.platform.textContent = snapshot?.platform || 'Not available';
+  setupElements.cache.textContent = snapshot?.cacheDir || 'Not available';
+  setupElements.runtime.textContent = snapshot?.runtimeDir || 'Not available';
+  setupElements['progress-region'].hidden = !running;
+  const received = Math.max(0, Number(snapshot?.progress?.received) || 0);
+  const total = Math.max(0, Number(snapshot?.progress?.total) || 0);
+  if (total > 0) {
+    setupElements.progress.max = total;
+    setupElements.progress.value = Math.min(received, total);
+  } else setupElements.progress.removeAttribute('value');
+  setupElements['progress-label'].textContent = total > 0 ? `${setupBytes(received)} of ${setupBytes(total)}` : received > 0 ? `${setupBytes(received)} downloaded` : 'Preparing local components';
+  setupElements.consent.disabled = busy || running || ready || !supported;
+  setupElements['consent-label'].hidden = running || ready;
+  setupElements['install-btn'].disabled = busy || running || ready || !supported || Boolean(setupHttpError) || !setupElements.consent.checked;
+  setupElements['install-label'].textContent = ready ? 'Installed' : running ? 'Installing local voice' : snapshot?.status === 'error' ? 'Retry installation' : 'Install local voice';
+  setupElements['refresh-btn'].disabled = busy;
+  const components = Array.isArray(snapshot?.components) ? snapshot.components : [];
+  const existing = new Map([...setupElements.components.children].map(item => [item.dataset.componentId, item]));
+  const focused = setupElements.components.contains(document.activeElement) ? document.activeElement : null;
+  const items = components.map(component => {
+    const item = existing.get(String(component.id)) || document.createElement('li');
+    item.dataset.componentId = component.id;
+    if (!item.children.length) item.append(document.createElement('span'), document.createElement('span'), document.createElement('a'));
+    const [label, status, link] = item.children;
+    label.textContent = component.label || component.id;
+    status.className = component.ready ? 'setup-ready' : 'setup-pending';
+    status.textContent = component.ready ? 'Installed' : 'Required';
+    link.textContent = 'Source';
+    link.setAttribute('aria-label', `Download source for ${component.label || component.id} (opens in a new tab)`);
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.removeAttribute('href');
+    try {
+      const source = new URL(component.sourceUrl);
+      if (source.protocol === 'https:') link.href = source.href;
+    } catch {}
+    link.hidden = !link.hasAttribute('href');
+    return item;
+  });
+  setupElements.components.replaceChildren(...items);
+  if (focused?.isConnected) focused.focus({ preventScroll: true });
+  const log = Array.isArray(snapshot?.log) ? snapshot.log.slice(-60) : [];
+  setupElements['log-details'].hidden = !log.length;
+  setupElements.log.textContent = log.join('\n');
+}
+
+async function requestSetup(start = false) {
+  if (setupRequest || !setupVisible()) return;
+  if (start && (setupElements['install-btn'].disabled || !setupElements.consent.checked)) return;
+  clearTimeout(setupPoll);
+  const controller = new AbortController();
+  setupRequest = controller;
+  setupHttpError = '';
+  const timeout = window.setTimeout(() => controller.abort(), 20000);
+  renderSetup();
+  try {
+    const response = await fetch('/api/setup', {
+      method: start ? 'POST' : 'GET',
+      cache: 'no-store',
+      signal: controller.signal,
+      ...(start ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ consent: true }) } : {}),
+    });
+    const snapshot = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(typeof snapshot?.error === 'string' ? snapshot.error : `Setup request failed (HTTP ${response.status}).`);
+    if (!snapshot || typeof snapshot.supported !== 'boolean' || !['idle', 'running', 'ready', 'error'].includes(snapshot.status)) {
+      throw new Error('The setup service returned an invalid status. Refresh to try again.');
+    }
+    setupSnapshot = snapshot;
+    if (snapshot.status === 'ready') {
+      setupElements.consent.checked = false;
+      if (!await loadConfig(true)) throw new Error('Local voice is installed, but its configuration could not be refreshed.');
+    }
+  } catch (error) {
+    setupHttpError = `${error.name === 'AbortError' ? 'Setup status request timed out.' : error.message} Refresh status before retrying installation.`;
+  } finally {
+    clearTimeout(timeout);
+    setupRequest = null;
+    renderSetup();
+    if (setupVisible() && setupSnapshot?.status === 'running' && !setupHttpError) {
+      setupPoll = window.setTimeout(() => requestSetup(), 2000);
+    }
+  }
+}
+
+function syncSetupVisibility() {
+  clearTimeout(setupPoll);
+  if (setupVisible()) void requestSetup();
+}
+
+setupElements.consent.addEventListener('change', renderSetup);
+setupElements['install-btn'].addEventListener('click', () => requestSetup(true));
+setupElements['refresh-btn'].addEventListener('click', () => requestSetup());
+document.addEventListener('visibilitychange', syncSetupVisibility);
+window.addEventListener('pagehide', () => {
+  clearTimeout(setupPoll);
+  setupRequest?.abort();
 });
 activateView('home');
 
@@ -1270,7 +1470,8 @@ if (settingsForm) {
 }
 
 // REST: Config and State Loading
-async function loadConfig() {
+async function loadConfig(preserveSelection = false) {
+  const selection = preserveSelection ? { provider: providerSelect.value, voiceMode: voiceModeSelect.value, model: modelInput.value } : null;
   try {
     const res = await fetch('/api/config');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1299,8 +1500,12 @@ async function loadConfig() {
       voiceModeSelect.value = appConfig.defaults.voiceMode;
     }
 
+    if (selection && appConfig.providers?.some(provider => provider.id === selection.provider)) providerSelect.value = selection.provider;
+    if (selection && appConfig.voiceModes?.some(mode => mode.id === selection.voiceMode)) voiceModeSelect.value = selection.voiceMode;
     const currentProv = appConfig.providers?.find(p => p.id === providerSelect.value);
-    if (currentProv?.model) {
+    if (selection) {
+      modelInput.value = selection.model;
+    } else if (currentProv?.model) {
       modelInput.value = currentProv.model;
     }
 
@@ -1308,9 +1513,11 @@ async function loadConfig() {
     populateTaskModalOptions();
     populateIntegrationsTable();
     updateRouteReadiness();
+    return true;
   } catch (err) {
     routeStatusBadge.textContent = 'Config Error';
     routeStatusBadge.className = 'badge badge-danger';
+    return false;
   }
 }
 
@@ -1655,7 +1862,44 @@ async function deleteTask(taskId, taskTitle = 'task') {
 }
 
 // Render Tasks
+function renderTaskHistory() {
+  const history = document.getElementById('chat-history');
+  const focusedId = history.contains(document.activeElement) ? document.activeElement.dataset.taskId : null;
+  const existing = new Map([...history.children].map(item => [item.firstElementChild.dataset.taskId, item]));
+  const entries = [...appState.tasks].reverse().map(task => {
+    let item = existing.get(String(task.id));
+    if (!item) {
+      item = document.createElement('div');
+      item.setAttribute('role', 'listitem');
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'history-entry';
+      button.dataset.taskId = task.id;
+      button.setAttribute('aria-haspopup', 'dialog');
+      button.setAttribute('aria-controls', 'task-detail-dialog');
+      button.append(document.createElement('span'), document.createElement('strong'));
+      button.addEventListener('click', () => {
+        const current = appState.tasks.find(entry => String(entry.id) === button.dataset.taskId);
+        if (current) showTaskDetail(current);
+      });
+      item.append(button);
+    }
+    const button = item.firstElementChild;
+    const title = task.title || task.objective || 'Untitled task';
+    const status = (task.state || 'unknown').replaceAll('_', ' ');
+    button.firstElementChild.textContent = title;
+    button.lastElementChild.textContent = `${status}${task.stale ? ' / stale' : ''}`;
+    button.dataset.state = task.state || 'unknown';
+    button.setAttribute('aria-label', `${title}, ${status}${task.stale ? ', stale' : ''}`);
+    return item;
+  });
+  history.replaceChildren(...entries);
+  document.getElementById('history-empty').hidden = entries.length > 0;
+  if (focusedId) [...history.querySelectorAll('button')].find(button => button.dataset.taskId === focusedId)?.focus({ preventScroll: true });
+}
+
 function renderTasks() {
+  renderTaskHistory();
   tasksList.replaceChildren();
 
   if (!appState.tasks || appState.tasks.length === 0) {

@@ -1,0 +1,88 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import desktopLaunch from '../scripts/desktop-launch.cjs';
+import { createLocalSetup } from '../src/local-setup.mjs';
+
+const root = fileURLToPath(new URL('../', import.meta.url));
+
+test('packaged child uses bundled Electron Node mode, physical unpacked sources and writable config', () => {
+  const resourcesPath = path.join(root, 'release', 'win-unpacked', 'resources');
+  const dataDir = path.join(os.tmpdir(), 'Voice Supervisor launch fixture');
+  const executable = path.join(root, 'release', 'win-unpacked', 'Voice Work Supervisor.exe');
+  const spec = desktopLaunch.serverLaunch({ executable, resourcesPath, appRoot: root, packaged: true, dataDir, env: { NODE_OPTIONS: '--inspect=0.0.0.0', NODE_PATH: 'untrusted', PORT: '4317' } });
+  assert.equal(spec.executable, executable);
+  assert.equal(spec.options.cwd, dataDir);
+  assert.equal(spec.options.shell, false);
+  assert.equal(spec.args[0], `--env-file-if-exists=${path.join(dataDir, '.env')}`);
+  assert.equal(spec.args[1], path.join(resourcesPath, 'app.asar.unpacked', 'src', 'server.mjs'));
+  assert.deepEqual(spec.args.slice(-2), ['--port', '0']);
+  assert.equal(spec.options.env.ELECTRON_RUN_AS_NODE, '1');
+  assert.equal(spec.options.env.PORT, '0');
+  assert.equal(spec.options.env.NODE_OPTIONS, undefined);
+  assert.equal(spec.options.env.NODE_PATH, undefined);
+  const source = desktopLaunch.serverLaunch({ executable, resourcesPath, appRoot: root, packaged: false, dataDir, env: {} });
+  assert.equal(source.options.cwd, root);
+  assert.equal(source.args[1], path.join(root, 'src', 'server.mjs'));
+});
+
+test('installer includes physical runtime dependencies, excludes private data and uses per-user one-click NSIS', () => {
+  const config = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
+  assert.equal(config.main, 'desktop.cjs');
+  assert.doesNotMatch(config.devDependencies.electron, /alpha|beta/);
+  assert.ok(config.scripts['dist:win'].includes('electron-builder --win nsis --x64'));
+  assert.equal(config.build.asar, true);
+  for (const included of ['src/**', 'scripts/**', 'dist/**', 'package.json', 'requirements-local.txt', 'node_modules/**']) assert.ok(config.build.asarUnpack.includes(included));
+  for (const included of ['scripts/models.mjs', 'scripts/start.mjs', 'scripts/desktop-launch.cjs', 'scripts/kokoro_worker.py', 'requirements-local.txt']) assert.ok(config.build.files.includes(included));
+  assert.ok(config.build.files.includes('!**/.env*'));
+  assert.ok(config.build.files.includes('!**/*.{gguf,pth,pt}'));
+  assert.equal(config.build.nsis.oneClick, true);
+  assert.equal(config.build.nsis.perMachine, false);
+  assert.equal(config.build.nsis.allowElevation, false);
+});
+
+test('desktop allows setup documentation sources but rejects arbitrary URLs and protocols', context => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'voice-desktop-links-'));
+  context.after(() => rmSync(directory, { recursive: true, force: true }));
+  const setup = createLocalSetup({ env: { LOCALAPPDATA: directory } });
+  for (const component of setup.snapshot().components) assert.equal(desktopLaunch.allowedExternal(component.sourceUrl), true, component.sourceUrl);
+  for (const url of ['javascript:alert(1)', 'file:///C:/Windows/System32/cmd.exe', 'https://github.com/evil/project', 'https://github.com@evil.test/', 'https://docs.github.com/en/copilot?redirect=https://evil.test', 'http://huggingface.co/hexgrad/Kokoro-82M']) assert.equal(desktopLaunch.allowedExternal(url), false);
+});
+
+test('built Windows app starts its packaged backend without an external Node installation', { skip: !process.env.SUPERVISOR_PACKAGED_EXE, timeout: 30000 }, async () => {
+  const executable = path.resolve(process.env.SUPERVISOR_PACKAGED_EXE);
+  const resourcesPath = path.join(path.dirname(executable), 'resources');
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-packaged-smoke-'));
+  assert.ok(existsSync(path.join(resourcesPath, 'app.asar')));
+  const spec = desktopLaunch.serverLaunch({ executable, appRoot: root, resourcesPath, packaged: true, dataDir, env: { SystemRoot: process.env.SystemRoot, TEMP: os.tmpdir(), TMP: os.tmpdir(), PATH: path.join(process.env.SystemRoot, 'System32'), PREWARM_LOCAL_VOICE: '0' } });
+  spec.options.env.SUPERVISOR_DESKTOP = '0';
+  const child = spawn(spec.executable, spec.args, { ...spec.options, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
+  let diagnostic = '';
+  child.stderr.on('data', chunk => { diagnostic = (diagnostic + chunk).slice(-2000); });
+  try {
+    const url = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`Packaged startup timed out: ${diagnostic}`)), 15000);
+      child.once('error', error => { clearTimeout(timer); reject(error); });
+      child.once('exit', code => { clearTimeout(timer); reject(new Error(`Packaged backend exited ${code}: ${diagnostic}`)); });
+      child.on('message', message => { if (message?.type === 'supervisor-ready') { clearTimeout(timer); resolve(message.url); } });
+    });
+    const status = await fetch(`${url}/api/setup`).then(response => response.json());
+    assert.equal(status.status, 'idle');
+    assert.equal(status.supported, true);
+    assert.equal((await fetch(`${url}/`)).status, 200);
+  } finally {
+    if (child.connected) {
+      await new Promise(resolve => {
+        const timer = setTimeout(resolve, 3000);
+        child.once('exit', () => { clearTimeout(timer); resolve(); });
+        child.send({ type: 'shutdown' });
+      });
+    }
+    await desktopLaunch.stopChild(child);
+    rmSync(dataDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  }
+});

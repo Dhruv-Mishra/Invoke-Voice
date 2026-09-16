@@ -140,15 +140,23 @@ test('release mode serves built frontend assets with accurate MIME types and own
   }
 });
 
-test('debug mode mounts Vite middleware on the exact backend server, preventing routing drift', async () => {
+test('debug mode closes before any frontend requests', { timeout: 15000 }, async () => {
+  const supervisor = await startSupervisor({ port: 0, mode: 'debug', prewarm: false });
+  await supervisor.close();
+  assert.equal(supervisor.server.listening, false);
+});
+
+test('debug mode serves same-origin routes and closes during cold dependency optimization', { timeout: 15000 }, async () => {
   const supervisor = await startSupervisor({ port: 0, mode: 'debug', prewarm: false });
   assert.ok(supervisor.port > 0);
   assert.ok(supervisor.viteDevServer, 'Vite dev server should be instantiated in debug mode');
   const baseUrl = supervisor.url;
 
   try {
+    await supervisor.viteDevServer.restart(true);
+
     // In debug mode, GET / transforms index.html and injects Vite HMR client
-    const indexRes = await fetch(`${baseUrl}/`);
+    const indexRes = await fetch(`${baseUrl}/`, { signal: AbortSignal.timeout(5000) });
     assert.equal(indexRes.status, 200);
     assert.ok(indexRes.headers.get('content-type')?.includes('text/html'));
     const indexHtml = await indexRes.text();
@@ -156,17 +164,19 @@ test('debug mode mounts Vite middleware on the exact backend server, preventing 
     assert.ok(indexHtml.includes('<title>Voice Work Supervisor</title>'));
 
     // Direct module serving from source
-    const mainRes = await fetch(`${baseUrl}/main.js`);
+    const mainRes = await fetch(`${baseUrl}/main.js`, { signal: AbortSignal.timeout(5000) });
     assert.equal(mainRes.status, 200);
     assert.ok(mainRes.headers.get('content-type')?.includes('text/javascript'));
+    await mainRes.text();
 
     // Static image serving through Vite
-    const iconRes = await fetch(`${baseUrl}/copilot-icon.webp`);
+    const iconRes = await fetch(`${baseUrl}/copilot-icon.webp`, { signal: AbortSignal.timeout(5000) });
     assert.equal(iconRes.status, 200);
     assert.ok(iconRes.headers.get('content-type')?.includes('image/webp'));
+    await iconRes.arrayBuffer();
 
     // Backend API is served directly on the same origin/port without proxy drift
-    const configRes = await fetch(`${baseUrl}/api/config`);
+    const configRes = await fetch(`${baseUrl}/api/config`, { signal: AbortSignal.timeout(5000) });
     assert.equal(configRes.status, 200);
     const configData = await configRes.json();
     assert.ok(configData.providers);
@@ -189,4 +199,5 @@ test('debug mode mounts Vite middleware on the exact backend server, preventing 
   } finally {
     await supervisor.close();
   }
+  assert.equal(supervisor.server.listening, false);
 });

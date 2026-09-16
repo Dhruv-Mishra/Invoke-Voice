@@ -10,6 +10,7 @@ import { createVSCodeBridge } from './vscode-bridge.mjs';
 import { providerProfiles, streamReply } from './llm.mjs';
 import { createRealtimeVoice, DEFAULT_GEMINI_LIVE_MODEL } from './realtime.mjs';
 import { createLocalVoice, localConfiguration, warmLocalVoice } from './local-voice.mjs';
+import { createLocalSetup } from './local-setup.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const publicDir = path.join(root, 'public');
@@ -73,6 +74,7 @@ export async function startSupervisor(options = {}) {
   const inbox = path.join(dataDir, 'inbox');
   mkdirSync(inbox, { recursive: true });
   const supervisor = options.supervisor || new Supervisor({ dataDir, bridge: createVSCodeBridge(dataDir) });
+  const setup = options.setup || createLocalSetup();
   const clients = new Set();
   const json = (response, status, payload) => { response.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); response.end(JSON.stringify(payload)); };
   const sse = (response, payload) => { if (!response.destroyed) response.write(`data: ${JSON.stringify(payload)}\n\n`); };
@@ -122,6 +124,12 @@ export async function startSupervisor(options = {}) {
     if (!allowed(request)) return json(response, 403, { error: 'Local same-origin access only' });
     const url = new URL(request.url, `http://${request.headers.host}`);
     try {
+      if (request.method === 'GET' && url.pathname === '/api/setup') return json(response, 200, setup.snapshot());
+      if (request.method === 'POST' && url.pathname === '/api/setup') {
+        if (voiceOwner) return json(response, 409, { error: 'End the active voice call before running local setup.' });
+        const input = await body(request);
+        return json(response, 202, setup.start(input));
+      }
       if (request.method === 'GET' && url.pathname === '/api/config') return json(response, 200, config());
       if (request.method === 'GET' && url.pathname === '/api/state') return json(response, 200, supervisor.snapshot());
       if (request.method === 'GET' && url.pathname === '/api/tools') return json(response, 200, tools);
@@ -196,6 +204,7 @@ export async function startSupervisor(options = {}) {
         const message = JSON.parse(raw);
         if (message.type === 'start') {
           if (session || starting) return;
+          if (message.mode === 'local' && setup.snapshot().status === 'running') throw new Error('Local setup is still running. Wait for setup to finish before starting a local call.');
           if (voiceOwner && voiceOwner !== socket) throw new Error('A voice session is already active in another window');
           voiceOwner = socket;
           starting = true;
@@ -259,13 +268,16 @@ export async function startSupervisor(options = {}) {
 
   const actualPort = server.address().port;
   console.log(`Voice Work Supervisor (${mode}): http://${host}:${actualPort}`);
+  if (process.send) process.send({ type: 'supervisor-ready', url: `http://${host}:${actualPort}` });
 
-  if (options.prewarm !== false && (process.env.DEFAULT_VOICE_MODE || 'local') === 'local' && process.env.PREWARM_LOCAL_VOICE !== '0') {
+  if (process.env.SUPERVISOR_DESKTOP === '1') setup.resume?.();
+  if (setup.snapshot().status !== 'running' && options.prewarm !== false && (process.env.DEFAULT_VOICE_MODE || 'local') === 'local' && process.env.PREWARM_LOCAL_VOICE !== '0') {
     void warmLocalVoice().then(warmed => { if (warmed) console.log('Local speech models are warm.'); }).catch(error => console.warn(`Local voice warmup deferred: ${error.message}`));
   }
 
   const close = async () => {
     clearInterval(observer);
+    await setup.close();
     for (const client of websocket.clients) {
       try { client.close(); } catch {}
     }
@@ -275,6 +287,7 @@ export async function startSupervisor(options = {}) {
     }
     clients.clear();
     if (viteDevServer) {
+      await viteDevServer.waitForRequestsIdle();
       try { await viteDevServer.close(); } catch {}
       viteDevServer = null;
     }
@@ -307,4 +320,6 @@ if (isMain) {
   };
   process.once('SIGINT', shutdown);
   process.once('SIGTERM', shutdown);
+  process.once('disconnect', shutdown);
+  process.on('message', message => { if (message?.type === 'shutdown') void shutdown(); });
 }

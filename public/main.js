@@ -3,7 +3,7 @@ import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 import {
   BellOff, CalendarDays, CheckSquare, CircleDashed, createIcons, Edit2,
-  ExternalLink, File, FileText, FlaskConical, FolderKanban, House, Keyboard,
+  ExternalLink, File, FileText, FlaskConical, FolderKanban, HardDriveDownload, House, Keyboard,
   LayoutDashboard, MessageSquare, MessageSquarePlus, Mic, Play, Plus,
   PlusCircle, Radio, RefreshCw, Save, ScanSearch, Send, Settings,
   SlidersHorizontal, Sparkles, Square, Trash2, X,
@@ -15,7 +15,7 @@ import './theme.css';
 window.DOMPurify = DOMPurify;
 window.marked = marked;
 const appIcons = { BellOff, CalendarDays, CheckSquare, CircleDashed, Edit2, ExternalLink,
-  File, FileText, FlaskConical, FolderKanban, House, Keyboard, LayoutDashboard,
+  File, FileText, FlaskConical, FolderKanban, HardDriveDownload, House, Keyboard, LayoutDashboard,
   MessageSquare, MessageSquarePlus, Mic, Play, Plus, PlusCircle, Radio, RefreshCw,
   Save, ScanSearch, Send, Settings, SlidersHorizontal, Sparkles, Square, Trash2, X };
 window.lucide = { createIcons: () => createIcons({ icons: appIcons }) };
@@ -28,11 +28,11 @@ const stateCopy = {
   speaking: ['Speaking...', 'Here\'s what I found.'],
 };
 const suggestions = [
-  ['file-text', 'Summarize this document', 'Summarize this document:\n\n'],
-  ['play', 'Create a presentation on renewable energy', 'Create a presentation on renewable energy'],
-  ['sparkles', 'Find interesting facts about space', 'Find interesting facts about space'],
-  ['message-square', 'Help me plan a trip', 'Help me plan a trip'],
-  ['calendar-days', "What's on my calendar today?", "What's on my calendar today?"],
+  ['plus-circle', 'Start a coding task', 'Start a coding task in my default work area: '],
+  ['scan-search', 'How is my work progressing?', 'Give me the status of my current coding tasks.'],
+  ['message-square', 'Continue a task', 'Help me continue an existing coding task.'],
+  ['external-link', 'Open my completed work', 'Open my most recently completed work.'],
+  ['folder-kanban', 'What needs my attention?', 'Which tasks need my input or have failed?'],
 ];
 
 function icon(name) { return h('i', { 'data-lucide': name, 'aria-hidden': 'true' }); }

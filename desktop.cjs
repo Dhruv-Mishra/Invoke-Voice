@@ -1,69 +1,44 @@
-/**
- * Electron desktop wrapper for Voice Work Supervisor.
- * Spawns the supervisor server as a child process and wraps the web UI securely.
- */
-
 const { spawn } = require('node:child_process');
 const path = require('node:path');
-const { app, BrowserWindow, session } = require('electron');
+const fs = require('node:fs');
+const { app, BrowserWindow, session, dialog, shell } = require('electron');
+const { serverLaunch, allowedExternal } = require('./scripts/desktop-launch.cjs');
 
 let mainWindow = null;
-let serverUrl = null;
 let serverOrigin = null;
+let child;
+let closing = false;
+let stopped = false;
+let failed = false;
+let startupTimer;
+let logDescriptor;
+const ownedChildren = new Set();
+const dataDir = path.join(process.env.LOCALAPPDATA || app.getPath('appData'), 'VoiceSupervisor');
+const logFile = path.join(dataDir, 'logs', 'desktop.log');
+let dataPathError = false;
+try {
+  fs.mkdirSync(path.join(dataDir, 'desktop'), { recursive: true });
+  app.setPath('userData', path.join(dataDir, 'desktop'));
+} catch { dataPathError = true; }
 
-// Spawn the server using process.execPath with ELECTRON_RUN_AS_NODE=1
-const child = spawn(
-  process.execPath,
-  ['--env-file-if-exists=.env', 'src/server.mjs'],
-  {
-    cwd: __dirname,
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-    stdio: ['ignore', 'pipe', 'inherit'],
-  }
-);
-
-function killChild() {
-  if (child && !child.killed) {
-    try {
-      child.kill('SIGTERM');
-    } catch {}
-  }
+function fail(message) {
+  if (failed || closing) return;
+  failed = true;
+  clearTimeout(startupTimer);
+  dialog.showErrorBox('Voice Work Supervisor could not start', `${message}\n\nClose and reopen the app. Check security software and the local log:\n${logFile}`);
+  app.quit();
 }
 
-child.on('error', err => {
-  console.error(`[desktop] Failed to spawn supervisor server: ${err.message}`);
-  app.quit();
-});
-
-child.on('exit', (code, signal) => {
-  if (code !== 0 && code !== null) {
-    console.error(`[desktop] Supervisor server exited with code ${code} (${signal || 'none'})`);
-  }
-  app.quit();
-});
-
-child.stdout.on('data', chunk => {
-  process.stdout.write(chunk);
-  const text = chunk.toString();
-  const match = text.match(/https?:\/\/(?:127\.0\.0\.1|localhost):\d+/);
-  if (match && !serverUrl) {
-    serverUrl = match[0];
-    try {
-      serverOrigin = new URL(serverUrl).origin;
-    } catch {
-      serverOrigin = serverUrl;
-    }
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.loadURL(serverUrl);
-    }
-  }
-});
+function external(value) {
+  if (allowedExternal(value)) void shell.openExternal(value).catch(() => {});
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 840,
     title: 'Voice Work Supervisor',
+    show: false,
     autoHideMenuBar: true,
     webPreferences: {
       contextIsolation: true,
@@ -72,24 +47,21 @@ function createWindow() {
     },
   });
 
-  if (serverUrl) {
-    mainWindow.loadURL(serverUrl);
-  }
-
-  // Restrict navigation: only app same-origin is allowed
   mainWindow.webContents.on('will-navigate', (event, navigationUrl) => {
     try {
       const target = new URL(navigationUrl);
       if (!serverOrigin || target.origin !== serverOrigin) {
         event.preventDefault();
+        external(navigationUrl);
       }
     } catch {
       event.preventDefault();
     }
   });
 
-  // Block popup windows and external navigation
-  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => { external(url); return { action: 'deny' }; });
+  mainWindow.webContents.on('will-attach-webview', event => event.preventDefault());
+  mainWindow.webContents.on('render-process-gone', () => fail('The app window stopped unexpectedly.'));
 
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -97,9 +69,12 @@ function createWindow() {
   });
 }
 
-app.whenReady().then(() => {
-  // Enforce permissions: only microphone/media allowed, and only for the local app origin
+async function launch() {
+  if (dataPathError) { fail('The app cannot access its per-user data directory.'); return; }
+  fs.mkdirSync(path.dirname(logFile), { recursive: true });
+  logDescriptor = fs.openSync(logFile, 'w');
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    if (details.mediaTypes?.includes('video')) return callback(false);
     try {
       const requestingOrigin = new URL(details.requestingUrl || webContents.getURL()).origin;
       if (serverOrigin && requestingOrigin === serverOrigin && (permission === 'media' || permission === 'microphone')) {
@@ -117,22 +92,62 @@ app.whenReady().then(() => {
   });
 
   createWindow();
-});
+  const spec = serverLaunch({ executable: process.execPath, appRoot: __dirname, resourcesPath: process.resourcesPath, packaged: app.isPackaged, dataDir });
+  child = spawn(spec.executable, spec.args, { ...spec.options, stdio: ['ignore', logDescriptor, logDescriptor, 'ipc'] });
+  startupTimer = setTimeout(() => fail('The local server did not start within 45 seconds.'), 45000);
+  child.once('error', () => fail('The bundled local server could not be launched.'));
+  child.once('exit', code => { if (!closing) fail(`The local server stopped (code ${code}).`); });
+  child.on('message', message => {
+    if (message?.type === 'owned-child' && Number.isSafeInteger(message.pid) && message.pid > 0) {
+      if (message.active) ownedChildren.add(message.pid); else ownedChildren.delete(message.pid);
+    }
+    if (message?.type !== 'supervisor-ready' || serverOrigin || closing) return;
+    try {
+      const url = new URL(message.url);
+      if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || !url.port || url.username || url.password) throw new Error('Invalid local URL');
+      serverOrigin = url.origin;
+      clearTimeout(startupTimer);
+      mainWindow.loadURL(serverOrigin).then(() => { if (!closing) mainWindow.show(); }).catch(() => fail('The local app page could not be loaded.'));
+    } catch { fail('The local server returned an invalid address.'); }
+  });
+}
 
-app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow();
+async function killTree(pid) {
+  if (process.platform !== 'win32') { try { process.kill(pid); } catch {} return; }
+  await new Promise(resolve => {
+    const killer = spawn(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'taskkill.exe'), ['/PID', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+    killer.once('exit', resolve);
+    killer.once('error', resolve);
+  });
+}
+
+async function stop() {
+  closing = true;
+  clearTimeout(startupTimer);
+  if (child?.connected) {
+    await new Promise(resolve => {
+      const timer = setTimeout(resolve, 5000);
+      child.once('exit', () => { clearTimeout(timer); resolve(); });
+      child.send({ type: 'shutdown' }, () => {});
+    });
   }
-});
+  if (child?.pid && child.exitCode === null) await killTree(child.pid);
+  for (const pid of ownedChildren) await killTree(pid);
+  if (logDescriptor !== undefined) fs.closeSync(logDescriptor);
+  stopped = true;
+  app.quit();
+}
 
-app.on('before-quit', killChild);
-app.on('will-quit', killChild);
-process.on('exit', killChild);
-process.on('SIGINT', () => {
-  killChild();
-  process.exit(0);
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on('second-instance', () => { if (mainWindow) { if (mainWindow.isMinimized()) mainWindow.restore(); mainWindow.show(); mainWindow.focus(); } });
+  app.whenReady().then(launch).catch(() => fail('The app could not initialize its writable data folder or window.'));
+}
+app.on('before-quit', event => {
+  if (stopped || (!child && logDescriptor === undefined)) return;
+  event.preventDefault();
+  if (!closing) void stop();
 });
-process.on('SIGTERM', () => {
-  killChild();
-  process.exit(0);
-});
+process.once('SIGINT', () => app.quit());
+process.once('SIGTERM', () => app.quit());

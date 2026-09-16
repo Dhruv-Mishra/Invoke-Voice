@@ -3,6 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "main": "desktop.cjs",
+  "description": "Local voice and coding work supervisor",
   "engines": {
     "node": ">=22"
   },
@@ -16,6 +18,7 @@
     "agency:check": "node --env-file-if-exists=.env scripts/check-copilot.mjs --agency",
     "test": "node --test test/*.test.mjs",
     "desktop": "npm run build && electron desktop.cjs",
+    "dist:win": "npm run build && electron-builder --win nsis --x64",
     "models": "node --env-file-if-exists=.env scripts/models.mjs",
     "search": "zg query",
     "search:index": "zg index --embedding local/potion-code-16m-v2",
@@ -28,12 +31,30 @@
     "dompurify": "^3.4.15",
     "lucide": "^1.42.0",
     "marked": "^18.0.12",
+    "proper-lockfile": "4.1.2",
     "vue": "^3.5.21",
-    "ws": "^8.21.3"
+    "ws": "^8.21.3",
+    "yauzl": "3.4.0"
   },
   "devDependencies": {
     "@zvec/zvec-grep": "^0.2.2",
-    "electron": "^45.0.0-alpha.5",
+    "electron": "41.10.7",
+    "electron-builder": "26.0.12",
     "vite": "^7.1.5"
+  },
+  "build": {
+    "appId": "local.voice-supervisor.desktop",
+    "productName": "Voice Work Supervisor",
+    "directories": { "output": "release" },
+    "asar": true,
+    "files": [
+      "desktop.cjs", "package.json", "src/**/*.mjs", "dist/**/*",
+      "scripts/models.mjs", "scripts/start.mjs", "scripts/desktop-launch.cjs", "scripts/kokoro_worker.py", "requirements-local.txt",
+      "!**/.env*", "!**/*.{gguf,pth,pt}", "!**/{test,tests,artifacts,state,.git,.venv,__pycache__}/**"
+    ],
+    "asarUnpack": ["src/**", "scripts/**", "dist/**", "requirements-local.txt", "package.json", "node_modules/**"],
+    "win": { "target": [{ "target": "nsis", "arch": ["x64"] }], "signAndEditExecutable": false, "artifactName": "${productName}-Setup-${version}.${ext}" },
+    "nsis": { "oneClick": true, "perMachine": false, "allowElevation": false, "deleteAppDataOnUninstall": false },
+    "publish": null
   }
 }

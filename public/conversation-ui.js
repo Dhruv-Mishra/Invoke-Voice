@@ -41,9 +41,7 @@ export function createCaptionController(render, timers = globalThis) {
   };
 }
 
-export function createConversationUI(document, openConversation) {
-  const history = document.getElementById('chat-history');
-  const empty = document.getElementById('history-empty');
+export function createConversationUI(document) {
   const caption = document.getElementById('closed-caption');
   const speaker = document.getElementById('caption-speaker');
   const text = document.getElementById('caption-text');
@@ -63,40 +61,17 @@ export function createConversationUI(document, openConversation) {
     document.getElementById('open-chat-btn').focus();
     captions.clear();
   });
-  document.getElementById('history-compose-btn').addEventListener('click', () => openConversation());
   document.defaultView.addEventListener('pagehide', () => captions.clear());
 
   return {
     preview: (role, content) => captions.update(role, content, true),
     clearCaption: () => captions.clear(),
-    message(role, content, bubble) {
+    message(role, content) {
       if (!['user', 'assistant'].includes(role) || typeof content !== 'string' || !content.trim()) return;
       captions.update(role, content);
-      const item = document.createElement('div');
-      item.setAttribute('role', 'listitem');
-      const button = document.createElement('button');
-      button.className = 'history-entry';
-      button.type = 'button';
-      const label = document.createElement('strong');
-      label.textContent = role === 'user' ? 'You' : 'Supervisor';
-      const preview = document.createElement('span');
-      preview.textContent = content.length > 160 ? `${content.slice(0, 157)}...` : content;
-      button.append(label, preview);
-      button.addEventListener('click', () => {
-        openConversation();
-        bubble.tabIndex = -1;
-        bubble.focus({ preventScroll: true });
-        bubble.scrollIntoView({ block: 'center', behavior: 'instant' });
-      });
-      item.append(button);
-      history.prepend(item);
-      if (history.children.length > 80) history.lastElementChild.remove();
-      empty.hidden = true;
     },
     clear() {
       captions.clear();
-      history.replaceChildren();
-      empty.hidden = false;
     },
   };
 }

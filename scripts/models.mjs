@@ -1,333 +1,265 @@
-#!/usr/bin/env node
-/**
- * Local model and runtime downloader for Voice Supervisor.
- * Targets: moonshine, ling, all, runtimes
- */
-
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
-import { Readable } from 'node:stream';
+import { createHash } from 'node:crypto';
+import { on, once } from 'node:events';
+import { Transform, Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
-const API_TIMEOUT_MS = 15000;
-const STREAM_TIMEOUT_MS = 300000;
+const root = fileURLToPath(new URL('../', import.meta.url));
+const hf = (id, label, repo, revision, name) => ({ id, label, repo, revision, name, sourceUrl: `https://huggingface.co/${repo}/resolve/${revision}/${name}` });
+export const ASSETS = Object.freeze([
+  hf('ling', 'Ling Compact GGUF', 'SC117/Ling-3.0-tiny-abliterated-APEX-GGUF', 'b923d16fcf28261f12be9ece2b520ed442403f70', 'Ling-3.0-tiny-abliterated-APEX-I-Compact.gguf'),
+  hf('moonshine', 'Moonshine Small Q4_K', 'cstr/moonshine-streaming-small-GGUF', '205725dab4909029e6dee86626d0312f872d7084', 'moonshine-streaming-small-q4_k.gguf'),
+  hf('tokenizer', 'Moonshine tokenizer', 'cstr/moonshine-streaming-small-GGUF', '205725dab4909029e6dee86626d0312f872d7084', 'tokenizer.bin'),
+  hf('vad', 'Silero VAD 6.2.0', 'ggml-org/whisper-vad', '9ffd54a1e1ee413ddf265af9913beaf518d1639b', 'ggml-silero-v6.2.0.bin'),
+  hf('kokoroConfig', 'Kokoro configuration', 'hexgrad/Kokoro-82M', 'f3ff3571791e39611d31c381e3a41a3af07b4987', 'config.json'),
+  hf('kokoroModel', 'Kokoro 82M weights', 'hexgrad/Kokoro-82M', 'f3ff3571791e39611d31c381e3a41a3af07b4987', 'kokoro-v1_0.pth'),
+  hf('kokoroVoice', 'Kokoro af_heart voice', 'hexgrad/Kokoro-82M', 'f3ff3571791e39611d31c381e3a41a3af07b4987', 'voices/af_heart.pt'),
+  { id: 'llama', label: 'llama.cpp b10970 CPU', name: 'llama-b10970-bin-win-cpu-x64.zip', executable: 'llama-server.exe', size: 18428751, sha256: '2c6d6516c04e95caa080d8eb917743e71858c73985acbb6739ad61b14e68b298', sourceUrl: 'https://github.com/ggml-org/llama.cpp/releases/download/b10970/llama-b10970-bin-win-cpu-x64.zip' },
+  { id: 'crispasr', label: 'CrispASR 0.8.32 CPU', name: 'crispasr-windows-x86_64-cpu-legacy.zip', executable: 'crispasr.exe', size: 7713869, sha256: 'ba4e23fb8dfcc99b8a76af034954576a75f88193e3dbf62fc774287bcbd1114b', sourceUrl: 'https://github.com/CrispStrobe/CrispASR/releases/download/v0.8.32/crispasr-windows-x86_64-cpu-legacy.zip' },
+  { id: 'uv', label: 'uv 0.8.17 / isolated Python', name: 'uv-x86_64-pc-windows-msvc.zip', executable: 'uv.exe', size: 20489375, sha256: '0d051779fbcb173b183efeae1c3e96148764fd82709bbbf0966df3efe48b67c5', sourceUrl: 'https://github.com/astral-sh/uv/releases/download/0.8.17/uv-x86_64-pc-windows-msvc.zip' },
+]);
 
-const DEFAULT_BASE_DIR = process.env.LOCALAPPDATA ||
-  (process.env.USERPROFILE ? path.join(process.env.USERPROFILE, 'AppData', 'Local') : path.join(os.homedir(), '.local', 'share'));
-
-export const MODEL_DIR = process.env.MODEL_DIR
-  ? path.resolve(process.env.MODEL_DIR)
-  : path.join(DEFAULT_BASE_DIR, 'VoiceSupervisor', 'models');
-
-export const RUNTIME_DIR = process.env.RUNTIME_DIR
-  ? path.resolve(process.env.RUNTIME_DIR)
-  : path.join(DEFAULT_BASE_DIR, 'VoiceSupervisor', 'runtimes');
-
-export const TARGETS = {
-  moonshine: {
-    id: 'moonshine',
-    description: 'Moonshine Streaming Small Q4_K, tokenizer, and Silero VAD v6.2.0',
-    files: [
-      {
-        repo: 'cstr/moonshine-streaming-small-GGUF',
-        name: 'moonshine-streaming-small-q4_k.gguf',
-      },
-      {
-        repo: 'cstr/moonshine-streaming-small-GGUF',
-        name: 'tokenizer.bin',
-      },
-      {
-        repo: 'ggml-org/whisper-vad',
-        name: 'ggml-silero-v6.2.0.bin',
-      },
-    ],
-  },
-  ling: {
-    id: 'ling',
-    description: 'Ling-3.0 Tiny abliterated APEX-I-Compact GGUF (~3.99GB)',
-    files: [
-      {
-        repo: 'SC117/Ling-3.0-tiny-abliterated-APEX-GGUF',
-        name: 'Ling-3.0-tiny-abliterated-APEX-I-Compact.gguf',
-      },
-    ],
-  },
-  runtimes: {
-    id: 'runtimes',
-    repo: 'CrispStrobe/CrispASR',
-    description: 'CrispASR prebuilt Windows x86_64 CPU streaming CLI binary',
-    assetName: 'crispasr-windows-x86_64-cpu.zip',
-    releaseApi: 'https://api.github.com/repos/CrispStrobe/CrispASR/releases/latest',
-  },
-};
-
-async function getHfRevision(repo) {
-  try {
-    const res = await fetch(`https://huggingface.co/api/models/${repo}`, {
-      headers: { 'User-Agent': 'VoiceSupervisor-Models/0.1' },
-      signal: AbortSignal.timeout(API_TIMEOUT_MS),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data.sha) return data.sha;
-    }
-  } catch (err) {
-    console.warn(`[HF API] Metadata lookup failed for ${repo} (${err.message}); falling back to main.`);
-  }
-  return 'main';
+export function setupError(message) {
+  return Object.assign(new Error(message), { setupMessage: message });
 }
 
-async function getRemoteMetadata(url) {
-  const res = await fetch(url, {
-    method: 'HEAD',
-    headers: { 'User-Agent': 'VoiceSupervisor-Models/0.1' },
-    redirect: 'follow',
-    signal: AbortSignal.timeout(API_TIMEOUT_MS),
-  });
-  if (!res.ok) throw new Error(`HTTP HEAD failed with ${res.status} ${res.statusText} for ${url}`);
-  const len = res.headers.get('content-length');
+export function readJson(file) {
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
+}
+
+export function writeJson(file, value) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(`${file}.partial`, JSON.stringify(value, null, 2));
+  fs.renameSync(`${file}.partial`, file);
+}
+
+export async function withSetupLock(paths, action) {
+  fs.mkdirSync(paths.home, { recursive: true });
+  const { default: lockfile } = await import('proper-lockfile');
+  let release;
+  try { release = await lockfile.lock(paths.home, { realpath: false, lockfilePath: path.join(paths.home, 'local-setup.lock'), stale: 30000, update: 5000, retries: 0 }); }
+  catch (error) {
+    if (error.code === 'ELOCKED') throw setupError('Another app or command is provisioning this cache. Wait for it to finish, then retry. After an interrupted setup, wait at least 30 seconds before retrying.');
+    throw error;
+  }
+  try { return await action(); } finally { await release(); }
+}
+
+function fileStat(file) {
+  try { const stat = fs.statSync(file); return stat.isFile() && stat.size > 0 ? { size: stat.size, mtimeMs: stat.mtimeMs } : null; } catch { return null; }
+}
+
+export function stackPaths(env = process.env, appRoot = root) {
+  const home = path.resolve(env.SUPERVISOR_CACHE_DIR || path.join(env.LOCALAPPDATA || path.join(os.homedir(), '.local', 'share'), 'VoiceSupervisor'));
+  const modelDir = path.resolve(env.MODEL_DIR || path.join(home, 'models'));
+  const runtimeDir = path.resolve(env.RUNTIME_DIR || path.join(home, 'runtimes'));
+  const base = env.SUPERVISOR_CONFIG_DIR || appRoot;
+  const configured = value => value ? path.resolve(base, value) : null;
+  const select = (...candidates) => candidates.find(candidate => candidate && fileStat(candidate));
+  const localStack = path.resolve(appRoot, '../LocalVoiceStack');
+  const requestedMoonshine = configured(env.MOONSHINE_MODEL);
+  const q4Name = ASSETS[1].name;
+  const compatibleMoonshine = requestedMoonshine && path.basename(requestedMoonshine).toLowerCase() !== 'moonshine-streaming-small-q8_0.gguf' ? requestedMoonshine : null;
+  const moonshine = select(compatibleMoonshine, requestedMoonshine && path.join(path.dirname(requestedMoonshine), q4Name), path.join(localStack, 'STT_Models', q4Name), path.join(modelDir, q4Name)) || path.join(modelDir, q4Name);
   return {
-    contentLength: len ? parseInt(len, 10) : null,
-    etag: res.headers.get('etag'),
-    url: res.url,
+    home, modelDir, runtimeDir, receiptDir: path.join(home, 'setup-receipts'),
+    ling: select(configured(env.LOCAL_LLM_PATH), path.join(localStack, 'LLMs', ASSETS[0].name), path.join(modelDir, ASSETS[0].name)) || path.join(modelDir, ASSETS[0].name),
+    moonshine,
+    tokenizer: select(path.join(path.dirname(moonshine), 'tokenizer.bin'), path.join(modelDir, 'tokenizer.bin')) || path.join(modelDir, 'tokenizer.bin'),
+    vad: select(configured(env.VAD_MODEL), path.join(modelDir, ASSETS[3].name)) || path.join(modelDir, ASSETS[3].name),
+    llama: select(configured(env.LLAMA_SERVER_BIN)) || path.join(runtimeDir, 'llama', 'llama-server.exe'),
+    crispasr: select(configured(env.CRISPASR_BIN), path.join(runtimeDir, 'crispasr.exe')) || path.join(runtimeDir, 'crispasr', 'crispasr.exe'),
+    uv: path.join(runtimeDir, 'uv', 'uv.exe'),
+    venv: path.join(runtimeDir, 'kokoro-venv'),
+    python: path.join(runtimeDir, 'kokoro-venv', 'Scripts', 'python.exe'),
+    kokoroConfig: path.join(modelDir, 'kokoro', 'config.json'),
+    kokoroModel: path.join(modelDir, 'kokoro', 'kokoro-v1_0.pth'),
+    kokoroVoice: path.join(modelDir, 'kokoro', 'af_heart.pt'),
   };
 }
 
-async function downloadFileStream(url, destPath, expectedLength) {
-  fs.mkdirSync(path.dirname(destPath), { recursive: true });
-  const tmpPath = `${destPath}.tmp.${Date.now()}`;
+export const MODEL_DIR = stackPaths().modelDir;
+export const RUNTIME_DIR = stackPaths().runtimeDir;
 
-  try {
-    const res = await fetch(url, {
-      headers: { 'User-Agent': 'VoiceSupervisor-Models/0.1' },
-      redirect: 'follow',
-      signal: AbortSignal.timeout(STREAM_TIMEOUT_MS),
-    });
-    if (!res.ok) throw new Error(`HTTP GET returned ${res.status} ${res.statusText} for ${url}`);
-    if (!res.body) throw new Error(`Response body is empty for ${url}`);
-
-    const fileStream = fs.createWriteStream(tmpPath);
-    await pipeline(Readable.fromWeb(res.body), fileStream);
-
-    const stat = fs.statSync(tmpPath);
-    if (expectedLength && stat.size !== expectedLength) {
-      fs.unlinkSync(tmpPath);
-      throw new Error(`Downloaded size (${stat.size} B) did not match expected (${expectedLength} B)`);
-    }
-    fs.renameSync(tmpPath, destPath);
-    return { size: stat.size };
-  } catch (err) {
-    if (fs.existsSync(tmpPath)) {
-      try { fs.unlinkSync(tmpPath); } catch {}
-    }
-    throw err;
-  }
+function receiptPath(paths, asset, destination) {
+  return path.join(paths.receiptDir, `${asset.id}-${createHash('sha256').update(destination).digest('hex').slice(0, 20)}.json`);
 }
 
-function updateManifest(dir, record) {
-  try {
-    fs.mkdirSync(dir, { recursive: true });
-    const manifestPath = path.join(dir, 'manifest.json');
-    let current = {};
-    if (fs.existsSync(manifestPath)) {
-      try { current = JSON.parse(fs.readFileSync(manifestPath, 'utf8')); } catch {}
-    }
-    current[record.id] = {
-      ...current[record.id],
-      ...record,
-      updatedAt: new Date().toISOString(),
-    };
-    fs.writeFileSync(manifestPath, JSON.stringify(current, null, 2), 'utf8');
-  } catch (err) {
-    console.warn(`[manifest] Could not update manifest in ${dir}: ${err.message}`);
-  }
+export function assetReady(paths, asset, destination = paths[asset.id]) {
+  const receipt = readJson(receiptPath(paths, asset, destination));
+  if (receipt?.sourceUrl !== asset.sourceUrl || !receipt.files?.length) return false;
+  return receipt.files.every(record => {
+    const stat = fileStat(record.path);
+    return stat && stat.size === record.size && stat.mtimeMs === record.mtimeMs;
+  });
 }
 
-async function downloadModelGroup(groupKey) {
-  const group = TARGETS[groupKey];
-  if (!group) throw new Error(`Unknown model group: ${groupKey}`);
+function recordAsset(paths, asset, destination, files, digest) {
+  writeJson(receiptPath(paths, asset, destination), { sourceUrl: asset.sourceUrl, digest, files: files.map(file => ({ path: file, ...fileStat(file) })) });
+}
 
-  console.log(`\n=== Downloading ${group.id.toUpperCase()} Models ===`);
-  console.log(`Destination: ${MODEL_DIR}\n`);
+export function trustedDownloadUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && !url.username && !url.password && !url.port && (
+      ['huggingface.co', 'github.com', 'release-assets.githubusercontent.com', 'objects.githubusercontent.com'].includes(url.hostname) ||
+      url.hostname.endsWith('.hf.co') || url.hostname.endsWith('.huggingface.co')
+    );
+  } catch { return false; }
+}
 
-  fs.mkdirSync(MODEL_DIR, { recursive: true });
-
-  const revisions = new Map();
-
-  for (const file of group.files) {
-    if (!revisions.has(file.repo)) {
-      console.log(`Looking up latest revision for ${file.repo}...`);
-      const rev = await getHfRevision(file.repo);
-      revisions.set(file.repo, rev);
+async function request(url, { fetchImpl, signal }) {
+  for (let redirects = 0; redirects < 8; redirects += 1) {
+    if (!trustedDownloadUrl(url)) throw setupError('Download was redirected outside the trusted sources. Retry after checking the release source.');
+    const response = await fetchImpl(url, { redirect: 'manual', headers: { 'User-Agent': 'VoiceSupervisor-Setup/0.1' }, signal: AbortSignal.any([signal || new AbortController().signal, AbortSignal.timeout(30 * 60 * 1000)]) });
+    if ([301, 302, 303, 307, 308].includes(response.status)) {
+      const location = response.headers.get('location');
+      await response.body?.cancel();
+      if (!location) throw setupError('Download source returned an invalid redirect. Retry later.');
+      url = new URL(location, url).href;
+      continue;
     }
-    const revision = revisions.get(file.repo);
-    const pinnedUrl = `https://huggingface.co/${file.repo}/resolve/${revision}/${file.name}`;
-    const dest = path.join(MODEL_DIR, file.name);
+    if (!response.ok) throw setupError(`Download source returned HTTP ${response.status}. Check your connection or proxy, then retry.`);
+    return response;
+  }
+  throw setupError('Download source redirected too many times. Retry later.');
+}
 
-    console.log(`Checking ${file.name}...`);
-    let meta = null;
+async function metadata(asset, options) {
+  if (asset.sha256) return asset;
+  const parent = path.posix.dirname(asset.name);
+  const response = await request(`https://huggingface.co/api/models/${asset.repo}/tree/${asset.revision}${parent === '.' ? '' : `/${parent}`}`, options);
+  const files = await response.json();
+  const entry = files.find(file => file.path === asset.name);
+  const digest = entry?.lfs?.oid || entry?.oid;
+  if (!Number.isSafeInteger(entry?.size) || entry.size <= 0 || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(digest || '')) throw setupError('Pinned model metadata is unavailable. Retry when Hugging Face is reachable.');
+  return { size: entry.size, [digest.length === 64 ? 'sha256' : 'gitSha1']: digest };
+}
+
+function hasher(meta) {
+  const hash = createHash(meta.sha256 ? 'sha256' : 'sha1');
+  if (!meta.sha256) hash.update(`blob ${meta.size}\0`);
+  return hash;
+}
+
+async function verify(file, meta, signal) {
+  if (fileStat(file)?.size !== meta.size) return false;
+  const hash = hasher(meta);
+  for await (const chunk of fs.createReadStream(file)) { signal?.throwIfAborted(); hash.update(chunk); }
+  return hash.digest('hex') === (meta.sha256 || meta.gitSha1);
+}
+
+export async function ensureAsset(paths, asset, { report = () => {}, signal, fetchImpl = fetch } = {}) {
+  if (!ASSETS.includes(asset)) throw setupError('Unknown setup component.');
+  const destination = paths[asset.id];
+  if (assetReady(paths, asset, destination)) return destination;
+  const options = { signal, fetchImpl };
+  const receipt = readJson(receiptPath(paths, asset, destination));
+  const cachedDigest = !asset.executable && receipt?.sourceUrl === asset.sourceUrl && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(receipt.digest || '') && receipt.files?.find(record => record.path === destination);
+  const meta = cachedDigest ? { size: cachedDigest.size, [receipt.digest.length === 64 ? 'sha256' : 'gitSha1']: receipt.digest } : await metadata(asset, options);
+  const downloadPath = asset.executable ? path.join(paths.runtimeDir, 'archives', asset.name) : destination;
+  report({ stage: asset.id, message: `Checking ${asset.label}.` });
+  if (!await verify(downloadPath, meta, signal)) {
+    if (!asset.executable && fileStat(downloadPath) && !downloadPath.startsWith(`${paths.modelDir}${path.sep}`)) {
+      throw setupError(`${asset.label}: the configured file did not match the pinned model. Keep it unchanged and correct your local path before retrying.`);
+    }
+    fs.mkdirSync(path.dirname(downloadPath), { recursive: true });
+    const partial = `${downloadPath}.partial`;
+    const hash = hasher(meta);
+    let received = 0;
+    let lastReport = 0;
     try {
-      meta = await getRemoteMetadata(pinnedUrl);
-    } catch (err) {
-      console.warn(`  Could not fetch HEAD metadata: ${err.message}`);
-    }
-
-    if (fs.existsSync(dest)) {
-      const stat = fs.statSync(dest);
-      if (meta?.contentLength && stat.size === meta.contentLength) {
-        console.log(`  Already downloaded; size matches (${(stat.size / (1024 * 1024)).toFixed(1)} MB). Skipping.`);
-        continue;
+      const response = await request(asset.sourceUrl, options);
+      if (!response.body) throw new Error('Empty download');
+      const meter = new Transform({ transform(chunk, encoding, done) {
+        received += chunk.length;
+        if (received > meta.size) return done(new Error('Download exceeded expected length'));
+        hash.update(chunk);
+        if (Date.now() - lastReport > 250 || received === meta.size) {
+          lastReport = Date.now();
+          report({ stage: asset.id, message: `Downloading ${asset.label}.`, progress: { received, total: meta.size } });
+        }
+        done(null, chunk);
+      } });
+      await pipeline(Readable.fromWeb(response.body), meter, fs.createWriteStream(partial), { signal });
+      if (received !== meta.size || hash.digest('hex') !== (meta.sha256 || meta.gitSha1)) throw setupError(`${asset.label}: download integrity check failed. Retry to download a clean copy.`);
+      if (!asset.executable && fs.existsSync(downloadPath)) fs.renameSync(downloadPath, `${downloadPath}.invalid-${Date.now()}`);
+      fs.renameSync(partial, downloadPath);
+    } finally { fs.rmSync(partial, { force: true }); }
+  }
+  if (!asset.executable) {
+    recordAsset(paths, asset, destination, [destination], meta.sha256 || meta.gitSha1);
+    return destination;
+  }
+  const targetDir = path.join(paths.runtimeDir, asset.id);
+  const staging = fs.mkdtempSync(`${targetDir}.partial-`);
+  try {
+    report({ stage: asset.id, message: `Extracting ${asset.label}.` });
+    const { default: yauzl } = await import('yauzl');
+    const archive = await new Promise((resolve, reject) => yauzl.open(downloadPath, { lazyEntries: true, autoClose: false, strictFileNames: true, validateEntrySizes: true }, (error, archive) => error ? reject(error) : resolve(archive)));
+    try {
+      if (archive.entryCount > 10000) throw setupError('Runtime archive contains too many entries. Check the release source.');
+      let expandedSize = 0;
+      const archiveEntries = on(archive, 'entry', { close: ['end'], signal });
+      archive.readEntry();
+      for await (const [entry] of archiveEntries) {
+        signal?.throwIfAborted();
+        const name = entry.fileName;
+        const segments = name.replace(/\/$/, '').split('/');
+        const output = path.resolve(staging, ...segments);
+        const relative = path.relative(staging, output);
+        if (/[\x00-\x1f<>:"\\|?*]/.test(name) || segments.some(segment => !segment || segment === '.' || segment === '..' || /[ .]$/.test(segment) || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(segment)) || !relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+          throw setupError('Runtime archive contains an unsafe path. Check the release source.');
+        }
+        const type = (entry.externalFileAttributes >>> 16) & 0o170000;
+        const directory = name.endsWith('/') || Boolean(entry.externalFileAttributes & 0x10) || type === 0o040000;
+        if (type !== 0 && type !== (directory ? 0o040000 : 0o100000)) throw setupError('Runtime archive contains symbolic links or special file types. Check the release source.');
+        expandedSize += entry.uncompressedSize;
+        if (!Number.isSafeInteger(entry.uncompressedSize) || entry.uncompressedSize < 0 || expandedSize > 1024 ** 3 || (directory && entry.uncompressedSize !== 0)) throw setupError('Runtime archive exceeds the extraction size limit or has invalid directory data. Check the release source.');
+        if (entry.isEncrypted()) throw setupError('Runtime archive contains encrypted entries. Check the release source.');
+        fs.mkdirSync(directory ? output : path.dirname(output), { recursive: true });
+        if (!directory) {
+          const source = await new Promise((resolve, reject) => archive.openReadStream(entry, (error, stream) => error ? reject(error) : resolve(stream)));
+          await pipeline(source, fs.createWriteStream(output, { flags: 'wx' }), { signal });
+        }
+        archive.readEntry();
       }
-      if (meta?.contentLength && stat.size !== meta.contentLength) {
-        throw new Error(`File ${dest} exists (${stat.size} B) but does not match expected size (${meta.contentLength} B). Delete file manually to re-download.`);
-      }
-      if (!meta?.contentLength && stat.size > 0) {
-        throw new Error(`Cannot verify the size of existing file ${dest}; retry when metadata is available.`);
-      }
+    } finally {
+      const closed = once(archive, 'close');
+      archive.close();
+      await closed;
     }
-
-    console.log(`  Starting download: ${pinnedUrl}`);
-    const result = await downloadFileStream(pinnedUrl, dest, meta?.contentLength);
-    console.log(`  Finished ${file.name}: ${(result.size / (1024 * 1024)).toFixed(1)} MB`);
-
-    updateManifest(MODEL_DIR, {
-      id: `${group.id}:${file.name}`,
-      target: group.id,
-      repo: file.repo,
-      fileName: file.name,
-      revision,
-      size: result.size,
-      etag: meta?.etag || null,
-      localPath: dest,
-    });
-  }
-
-  console.log(`Completed ${groupKey} model download.`);
-}
-
-async function downloadRuntimes() {
-  const target = TARGETS.runtimes;
-  console.log('\n=== Downloading CrispASR Windows CPU Runtime ===');
-  console.log(`Repository: ${target.repo}`);
-  console.log(`Destination: ${RUNTIME_DIR}\n`);
-
-  fs.mkdirSync(RUNTIME_DIR, { recursive: true });
-
-  console.log(`Fetching latest release from GitHub API (${target.releaseApi})...`);
-  const res = await fetch(target.releaseApi, {
-    headers: {
-      'User-Agent': 'VoiceSupervisor-Models/0.1',
-      Accept: 'application/vnd.github.v3+json',
-    },
-    signal: AbortSignal.timeout(API_TIMEOUT_MS),
-  });
-  if (!res.ok) throw new Error(`GitHub API returned ${res.status} ${res.statusText}`);
-  const release = await res.json();
-  const asset = release.assets?.find(a => a.name === target.assetName || (a.name.includes('windows') && a.name.includes('cpu') && a.name.endsWith('.zip')));
-
-  if (!asset) {
-    throw new Error(`Asset '${target.assetName}' not found in release ${release.tag_name || 'latest'}`);
-  }
-
-  const downloadUrl = asset.browser_download_url;
-  const zipPath = path.join(RUNTIME_DIR, asset.name);
-  console.log(`Asset: ${asset.name} (${(asset.size / (1024 * 1024)).toFixed(1)} MB, tag: ${release.tag_name})`);
-
-  let skipDownload = false;
-  if (fs.existsSync(zipPath)) {
-    const stat = fs.statSync(zipPath);
-    if (stat.size === asset.size) {
-      console.log('  Archive already downloaded with matching size. Skipping download.');
-      skipDownload = true;
-    } else {
-      throw new Error(`File ${zipPath} exists (${stat.size} B) but does not match release asset size (${asset.size} B). Delete file manually to re-download.`);
-    }
-  }
-
-  if (!skipDownload) {
-    console.log(`  Downloading ${downloadUrl}...`);
-    await downloadFileStream(downloadUrl, zipPath, asset.size);
-    console.log('  Download complete.');
-  }
-
-  console.log(`Extracting ${asset.name} into ${RUNTIME_DIR} using tar...`);
-  const tarResult = spawnSync('tar', ['-xf', zipPath, '-C', RUNTIME_DIR, '--strip-components', '1'], { stdio: 'inherit' });
-  if (tarResult.status !== 0) {
-    throw new Error(`tar extraction failed with code ${tarResult.status}. Extract ${zipPath} manually into ${RUNTIME_DIR}.`);
-  }
-
-  updateManifest(RUNTIME_DIR, {
-    id: 'crispasr',
-    tag: release.tag_name,
-    releaseUrl: release.html_url,
-    assetName: asset.name,
-    downloadUrl,
-    size: asset.size,
-    extracted: true,
-    dir: RUNTIME_DIR,
-  });
-
-  console.log(`Runtime setup complete. CrispASR executable located in ${RUNTIME_DIR}`);
-}
-
-function printHelp() {
-  console.log(`
-Voice Supervisor - Local Models & Runtime Downloader
-===================================================
-
-Default Model Directory:
-  ${MODEL_DIR}
-
-Default Runtime Directory:
-  ${RUNTIME_DIR}
-
-Available Targets:
-  moonshine   Moonshine Streaming Small Q4_K, tokenizer.bin, and Silero VAD v6.2.0
-  ling        Ling-3.0-Tiny abliterated APEX-I-Compact GGUF (~3.99GB)
-  all         Download both moonshine and ling model files
-  runtimes    Download and extract CrispASR Windows x86_64 CPU streaming CLI
-
-Usage:
-  node scripts/models.mjs [moonshine | ling | all | runtimes]
-`);
+    const entries = fs.readdirSync(staging, { recursive: true, withFileTypes: true });
+    const executable = entries.find(entry => entry.isFile() && entry.name === asset.executable);
+    if (!executable) throw setupError(`${asset.label}: the archive is missing its executable. Retry or check the release source.`);
+    const sourceDir = executable.parentPath || executable.path;
+    fs.rmSync(targetDir, { recursive: true, force: true });
+    fs.renameSync(sourceDir, targetDir);
+    const files = fs.readdirSync(targetDir, { recursive: true, withFileTypes: true }).filter(entry => entry.isFile()).map(entry => path.join(entry.parentPath || entry.path, entry.name));
+    paths[asset.id] = path.join(targetDir, asset.executable);
+    recordAsset(paths, asset, paths[asset.id], files, meta.sha256);
+    return paths[asset.id];
+  } finally { fs.rmSync(staging, { recursive: true, force: true }); }
 }
 
 async function main() {
-  const args = process.argv.slice(2);
-  if (args.length === 0 || args.includes('-h') || args.includes('--help')) {
-    printHelp();
-    process.exit(0);
+  const target = process.argv[2];
+  if (!['all', 'ling', 'moonshine', 'runtimes'].includes(target)) {
+    console.log('Usage: npm run models -- all|ling|moonshine|runtimes\nFor complete opt-in local setup, use Settings in the app.');
+    return;
   }
-
-  const target = args[0].toLowerCase();
-  switch (target) {
-    case 'moonshine':
-      await downloadModelGroup('moonshine');
-      break;
-    case 'ling':
-      await downloadModelGroup('ling');
-      break;
-    case 'all':
-      await downloadModelGroup('moonshine');
-      await downloadModelGroup('ling');
-      break;
-    case 'runtimes':
-      await downloadRuntimes();
-      break;
-    default:
-      console.error(`Unknown target: "${target}". Expected "moonshine", "ling", "all", or "runtimes".`);
-      printHelp();
-      process.exit(1);
-  }
+  if (target === 'runtimes' && (process.platform !== 'win32' || process.arch !== 'x64')) throw setupError('Prebuilt runtimes support Windows x64 only.');
+  const paths = stackPaths();
+  const selected = ASSETS.filter(asset => target === 'runtimes' ? Boolean(asset.executable) : target === 'all' ? ['ling', 'moonshine', 'tokenizer', 'vad'].includes(asset.id) : target === 'ling' ? asset.id === 'ling' : ['moonshine', 'tokenizer', 'vad'].includes(asset.id));
+  await withSetupLock(paths, async () => {
+    for (const asset of selected) await ensureAsset(paths, asset, { report: event => { if (!event.progress) console.log(event.message); } });
+  });
+  console.log('Selected files are installed. Full runtime readiness is checked by app setup.');
 }
 
-const isEntry = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
-if (isEntry) {
-  main().catch(err => {
-    console.error(`\nError: ${err.message}`);
-    process.exit(1);
-  });
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch(error => { console.error(error.setupMessage || 'Download failed. Check network access and free disk space, then retry.'); process.exitCode = 1; });
 }

@@ -2,10 +2,11 @@ import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { streamReply } from './llm.mjs';
+import { stackPaths } from '../scripts/models.mjs';
+import desktopLaunch from '../scripts/desktop-launch.cjs';
 
 const worker = fileURLToPath(new URL('../scripts/kokoro_worker.py', import.meta.url));
 const bundledPython = fileURLToPath(new URL('../.venv/Scripts/python.exe', import.meta.url));
@@ -15,6 +16,7 @@ let crispRuntimePromise;
 
 async function startKokoroRuntime(config, env) {
   const process = spawn(config.pythonBin, ['-u', worker], { windowsHide: true, env: { ...env, LOCAL_THREADS: env.KOKORO_THREADS || env.LOCAL_THREADS || '8' }, stdio: ['pipe', 'pipe', 'pipe'] });
+  desktopLaunch.trackChild(process);
   let diagnostic = '';
   process.stderr.on('data', chunk => { diagnostic = (diagnostic + chunk.toString()).slice(-1000); });
   process.stdin.on('error', () => {});
@@ -53,6 +55,7 @@ function getKokoroRuntime(config, env) {
 
 async function startCrispRuntime(config, env) {
   const process = spawn(config.crispasrBin, localSttArguments(config, env), { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+  desktopLaunch.trackChild(process);
   let diagnostic = '';
   process.stdin.on('error', () => {});
   const transcription = createInterface({ input: process.stdout });
@@ -103,20 +106,32 @@ export async function warmLocalVoice(env = process.env) {
   return warmups.length > 0;
 }
 
+export async function closeLocalVoice() {
+  const pending = [kokoroRuntimePromise, crispRuntimePromise];
+  kokoroRuntimePromise = undefined;
+  crispRuntimePromise = undefined;
+  for (const result of await Promise.allSettled(pending.filter(Boolean))) {
+    if (result.status === 'fulfilled') {
+      result.value.reader?.close();
+      result.value.transcription?.close();
+      result.value.process.kill();
+    }
+  }
+}
+
 export function localConfiguration(env = process.env) {
-  const home = path.join(env.LOCALAPPDATA || path.join(os.homedir(), '.local', 'share'), 'VoiceSupervisor');
-  const modelDir = env.MODEL_DIR || path.join(home, 'models');
-  const runtimeDir = env.RUNTIME_DIR || path.join(home, 'runtimes');
-  const crispasrBin = env.CRISPASR_BIN || path.join(runtimeDir, 'crispasr.exe');
+  const paths = stackPaths(env);
+  const crispasrBin = paths.crispasr;
   const requestedMoonshineModel = env.MOONSHINE_MODEL ? path.resolve(env.MOONSHINE_MODEL) : defaultMoonshineModel;
   const unsupportedQ8 = path.basename(requestedMoonshineModel).toLowerCase() === 'moonshine-streaming-small-q8_0.gguf';
-  const moonshineModel = unsupportedQ8 && existsSync(defaultMoonshineModel) ? defaultMoonshineModel : requestedMoonshineModel;
+  const moonshineModel = env.MOONSHINE_EFFECTIVE_MODEL || (existsSync(paths.moonshine) ? paths.moonshine : requestedMoonshineModel);
   const sttWarning = unsupportedQ8 && moonshineModel !== requestedMoonshineModel ? 'Small Q8_0 crashes CrispASR 0.8.32; using canonical Small Q4_K.' : null;
   const siblingTokenizer = path.join(path.dirname(moonshineModel), 'tokenizer.bin');
-  const moonshineTokenizer = existsSync(siblingTokenizer) ? siblingTokenizer : path.join(modelDir, 'tokenizer.bin');
-  const vadModel = env.VAD_MODEL || path.join(modelDir, 'ggml-silero-v6.2.0.bin');
+  const moonshineTokenizer = env.MOONSHINE_TOKENIZER || (existsSync(siblingTokenizer) ? siblingTokenizer : paths.tokenizer);
+  const vadModel = paths.vad;
   const sttConfigured = [crispasrBin, moonshineModel, moonshineTokenizer, vadModel].every(existsSync);
-  const pythonBin = (!env.PYTHON_BIN || env.PYTHON_BIN === 'python') && existsSync(bundledPython) ? bundledPython : (env.PYTHON_BIN || 'python');
+  const managedPython = existsSync(path.join(paths.venv, 'complete.json')) && existsSync(paths.python) ? paths.python : null;
+  const pythonBin = env.PYTHON_BIN && env.PYTHON_BIN !== 'python' ? path.resolve(env.SUPERVISOR_CONFIG_DIR || fileURLToPath(new URL('../', import.meta.url)), env.PYTHON_BIN) : managedPython || (existsSync(bundledPython) ? bundledPython : 'python');
   const ttsConfigured = existsSync(pythonBin) || env.KOKORO_READY === '1';
   return { configured: sttConfigured && ttsConfigured, sttConfigured, ttsConfigured, pythonBin, crispasrBin, requestedMoonshineModel, moonshineModel, moonshineTokenizer, sttWarning, vadModel, model: env.LOCAL_LLM_MODEL || 'ling-local', ttsModel: env.KOKORO_REPO || 'hexgrad/Kokoro-82M', ttsVoice: env.KOKORO_VOICE || 'af_heart', sttStreamingArchitecture: 'CrispASR rolling-window streaming' };
 }

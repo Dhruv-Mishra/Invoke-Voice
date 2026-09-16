@@ -478,11 +478,11 @@
       </button>
     </nav>
     <section class="sidebar-history" aria-labelledby="history-title">
-      <div class="history-header"><h2 id="history-title">Chat history</h2><button class="btn btn-icon" id="history-compose-btn" type="button" title="Compose message" aria-label="Compose message"><i data-lucide="edit-2"></i></button></div>
-      <p class="history-empty" id="history-empty">No messages yet</p>
-      <div id="chat-history" class="history-list" role="list" aria-label="Current conversation"></div>
+      <div class="history-header"><h2 id="history-title">Task history</h2><button class="btn btn-icon" id="history-compose-btn" type="button" title="New task" aria-label="New task"><i data-lucide="plus"></i></button></div>
+      <p class="history-empty" id="history-empty">No tasks yet</p>
+      <div id="chat-history" class="history-list" role="list" aria-label="Task history"></div>
     </section>
-    <div class="sidebar-footer"><span>Current session</span></div>
+    <div class="sidebar-footer"><span>Voice Work Supervisor</span></div>
     <div class="header-status">
       <span class="badge" id="route-status-badge">Checking...</span>
       <button class="btn" id="route-config-btn" type="button" aria-haspopup="dialog" aria-controls="route-config-dialog" title="Configure provider, model, and voice route">
@@ -495,6 +495,12 @@
   <div class="app-main">
   <div class="page-views">
   <main id="voice-personality-app" role="tabpanel" aria-labelledby="home-tab"></main>
+  <dialog id="view-dialog" class="view-dialog" aria-labelledby="view-dialog-title">
+    <div class="view-dialog-header">
+      <h2 id="view-dialog-title">Tasks</h2>
+      <button type="button" class="btn btn-icon" id="close-view-btn" aria-label="Close view" title="Close view"><i data-lucide="x"></i></button>
+    </div>
+    <div class="view-dialog-content">
   <div class="application-body" id="workspace-view" role="tabpanel" aria-labelledby="workspace-tab" hidden>
     <main class="center-pane">
       <details class="areas-disclosure" id="areas-disclosure">
@@ -603,6 +609,29 @@
       </div>
       </section>
 
+      <section class="settings-section local-setup" id="local-setup" aria-labelledby="setup-title">
+        <div class="setup-heading"><h2 class="settings-section-title" id="setup-title"><i data-lucide="hard-drive-download" aria-hidden="true"></i>Local voice</h2><span class="badge" id="setup-status">Not checked</span></div>
+        <p class="setup-estimate">Approximately 5-6 GB of downloads, plus Python dependencies. Allow at least 12 GB of free disk space for the persistent cache and installed runtimes; Python dependencies may require more.</p>
+        <p id="setup-message" role="status" aria-live="polite">Setup status is available when Settings is open.</p>
+        <p id="setup-error" role="alert" hidden></p>
+        <div id="setup-progress-region" hidden>
+          <progress id="setup-progress" aria-label="Local voice download progress"></progress>
+          <p id="setup-progress-label"></p>
+        </div>
+        <dl class="setup-locations">
+          <div><dt>Platform</dt><dd id="setup-platform">Not checked</dd></div>
+          <div><dt>Persistent download cache</dt><dd id="setup-cache" class="mono">Not checked</dd></div>
+          <div><dt>Runtime location</dt><dd id="setup-runtime" class="mono">Not checked</dd></div>
+        </dl>
+        <ul id="setup-components" class="setup-components" aria-label="Local voice components and download sources"></ul>
+        <label class="setup-consent" id="setup-consent-label"><input type="checkbox" id="setup-consent">I agree to download and install local voice components and Python dependencies on this device.</label>
+        <div class="utility-toolbar">
+          <button class="btn btn-accent" type="button" id="setup-install-btn" disabled><i data-lucide="hard-drive-download" aria-hidden="true"></i><span id="setup-install-label">Install local voice</span></button>
+          <button class="btn" type="button" id="setup-refresh-btn"><i data-lucide="refresh-cw" aria-hidden="true"></i>Refresh status</button>
+        </div>
+        <details id="setup-log-details" hidden><summary>Setup log</summary><pre id="setup-log"></pre></details>
+      </section>
+
       <form id="settings-form" class="settings-form">
         <section class="settings-section settings-defaults">
           <h2 class="settings-section-title"><i data-lucide="folder-kanban" aria-hidden="true"></i>Coding defaults</h2>
@@ -687,6 +716,8 @@
       </section>
     </div>
   </section>
+  </div>
+  </dialog>
   </div>
   <div class="caption-region">
     <div id="closed-caption" class="closed-caption" hidden>

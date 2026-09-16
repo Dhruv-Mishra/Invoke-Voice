@@ -25,6 +25,7 @@ const pendingPlaybackResponses = new Map();
 const responsePlaybackGenerations = new Map();
 const playbackFailures = new Set();
 let notificationInFlight = null;
+let toolActivityTimer = null;
 
 // Audio session token & queue
 let currentSessionToken = 0;
@@ -181,12 +182,23 @@ function setAgentState(state) {
   agentSprite.title = `Agent ${next}`;
   document.querySelector('.voice-strip').dataset.state = next;
   const active = isVoiceStarting || Boolean(voiceSocket);
+  document.body.dataset.voiceActive = String(active);
   const microphoneLabel = active ? 'Disconnect microphone' : micToggleBtn.disabled ? `Microphone unavailable: ${routeStatusBadge.textContent}` : 'Connect microphone';
   micToggleBtn.title = microphoneLabel;
   micToggleBtn.setAttribute('aria-label', microphoneLabel);
   micToggleBtn.setAttribute('aria-pressed', String(active));
   document.getElementById('voice-route-status').textContent = routeStatusBadge.textContent;
   window.dispatchEvent(new CustomEvent('voice-supervisor:agent-state', { detail: { state: next } }));
+}
+
+function showToolActivity() {
+  if (!isVoiceStarting && !voiceSocket) return;
+  clearTimeout(toolActivityTimer);
+  document.body.dataset.voiceActivity = 'tool';
+  toolActivityTimer = window.setTimeout(() => {
+    delete document.body.dataset.voiceActivity;
+    toolActivityTimer = null;
+  }, 900);
 }
 
 const MARKDOWN_TAGS = ['p', 'br', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'em', 'strong', 'i', 'b', 'blockquote', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'code', 'pre', 'a', 'hr'];
@@ -1028,6 +1040,7 @@ async function startVoiceSession() {
           appendMessage('system', '[Speech interrupted]');
         } else if (data.type === 'tool') {
           console.debug('Voice tool completed', data.name);
+          showToolActivity();
         } else if (data.type === 'state') {
           isVoiceThinking = data.state === 'thinking';
           setAgentState(['thinking', 'speaking', 'listening'].includes(data.state) ? data.state : 'listening');
@@ -1077,6 +1090,9 @@ function stopVoiceSession() {
   isServerReady = false;
   isCapturing = false;
   isPttHeld = false;
+  clearTimeout(toolActivityTimer);
+  toolActivityTimer = null;
+  delete document.body.dataset.voiceActivity;
   setAgentState('idle');
   if (pttBtn) pttBtn.classList.remove('btn-accent');
 

@@ -241,6 +241,10 @@ try {
   console.log('Browser fixture: desktop modal and resize');
   await evaluate(() => { window.fixtureHome = document.getElementById('agent-sprite'); window.fixtureSettings = document.getElementById('settings-view'); });
   assert.equal(await evaluate(() => document.getElementById('view-dialog').matches(':modal') && !document.getElementById('voice-personality-app').hidden), true);
+  assert.equal(await evaluate(() => {
+    const dialog = document.getElementById('view-dialog').getBoundingClientRect();
+    return Math.abs((dialog.left + dialog.right) / 2 - innerWidth / 2) < 1 && dialog.width >= 1200;
+  }), true);
   await evaluate(() => document.getElementById('settings-save-btn').focus());
   await press('Tab');
   assert.equal(await evaluate(() => document.activeElement.id), 'close-view-btn');
@@ -256,6 +260,8 @@ try {
   await settle();
   assert.equal(await evaluate(() => document.getElementById('view-dialog').matches(':modal')), false);
   assert.equal(await evaluate(() => document.getElementById('view-dialog').getAttribute('role')), 'region');
+  assert.equal(await evaluate(() => document.getElementById('voice-personality-app').hidden
+    && getComputedStyle(document.getElementById('view-dialog')).backgroundColor === 'rgba(0, 0, 0, 0)'), true);
   await visit('files');
   assert.equal(await evaluate(() => document.body.dataset.view), 'files');
   await visit('settings');
@@ -317,14 +323,22 @@ try {
   console.log('Browser fixture: checking voice');
   await waitFor(() => document.getElementById('agent-sprite').dataset.state === 'listening');
   assert.equal(await evaluate(() => document.querySelectorAll('.voice-bars span').length), 9);
+  assert.equal(await evaluate(() => document.body.dataset.voiceActive === 'true'
+    && !document.getElementById('mic-canvas').hidden
+    && Number(getComputedStyle(document.body, '::before').opacity) > 0), true);
   await voice({ type: 'transcript', role: 'user', text: 'Voice partial', partial: true });
   assert.equal(await evaluate(() => document.getElementById('caption-text').textContent), 'Voice partial');
   assert.equal(await evaluate(() => document.querySelectorAll('.history-entry').length), 2);
   await voice({ type: 'transcript', role: 'user', text: 'Voice final', partial: false });
   assert.equal(await evaluate(() => document.querySelectorAll('.history-entry').length), 2);
   await voice({ type: 'transcript', role: 'assistant', text: 'Agent reply', partial: true });
+  await voice({ type: 'tool', name: 'list_work', result: { ok: true } });
+  assert.equal(await evaluate(() => document.body.dataset.voiceActivity === 'tool'
+    && getComputedStyle(document.body, '::after').animationName === 'tool-presence'), true);
   await voice({ type: 'state', state: 'speaking' });
-  await waitFor(() => document.querySelectorAll('.voice-bars span').length === 9);
+  await waitFor(() => document.querySelectorAll('.voice-bars span').length === 0);
+  assert.equal(await evaluate(() => getComputedStyle(document.querySelector('.sprite-image')).visibility === 'visible'
+    && getComputedStyle(document.getElementById('agent-sprite'), '::before').animationName === 'speaker-ripple'), true);
   await voice({ type: 'transcript', role: 'assistant', text: 'Agent reply', partial: false });
   await visit('settings');
   Object.assign(fixtureTasks[1], { state: 'completed', result: '## Working changes' });
@@ -334,15 +348,23 @@ try {
   await choose('#motion-preference', 'reduce');
   assert.equal(voiceConnections, 1);
   assert.equal(await evaluate(() => document.getElementById('mic-toggle-btn').getAttribute('aria-pressed')), 'true');
-  assert.equal(await evaluate(() => getComputedStyle(document.querySelector('.voice-bars span')).animationName), 'none');
+  assert.equal(await evaluate(() => getComputedStyle(document.querySelector('.sprite-image')).animationName === 'none'
+    && getComputedStyle(document.getElementById('agent-sprite'), '::before').animationName === 'none'), true);
+  await voice({ type: 'tool', name: 'list_work', result: { ok: true } });
+  assert.equal(await evaluate(() => getComputedStyle(document.body, '::after').animationName === 'none'
+    && Number(getComputedStyle(document.body, '::after').opacity) > 0), true);
   await voice({ type: 'interrupted' });
   assert.equal(await evaluate(() => document.getElementById('closed-caption').hidden), true);
+  assert.equal(await evaluate(() => document.querySelector('.caption-region').getBoundingClientRect().height < 1), true);
   await voice({ type: 'transcript', role: 'assistant', text: 'Last reply', partial: false });
   await click('button[data-appearance="alpine"]');
   await click('#close-view-btn');
   await click('#mic-toggle-btn');
   assert.equal(await evaluate(() => document.getElementById('closed-caption').hidden), true);
   assert.equal(await evaluate(() => document.getElementById('mic-toggle-btn').getAttribute('aria-pressed')), 'false');
+  assert.equal(await evaluate(() => document.body.dataset.voiceActive === 'false'
+    && !document.body.hasAttribute('data-voice-activity')
+    && Number(getComputedStyle(document.body, '::before').opacity) === 0), true);
   await visit('home');
   await click('#mic-toggle-btn');
   await waitFor(() => document.getElementById('agent-sprite').dataset.state === 'listening');

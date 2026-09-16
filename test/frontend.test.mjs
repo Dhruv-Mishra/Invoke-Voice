@@ -100,8 +100,8 @@ test('voice sprite renders each state with its animation and accessible label', 
     assert.ok(output.includes(`aria-label="Agent ${state}"`));
     assert.ok(output.includes(`animation-name:${animation}`));
     assert.ok(output.includes('src="/sprite.png"'));
-    assert.equal(output.includes('class="voice-bars"'), ['listening', 'speaking'].includes(state));
-    if (['listening', 'speaking'].includes(state)) {
+    assert.equal(output.includes('class="voice-bars"'), state === 'listening');
+    if (state === 'listening') {
       assert.equal((output.match(/--bar-index:/g) || []).length, 9);
       assert.ok(output.includes('class="voice-bars" aria-hidden="true"'));
     }

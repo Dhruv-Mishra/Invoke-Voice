@@ -23,6 +23,7 @@ const defaultTokens = {
   '--cp-shadow': '0 12px 48px rgba(60, 104, 143, 0.12)',
   '--cp-glass-shadow': '0 2px 7px rgba(99, 143, 175, 0.06)',
   '--cp-wave': '#9ea9ed',
+  '--cp-listening-hue': '#8066d9',
   '--cp-mic-glow': 'rgba(83, 135, 255, 0.24)',
   '--cp-voice-glass': 'rgba(227, 237, 255, 0.70)',
   '--cp-font': '"Segoe UI", Aptos, Calibri, sans-serif',

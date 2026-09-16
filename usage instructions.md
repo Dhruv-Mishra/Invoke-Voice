@@ -59,4 +59,4 @@ Open **Tool Lab** to inspect the exact schemas supplied to the LLM. Select a too
 
 ## Hosted Voice
 
-Set the relevant API key in `.env`, select its provider and voice mode, then use **Connect Mic**. Gemini Live defaults to `gemini-3.1-flash-live-preview`. Local transcripts are never sent to a hosted text model unless **Allow Cloud Hybrid** is enabled.
+Set the relevant API key in `.env`, select its provider and voice mode, then use **Connect Mic**. Gemini Live uses `gemini-3.8-live` with non-blocking tools; local voice remains the default. Local transcripts are never sent to a hosted text model unless **Allow Cloud Hybrid** is enabled.

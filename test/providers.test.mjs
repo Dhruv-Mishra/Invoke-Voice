@@ -4,6 +4,7 @@ import http from 'node:http';
 import { compactToolResult, streamReply, voiceInstructions } from '../src/llm.mjs';
 import { supervisorInstructions } from '../src/supervisor.mjs';
 import { drainVoiceText, isVoiceResponsePlayable, localSttArguments, parseVoiceResponse, retryPlaybackAction } from '../src/local-voice.mjs';
+import { DEFAULT_GEMINI_LIVE_MODEL, geminiLiveConfig, geminiLiveFunctionResponse } from '../src/realtime.mjs';
 
 test('keeps the user-facing agent contract concise and hides implementation details', () => {
   assert.match(supervisorInstructions, /one or two short sentences/i);
@@ -11,6 +12,19 @@ test('keeps the user-facing agent contract concise and hides implementation deta
   assert.match(supervisorInstructions, /task IDs/i);
   assert.match(supervisorInstructions, /raw JSON/i);
   assert.match(supervisorInstructions, /unless explicitly asked/i);
+});
+
+test('configures Gemini 3.8 Live with non-blocking tools and idle responses', () => {
+  const config = geminiLiveConfig();
+  const declarations = config.tools[0].functionDeclarations;
+  assert.equal(DEFAULT_GEMINI_LIVE_MODEL, 'gemini-3.8-live');
+  assert.equal(config.thinkingConfig, undefined);
+  assert.equal(config.responseModalities[0], 'AUDIO');
+  assert.ok(declarations.length > 0);
+  assert.ok(declarations.every(declaration => declaration.behavior === 'NON_BLOCKING'));
+  assert.deepEqual(geminiLiveFunctionResponse({ id: 'call-1', name: 'list_work' }, { tasks: [] }), {
+    id: 'call-1', name: 'list_work', response: { tasks: [] }, scheduling: 'WHEN_IDLE',
+  });
 });
 
 test('uses responsive STT timing without decoding every VAD step', () => {

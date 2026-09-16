@@ -27,7 +27,7 @@ The generated `.zvec-grep/` index and embedding model stay local. The setup comm
 
 ## Hosted Voice
 
-Set `GEMINI_API_KEY` in `.env`. The configured voice model is `gemini-3.1-flash-live-preview`.
+Set `GEMINI_API_KEY` in `.env`. The configured hosted voice model is `gemini-3.8-live`; the local voice flow remains the application default. Gemini tools run non-blocking and return independently with `WHEN_IDLE` scheduling so results do not cut off active speech.
 
 ```powershell
 npm start

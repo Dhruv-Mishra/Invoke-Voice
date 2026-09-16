@@ -1,14 +1,30 @@
-import { GoogleGenAI, Modality, ThinkingLevel } from '@google/genai';
+import { Behavior, FunctionResponseScheduling, GoogleGenAI, Modality } from '@google/genai';
 import WebSocket from 'ws';
 import { randomUUID } from 'node:crypto';
 import { tools, supervisorInstructions } from './supervisor.mjs';
 import { compactToolResult } from './llm.mjs';
+
+export const DEFAULT_GEMINI_LIVE_MODEL = 'gemini-3.8-live';
+
+export function geminiLiveConfig() {
+  return {
+    responseModalities: [Modality.AUDIO],
+    systemInstruction: supervisorInstructions,
+    inputAudioTranscription: {}, outputAudioTranscription: {},
+    tools: [{ functionDeclarations: tools.map(({ function: tool }) => ({ name: tool.name, description: tool.description, parametersJsonSchema: tool.parameters, behavior: Behavior.NON_BLOCKING })) }],
+  };
+}
+
+export function geminiLiveFunctionResponse(call, response) {
+  return { id: call.id, name: call.name, response, scheduling: FunctionResponseScheduling.WHEN_IDLE };
+}
 
 export async function createRealtimeVoice({ mode, send, callTool, env = process.env }) {
   let closed = false;
   let mutedOutput = false;
   const sessionId = randomUUID();
   const results = new Map();
+  const cancelledToolCalls = new Set();
   async function invoke(call) {
     if (closed) return { error: 'Voice session closed' };
     if (!results.has(call.id)) results.set(call.id, Promise.resolve().then(() => callTool(call.name, call.args || {}, { requestId: `${sessionId}:${call.id}` })).catch(error => ({ error: error.message })));
@@ -21,14 +37,8 @@ export async function createRealtimeVoice({ mode, send, callTool, env = process.
     const ai = new GoogleGenAI({ apiKey: env.GEMINI_API_KEY });
     let session;
     session = await ai.live.connect({
-      model: env.GEMINI_LIVE_MODEL || 'gemini-3.1-flash-live-preview',
-      config: {
-        responseModalities: [Modality.AUDIO],
-        thinkingConfig: { thinkingLevel: ThinkingLevel.MINIMAL },
-        systemInstruction: supervisorInstructions,
-        inputAudioTranscription: {}, outputAudioTranscription: {},
-        tools: [{ functionDeclarations: tools.map(({ function: tool }) => ({ name: tool.name, description: tool.description, parametersJsonSchema: tool.parameters })) }],
-      },
+      model: env.GEMINI_LIVE_MODEL || DEFAULT_GEMINI_LIVE_MODEL,
+      config: geminiLiveConfig(),
       callbacks: {
         onmessage: message => {
           if (closed) return;
@@ -40,10 +50,13 @@ export async function createRealtimeVoice({ mode, send, callTool, env = process.
             if (part.inlineData?.data && !mutedOutput) send({ type: 'audio', data: part.inlineData.data, mimeType: 'audio/pcm', sampleRate: 24000 });
           }
           if (content?.turnComplete) { mutedOutput = false; send({ type: 'state', state: 'listening' }); }
+          for (const id of message.toolCallCancellation?.ids || []) cancelledToolCalls.add(id);
           if (message.toolCall?.functionCalls) {
-            Promise.all(message.toolCall.functionCalls.map(async call => ({ id: call.id, name: call.name, response: await invoke(call) }))).then(functionResponses => {
-              if (!closed) session.sendToolResponse({ functionResponses });
-            }).catch(error => send({ type: 'error', message: error.message }));
+            for (const call of message.toolCall.functionCalls) {
+              invoke(call).then(response => {
+                if (!closed && !cancelledToolCalls.has(call.id)) session.sendToolResponse({ functionResponses: [geminiLiveFunctionResponse(call, response)] });
+              }).catch(error => send({ type: 'error', message: error.message }));
+            }
           }
         },
         onerror: () => send({ type: 'error', message: 'Gemini Live connection failed. Check the key, model access, and quota.', fatal: true }),

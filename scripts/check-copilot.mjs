@@ -53,7 +53,7 @@ try {
   if (!status.result?.includes('THREAD_RESUMED')) throw new Error(`${backend} returned an unexpected resumed result: ${status.result}`);
   if (supervisor.status(receipt.taskId).sessionId !== sessionId) throw new Error(`${backend} resume changed session ID`);
   console.log(`${backend} supervisor check: ${status.result}`);
-  console.log(`Task: ${status.id}`);
+  console.log(`Task: ${status.taskId}`);
   console.log(`Session: ${sessionId}`);
 } finally {
   try { execFileSync('git', ['worktree', 'prune'], { cwd: repo, stdio: 'ignore', windowsHide: true }); } catch {}

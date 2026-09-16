@@ -37,7 +37,7 @@ Open the printed loopback URL, normally `http://127.0.0.1:4317`, select **Gemini
 
 ## Local Voice
 
-The default route is Moonshine Streaming Small through CrispASR, Ling through llama.cpp, and Kokoro-82M through Python. A final transcript is committed after 1 second of silence.
+The default route is Moonshine Streaming Small through CrispASR, Ling through llama.cpp, and Kokoro-82M through Python. A final transcript is committed after 800 ms of silence.
 
 Expected assets:
 
@@ -66,7 +66,11 @@ npm run local:check
 npm run local
 ```
 
-Open the printed URL and connect the microphone. Local text and voice are preselected. `LLAMA_CONTEXT=8192`, memory mapping, and KV cache reuse are enabled; model IDs, paths, voices, and thread counts remain configurable in `.env`.
+Open the printed URL and connect the microphone. Local text and voice are preselected. Ling remains resident in llama.cpp, while the supervisor warms the compact tool-free voice prefix, a clean CrispASR standby, and the shared Kokoro worker during startup. Set `PREWARM_LOCAL_VOICE=0` to defer speech model loading until the first call.
+
+Conversational voice turns omit all tool schemas and produce one short spoken response. The foreground model makes one general decision: answer directly, or acknowledge work for the planner; there are no prompt-specific command patterns. Complete clauses stream into Kokoro while Ling is still generating, so synthesis overlaps the remainder of the response. Requests that need supervised work enter a separate planner queue only after the browser confirms that acknowledgement finished playing. Two llama slots keep that background planning from blocking a new conversation. Task notifications wait for the next quiet playback window and remain queued until the browser confirms they were heard.
+
+`LLAMA_CONTEXT=8192`, `LLAMA_PARALLEL=2`, prompt caching, memory mapping, and 32-token prefix reuse are enabled. Startup seeds the exact short voice instruction prefix, and llama.cpp reuses matching system and conversation KV prefixes. New user audio, novel transcript tokens, and generated output still require compute and cannot be safely cached across arbitrary prompts. The local STT defaults use a 500 ms stream step, a 1000 ms partial-decode interval, a six-second partial tail, an eight-second rolling window, 500 ms final silence, and accumulated-prefix finalization to avoid a second full encoder pass. Crisp uses twelve threads and Kokoro uses eight based on local end-to-end measurements. Override `CRISPASR_STREAM_STEP_MS`, `CRISPASR_PARTIAL_DECODE_MS`, `CRISPASR_PARTIAL_TAIL_SEC`, `CRISPASR_STREAM_LENGTH_MS`, `END_SILENCE_MS`, `CRISPASR_FINAL_MODE`, `CRISPASR_THREADS`, or `KOKORO_THREADS` in `.env` only when tuning for different hardware.
 
 `moonshine-streaming-small-Q8_0.gguf` currently crashes CrispASR 0.8.32 on both CPU and Vulkan. The app detects that exact override and uses the installed, verified canonical Small Q4_K instead; `/api/config` reports the requested path, effective path, and warning.
 
@@ -81,7 +85,7 @@ After Kokoro is cached, set `HF_HUB_OFFLINE=1` for offline-only voice startup. C
 
 Both backends use the same supervisor contract. The supervisor owns the process, assigns and persists an explicit session ID, records JSONL progress and final results, and resumes that session through **Continue Thread** or `send_work_message`. Agency runs Copilot-compatible sessions with Agency Hub reporting and default Agency MCPs disabled; repository MCP configuration remains available. Status reads are passive, and missing active observations become stale/unknown. Work-area instructions and `.github/agents/*.agent.md` choices are passed through. Worktrees open in a separate VS Code window.
 
-The **Settings** view controls the default work area, coding backend, Copilot-compatible model and context, and completion/input/failure notification channels. Ordinary chat requests do not need a work area; coding dispatches may omit one only when a default is configured. Finished tasks and unused work areas can be deleted. Neither backend exposes reliable noninteractive cancellation, so the app reports cancellation as unsupported rather than pretending it succeeded.
+The **Settings** view controls the default work area, coding backend, Copilot-compatible model and context, and completion/input/failure notification channels. Ordinary chat requests do not need a work area; coding dispatches may omit one only when a default is configured. Finished or stale tasks and unused work areas can be deleted. Neither backend exposes reliable noninteractive cancellation, so the app reports cancellation as unsupported rather than pretending it succeeded.
 
 Azure DevOps and Teams MCP connections are intentionally marked **planned**, not connected. Start Azure DevOps read-only, scoped to work items assigned to the authenticated user. Start Teams with read/list operations; sending a message should require an exact recipient/body preview and one-time confirmation. Add authenticated local access before attaching corporate credentials, and do not grant these business mutations to coding workers.
 
@@ -90,3 +94,5 @@ The `invoke_vscode` tool currently opens a text note with the requested prompt, 
 ## Verified Here
 
 On 2026-09-15: Gemini 3.1 Live returned 24 kHz audio; canonical Moonshine Small Q4_K and Kokoro reached ready together; llama.cpp b10970 loaded Ling; focused tests passed; and the supervisor completed a real isolated Copilot CLI task with a persisted session ID and result.
+
+On 2026-09-16: a paced 3.35-second spoken fixture traversed the production local WebSocket with an exact transcript in 3420 ms from commit to final STT, 1827 ms from final transcript to first assistant PCM, and 5246 ms total. The comparable four-thread, full-redecode baseline was 7313 ms, 2086 ms, and 9399 ms respectively.

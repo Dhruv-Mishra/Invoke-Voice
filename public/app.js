@@ -17,7 +17,12 @@ let isQuietMode = false;
 let isCapturing = false;
 let isServerReady = false;
 let isVoiceThinking = false;
+let isVoiceStarting = false;
 const pendingNotifications = [];
+const pendingPlaybackResponses = new Map();
+const responsePlaybackGenerations = new Map();
+const playbackFailures = new Set();
+let notificationInFlight = null;
 
 // Audio session token & queue
 let currentSessionToken = 0;
@@ -501,7 +506,33 @@ function getPlaybackContext() {
 let playbackGeneration = 0;
 let pendingCommit = false;
 
-function scheduleAudioBuffer(buffer, token) {
+function sendPlaybackOutcome(responseId, outcome) {
+  if (!pendingPlaybackResponses.has(responseId)) return;
+  pendingPlaybackResponses.delete(responseId);
+  responsePlaybackGenerations.delete(responseId);
+  if (voiceSocket?.readyState === WebSocket.OPEN) {
+    voiceSocket.send(JSON.stringify({ type: 'playback_done', responseId, outcome }));
+  }
+}
+
+function maybeCompletePlayback(responseId) {
+  const pending = pendingPlaybackResponses.get(responseId);
+  if (!pending) return;
+  if (pending.generation !== playbackGeneration) return sendPlaybackOutcome(responseId, 'interrupted');
+  if (activeSources.some(source => source.voiceResponseId === responseId)) return;
+  sendPlaybackOutcome(responseId, pending.failed || playbackFailures.delete(responseId) ? 'failed' : 'played');
+}
+
+function markResponseEnd(responseId, playable = true) {
+  if (!responseId || pendingPlaybackResponses.has(responseId)) return;
+  const generation = responsePlaybackGenerations.get(responseId)?.generation ?? playbackGeneration;
+  pendingPlaybackResponses.set(responseId, { generation, failed: !playable });
+  audioQueuePromise.then(() => {
+    maybeCompletePlayback(responseId);
+  });
+}
+
+function scheduleAudioBuffer(buffer, token, responseId) {
   if (token !== undefined && token !== playbackGeneration) return;
   const ctx = getPlaybackContext();
   const now = ctx.currentTime;
@@ -510,6 +541,7 @@ function scheduleAudioBuffer(buffer, token) {
   }
   const source = ctx.createBufferSource();
   source.buffer = buffer;
+  source.voiceResponseId = responseId;
   source.connect(ctx.destination);
   source.start(nextPlayTime);
   setAgentState('speaking');
@@ -517,12 +549,15 @@ function scheduleAudioBuffer(buffer, token) {
   source.onended = () => {
     const idx = activeSources.indexOf(source);
     if (idx !== -1) activeSources.splice(idx, 1);
+    if (responseId) maybeCompletePlayback(responseId);
     if (isServerReady && activeSources.length === 0 && !isVoiceThinking) setAgentState('listening');
   };
   nextPlayTime += buffer.duration;
 }
 
 function clearPlayback() {
+  for (const responseId of [...pendingPlaybackResponses.keys()]) sendPlaybackOutcome(responseId, 'interrupted');
+  playbackFailures.clear();
   playbackGeneration++;
   audioQueuePromise = Promise.resolve();
   for (const src of activeSources) {
@@ -534,11 +569,12 @@ function clearPlayback() {
   }
 }
 
-async function playAudioChunk(base64Data, mimeType, sampleRate, token) {
+async function playAudioChunk(base64Data, mimeType, sampleRate, token, responseId) {
   if (token !== playbackGeneration) return;
   const ctx = getPlaybackContext();
   const binary = atob(base64Data);
   const len = binary.length;
+  if (len === 0) throw new Error('Received an empty audio chunk');
   const bytes = new Uint8Array(len);
   for (let i = 0; i < len; i++) {
     bytes[i] = binary.charCodeAt(i);
@@ -548,14 +584,13 @@ async function playAudioChunk(base64Data, mimeType, sampleRate, token) {
     try {
       const decoded = await ctx.decodeAudioData(bytes.buffer.slice(0));
       if (token !== playbackGeneration) return;
-      scheduleAudioBuffer(decoded, token);
+      scheduleAudioBuffer(decoded, token, responseId);
     } catch (e) {
-      if (token === playbackGeneration) {
-        console.error('Failed to decode WAV', e);
-      }
+      if (token === playbackGeneration) throw e;
     }
   } else {
     if (token !== playbackGeneration) return;
+    if (len % 2 !== 0) throw new Error('Received an invalid PCM audio chunk');
     // PCM 16-bit mono
     const int16 = new Int16Array(bytes.buffer);
     const float32 = new Float32Array(int16.length);
@@ -566,15 +601,20 @@ async function playAudioChunk(base64Data, mimeType, sampleRate, token) {
     const rate = sampleRate || 24000;
     const buf = ctx.createBuffer(1, float32.length, rate);
     buf.copyToChannel(float32, 0);
-    scheduleAudioBuffer(buf, token);
+    scheduleAudioBuffer(buf, token, responseId);
   }
 }
 
 function queueAudioChunk(data, token) {
+  if (data.responseId && !responsePlaybackGenerations.has(data.responseId)) {
+    responsePlaybackGenerations.set(data.responseId, { generation: token, seenAt: Date.now() });
+    if (responsePlaybackGenerations.size > 100) responsePlaybackGenerations.delete(responsePlaybackGenerations.keys().next().value);
+  }
   audioQueuePromise = audioQueuePromise.then(async () => {
     if (token !== playbackGeneration) return;
-    await playAudioChunk(data.data, data.mimeType, data.sampleRate, token);
+    await playAudioChunk(data.data, data.mimeType, data.sampleRate, token, data.responseId);
   }).catch((err) => {
+    if (data.responseId) playbackFailures.add(data.responseId);
     console.error('Audio playback queue error:', err);
   });
 }
@@ -625,6 +665,7 @@ function isAssistantSpeaking() {
 
 // Voice Session & AudioWorklet capture
 async function startVoiceSession() {
+  if (isVoiceStarting || voiceSocket || isCapturing) return;
   const route = getSelectedRouteStatus();
   if (!route.configured) {
     alert('Selected route is not configured.');
@@ -650,6 +691,9 @@ async function startVoiceSession() {
 
   const sessionToken = ++currentSessionToken;
   isServerReady = false;
+  isVoiceStarting = true;
+  let sessionAudioContext;
+  let sessionMediaStream;
 
   try {
     micBtnLabel.textContent = 'Connecting...';
@@ -659,26 +703,35 @@ async function startVoiceSession() {
     routeStatusBadge.className = 'badge badge-warning';
     setAgentState('connecting');
 
-    audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    if (audioContext.state === 'suspended') {
-      await audioContext.resume();
+    sessionAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+    if (sessionAudioContext.state === 'suspended') {
+      await sessionAudioContext.resume();
     }
-    await audioContext.audioWorklet.addModule('/capture-worklet.js');
+    if (sessionToken !== currentSessionToken) {
+      await sessionAudioContext.close().catch(() => {});
+      return;
+    }
+    await sessionAudioContext.audioWorklet.addModule('/capture-worklet.js');
+    if (sessionToken !== currentSessionToken) {
+      await sessionAudioContext.close().catch(() => {});
+      return;
+    }
 
-    mediaStream = await navigator.mediaDevices.getUserMedia({
+    sessionMediaStream = await navigator.mediaDevices.getUserMedia({
       audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true }
     });
 
     if (sessionToken !== currentSessionToken) {
-      mediaStream.getTracks().forEach(t => t.stop());
-      audioContext.close().catch(() => {});
+      sessionMediaStream.getTracks().forEach(track => track.stop());
+      await sessionAudioContext.close().catch(() => {});
       return;
     }
+    for (const track of sessionMediaStream.getAudioTracks()) track.enabled = !isMuted;
 
-    const source = audioContext.createMediaStreamSource(mediaStream);
-    workletNode = new AudioWorkletNode(audioContext, 'capture-worklet');
+    const source = sessionAudioContext.createMediaStreamSource(sessionMediaStream);
+    const sessionWorkletNode = new AudioWorkletNode(sessionAudioContext, 'capture-worklet');
 
-    workletNode.port.onmessage = (event) => {
+    sessionWorkletNode.port.onmessage = (event) => {
       if (sessionToken !== currentSessionToken) return;
       const msg = event.data;
       if (msg.type === 'level') {
@@ -698,24 +751,29 @@ async function startVoiceSession() {
       }
     };
 
-    source.connect(workletNode);
+    source.connect(sessionWorkletNode);
     // Connect worklet to a mute gain so audio keeps flowing without speaker feedback
-    const muteGain = audioContext.createGain();
+    const muteGain = sessionAudioContext.createGain();
     muteGain.gain.value = 0;
-    workletNode.connect(muteGain);
-    muteGain.connect(audioContext.destination);
+    sessionWorkletNode.connect(muteGain);
+    muteGain.connect(sessionAudioContext.destination);
+
+    audioContext = sessionAudioContext;
+    mediaStream = sessionMediaStream;
+    workletNode = sessionWorkletNode;
 
     // WebSocket connection
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    voiceSocket = new WebSocket(`${proto}//${window.location.host}/voice`);
+    const sessionSocket = new WebSocket(`${proto}//${window.location.host}/voice`);
+    voiceSocket = sessionSocket;
 
-    voiceSocket.onopen = () => {
+    sessionSocket.onopen = () => {
       if (sessionToken !== currentSessionToken) {
-        try { voiceSocket.close(); } catch (_) {}
+        try { sessionSocket.close(); } catch (_) {}
         return;
       }
       // Send start handshake; do NOT send PCM or claim connected until server sends 'ready'
-      voiceSocket.send(JSON.stringify({
+      sessionSocket.send(JSON.stringify({
         type: 'start',
         mode,
         provider,
@@ -724,11 +782,12 @@ async function startVoiceSession() {
       }));
     };
 
-    voiceSocket.onmessage = (event) => {
+    sessionSocket.onmessage = (event) => {
       if (sessionToken !== currentSessionToken) return;
       try {
         const data = JSON.parse(event.data);
         if (data.type === 'ready') {
+          isVoiceStarting = false;
           isServerReady = true;
           isCapturing = true;
           micBtnLabel.textContent = 'Disconnect Mic';
@@ -745,6 +804,12 @@ async function startVoiceSession() {
           isVoiceThinking = false;
           setAgentState('speaking');
           queueAudioChunk(data, playbackGeneration);
+        } else if (data.type === 'response_end') {
+          markResponseEnd(data.responseId, data.playable !== false);
+        } else if (data.type === 'notify_ack') {
+          const index = pendingNotifications.findIndex(notification => notification.id === data.notificationId);
+          if (index !== -1) pendingNotifications.splice(index, 1);
+          if (notificationInFlight?.id === data.notificationId) notificationInFlight = null;
         } else if (data.type === 'transcript') {
           if (data.role === 'user' && !data.partial) { isVoiceThinking = true; setAgentState('thinking'); }
           else if (data.role === 'user') setAgentState('listening');
@@ -763,11 +828,10 @@ async function startVoiceSession() {
           partialTranscript.style.display = 'none';
           appendMessage('system', '[Speech interrupted]');
         } else if (data.type === 'tool') {
-          const resultStr = typeof data.result === 'object' ? JSON.stringify(data.result) : String(data.result);
-          appendMessage('tool', `Tool [${data.name}]: ${resultStr}`, { plain: typeof data.result === 'object' });
+          console.debug('Voice tool completed', data.name);
         } else if (data.type === 'state') {
           isVoiceThinking = data.state === 'thinking';
-          setAgentState(data.state === 'thinking' ? 'thinking' : 'listening');
+          setAgentState(['thinking', 'speaking', 'listening'].includes(data.state) ? data.state : 'listening');
           routeStatusBadge.textContent = `Voice: ${data.state}`;
         } else if (data.type === 'error') {
           appendMessage('system', `Voice Error: ${data.message || 'Unknown error'}`);
@@ -780,20 +844,23 @@ async function startVoiceSession() {
       }
     };
 
-    voiceSocket.onerror = (err) => {
+    sessionSocket.onerror = (err) => {
       if (sessionToken !== currentSessionToken) return;
       console.error('Voice socket error', err);
       appendMessage('system', 'Voice WebSocket connection error.');
       stopVoiceSession();
     };
 
-    voiceSocket.onclose = () => {
+    sessionSocket.onclose = () => {
       if (sessionToken !== currentSessionToken) return;
       stopVoiceSession();
       appendMessage('system', 'Voice disconnected.');
     };
 
   } catch (err) {
+    if (sessionMediaStream && sessionMediaStream !== mediaStream) sessionMediaStream.getTracks().forEach(track => track.stop());
+    if (sessionAudioContext && sessionAudioContext !== audioContext) await sessionAudioContext.close().catch(() => {});
+    if (sessionToken !== currentSessionToken) return;
     console.error('Failed to start voice', err);
     alert(`Could not start microphone: ${err.message}`);
     stopVoiceSession();
@@ -802,9 +869,10 @@ async function startVoiceSession() {
 
 function stopVoiceSession() {
   currentSessionToken++;
+  isVoiceStarting = false;
   pendingCommit = false;
   isVoiceThinking = false;
-  pendingNotifications.length = 0;
+  notificationInFlight = null;
   isServerReady = false;
   isCapturing = false;
   isPttHeld = false;
@@ -855,9 +923,9 @@ muteMicOpt.addEventListener('change', () => {
   if (isMuted && isPttHeld) {
     endPttHold();
   }
-  if (isMuted) {
-    drawMicLevel(0);
-  }
+  for (const track of mediaStream?.getAudioTracks() || []) track.enabled = !isMuted;
+  workletNode?.port.postMessage({ type: 'reset' });
+  drawMicLevel(0);
 });
 
 pttModeOpt.addEventListener('change', () => {
@@ -929,7 +997,7 @@ interruptBtn.addEventListener('click', () => {
 });
 
 micToggleBtn.addEventListener('click', () => {
-  if (voiceSocket) {
+  if (isVoiceStarting || voiceSocket || isCapturing) {
     stopVoiceSession();
   } else {
     startVoiceSession();
@@ -1000,16 +1068,19 @@ function handleNotification(n) {
     } catch (_) {}
   }
 
-  if (settings.voiceNotifications !== false && isNotificationScenarioEnabled(n.state) && !isQuietMode && isServerReady) {
-    pendingNotifications.push(`${n.title}: ${n.text || n.state}`);
+  if (settings.voiceNotifications !== false && isNotificationScenarioEnabled(n.state) && !isQuietMode) {
+    pendingNotifications.push({ id: crypto.randomUUID(), text: `${n.title}: ${n.text || n.state}` });
   }
 }
 
 setInterval(() => {
   if (!pendingNotifications.length || isQuietMode || !isServerReady || isVoiceThinking || isUserSpeaking() || isAssistantSpeaking()) return;
   if (voiceSocket?.readyState !== WebSocket.OPEN) return;
-  isVoiceThinking = true;
-  voiceSocket.send(JSON.stringify({ type: 'notify', text: pendingNotifications.shift() }));
+  const now = Date.now();
+  const notification = pendingNotifications[0];
+  if (notificationInFlight?.id === notification.id && now - notificationInFlight.sentAt < 2000) return;
+  notificationInFlight = { id: notification.id, sentAt: now };
+  voiceSocket.send(JSON.stringify({ type: 'notify', notificationId: notification.id, text: notification.text }));
 }, 750);
 
 function populateSettingsOptions() {
@@ -1567,12 +1638,15 @@ const RESUMABLE_STATES = new Set(['result_ready', 'completed', 'failed', 'agent_
 function isTaskFinished(task) {
   return TERMINAL_STATES.has(task?.state);
 }
+function isTaskDeletable(task) {
+  return task?.deletable === true;
+}
 function isTaskResumable(task) {
   return RESUMABLE_STATES.has(task?.state);
 }
 
 async function deleteTask(taskId, taskTitle = 'task') {
-  if (!confirm(`Delete finished task "${taskTitle}"?`)) return;
+  if (!confirm(`Delete task "${taskTitle}"?`)) return;
   try {
     const res = await fetch(`/api/tasks/${encodeURIComponent(taskId)}`, {
       method: 'DELETE'
@@ -1699,11 +1773,11 @@ function renderTasks() {
       actions.appendChild(continueBtn);
     }
 
-    if (isTaskFinished(task)) {
+    if (isTaskDeletable(task)) {
       const deleteBtn = document.createElement('button');
       deleteBtn.className = 'btn btn-danger';
       deleteBtn.type = 'button';
-      deleteBtn.title = 'Delete Finished Task';
+      deleteBtn.title = 'Delete Task';
       deleteBtn.setAttribute('aria-label', `Delete ${task.title || 'task'}`);
       const deleteIcon = document.createElement('i');
       deleteIcon.setAttribute('data-lucide', 'trash-2');
@@ -1882,7 +1956,7 @@ function showTaskDetail(task) {
   }
 
   if (detailDeleteTaskBtn) {
-    if (isTaskFinished(task)) {
+    if (isTaskDeletable(task)) {
       detailDeleteTaskBtn.style.display = 'inline-flex';
       detailDeleteTaskBtn.onclick = async () => {
         await deleteTask(task.id, task.title);
@@ -2193,7 +2267,8 @@ async function openWorktree(taskId) {
 async function queryTaskStatus(taskId) {
   try {
     const result = await callSupervisorTool('get_work_status', { taskId });
-    appendMessage('tool', `Status [${taskId.slice(0, 8)}]: state=${result.state}, stale=${result.stale}`);
+    const detail = result.result || result.error || result.update;
+    appendMessage('tool', `Status [${taskId.slice(0, 8)}]: ${result.state}${result.stale ? ' (stale)' : ''}${detail ? ` — ${detail}` : ''}`);
     await loadState();
   } catch (err) {
     alert(`Could not get status: ${err.message}`);

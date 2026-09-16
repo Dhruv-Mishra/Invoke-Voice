@@ -8,6 +8,7 @@ const anthropicTools = supervisorTools.map(tool => ({
 }));
 
 const allowedToolNames = new Set(supervisorTools.map(t => t.function?.name || t.name).filter(Boolean));
+export const voiceInstructions = 'Answer with exactly one brief spoken sentence. Prefix ACTION: when the request requires supervisor tools or future work; otherwise prefix SAY:. For ACTION, only acknowledge. Never expose IDs, tool names, JSON, API fields, or reasoning.';
 
 function assertLoopback(rawUrl) {
   let parsed;
@@ -191,10 +192,21 @@ class ReasoningFilter {
   }
 }
 
+export function compactToolResult(result, limit = 6000) {
+  const value = result ?? {};
+  const serialized = JSON.stringify(value);
+  if (serialized.length <= limit) return value;
+  let preview = serialized.slice(0, Math.max(0, limit - 40));
+  let compact = { preview, truncated: true };
+  while (preview && JSON.stringify(compact).length > limit) {
+    preview = preview.slice(0, preview.length - (JSON.stringify(compact).length - limit));
+    compact = { preview, truncated: true };
+  }
+  return compact;
+}
+
 function boundToolResult(result, limit = 6000) {
-  const str = typeof result === 'string' ? result : JSON.stringify(result ?? {});
-  if (str.length <= limit) return str;
-  return str.slice(0, limit) + '... [truncated]';
+  return JSON.stringify(compactToolResult(result, limit));
 }
 
 function stableMutationId(baseRequestId, name, args) {
@@ -208,7 +220,7 @@ function stableMutationId(baseRequestId, name, args) {
   return `${baseRequestId || 'req'}-${hash}`;
 }
 
-function prepareMessages(messages = []) {
+function prepareMessages(messages = [], { maxMessages = 12, maxChars = 16000 } = {}) {
   const allowed = [];
   for (const m of messages || []) {
     if (!m || (m.role !== 'user' && m.role !== 'assistant')) continue;
@@ -226,9 +238,9 @@ function prepareMessages(messages = []) {
     allowed.push({ role: m.role, content: text.slice(0, 16000) });
   }
 
-  let slice = allowed.slice(-12);
+  let slice = allowed.slice(-maxMessages);
   let totalChars = slice.reduce((sum, m) => sum + m.content.length, 0);
-  while (slice.length > 1 && totalChars > 16000) {
+  while (slice.length > 1 && totalChars > maxChars) {
     slice.shift();
     totalChars = slice.reduce((sum, m) => sum + m.content.length, 0);
   }
@@ -296,14 +308,16 @@ export async function* streamReply({
   signal,
   requestId,
   env = process.env,
+  profile = 'supervisor',
 }) {
   const config = resolveEndpoint(provider, model, env);
   const reasoningFilter = new ReasoningFilter();
   const executedCalls = new Map();
   const isAnthropic = provider === 'anthropic';
-  let workingMessages = prepareMessages(messages);
+  const voiceFast = profile === 'voice-fast';
+  let workingMessages = prepareMessages(messages, voiceFast ? { maxMessages: 4, maxChars: 2400 } : undefined);
 
-  for (let round = 0; round < 4; round++) {
+  for (let round = 0; round < (voiceFast ? 1 : 4); round++) {
     if (signal?.aborted) return;
     const fetchSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(60000)]) : AbortSignal.timeout(60000);
 
@@ -311,23 +325,24 @@ export async function* streamReply({
     if (isAnthropic) {
       body = {
         model: config.model,
-        system: supervisorInstructions,
+        system: voiceFast ? voiceInstructions : supervisorInstructions,
         messages: formatAnthropicMessages(workingMessages),
-        tools: anthropicTools,
         stream: true,
-        max_tokens: 1024,
+        max_tokens: voiceFast ? 96 : 1024,
       };
+      if (!voiceFast) body.tools = anthropicTools;
     } else {
       body = {
         model: config.model,
-        messages: [{ role: 'system', content: supervisorInstructions }, ...workingMessages.filter(m => m.role !== 'system')],
-        tools: supervisorTools,
+        messages: [{ role: 'system', content: voiceFast ? voiceInstructions : supervisorInstructions }, ...workingMessages.filter(m => m.role !== 'system')],
         stream: true,
-        max_tokens: provider === 'local' ? 512 : 1024,
+        max_tokens: voiceFast ? 96 : (provider === 'local' ? 512 : 1024),
       };
+      if (!voiceFast) body.tools = supervisorTools;
       if (provider === 'local') {
         body.chat_template_kwargs = { enable_thinking: false };
-        body.temperature = 0.7;
+        body.cache_prompt = true;
+        body.temperature = voiceFast ? 0.2 : 0.7;
       }
     }
 
@@ -428,6 +443,9 @@ export async function* streamReply({
     }
 
     const finishedCalls = toolCalls.filter(Boolean);
+    if (voiceFast && finishedCalls.length > 0) {
+      throw new Error('Fast voice response attempted a tool call');
+    }
     if (finishedCalls.length === 0) {
       break;
     }

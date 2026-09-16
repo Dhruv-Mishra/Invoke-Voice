@@ -9,7 +9,7 @@ import { Supervisor, tools } from './supervisor.mjs';
 import { createVSCodeBridge } from './vscode-bridge.mjs';
 import { providerProfiles, streamReply } from './llm.mjs';
 import { createRealtimeVoice } from './realtime.mjs';
-import { createLocalVoice, localConfiguration } from './local-voice.mjs';
+import { createLocalVoice, localConfiguration, warmLocalVoice } from './local-voice.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const publicDir = path.join(root, 'public');
@@ -117,6 +117,7 @@ server.on('upgrade', (request, socket, head) => {
 websocket.on('connection', socket => {
   let session;
   let starting = false;
+  let cancelled = false;
   const send = event => { if (socket.readyState === 1) socket.send(JSON.stringify(event)); };
   socket.on('message', async raw => {
     try {
@@ -126,20 +127,22 @@ websocket.on('connection', socket => {
         if (voiceOwner && voiceOwner !== socket) throw new Error('A voice session is already active in another window');
         voiceOwner = socket;
         starting = true;
+        cancelled = false;
         const options = { mode: message.mode, provider: message.provider, model: message.model, allowCloud: message.allowCloud === true, send, callTool: supervisor.callTool.bind(supervisor) };
         session = message.mode === 'local' ? await createLocalVoice(options) : await createRealtimeVoice(options);
         starting = false;
-        if (socket.readyState !== 1) { session.close(); if (voiceOwner === socket) voiceOwner = null; }
+        if (cancelled || socket.readyState !== 1) { session.close(); if (voiceOwner === socket) voiceOwner = null; }
       } else if (message.type === 'stop') { session?.close(); socket.close(); }
       else if (message.type === 'audio') {
         if (typeof message.data !== 'string' || message.data.length > 40000 || Buffer.from(message.data, 'base64').length % 2) throw new Error('Invalid PCM frame');
         session?.audio(message.data);
       } else if (['commit', 'interrupt'].includes(message.type)) session?.[message.type]();
-      else if (message.type === 'notify') session?.notify(String(message.text || '').slice(0, 1800));
-    } catch (error) { send({ type: 'error', message: error.message, fatal: true }); session?.close(); socket.close(); }
+        else if (message.type === 'playback_done') session?.playbackDone?.(String(message.responseId || ''), ['played', 'interrupted', 'failed'].includes(message.outcome) ? message.outcome : 'failed');
+        else if (message.type === 'notify') session?.notify(String(message.text || '').slice(0, 1800), String(message.notificationId || '').slice(0, 100));
+    } catch (error) { starting = false; send({ type: 'error', message: error.message, fatal: true }); session?.close(); if (voiceOwner === socket) voiceOwner = null; socket.close(); }
   });
-  socket.on('close', () => { session?.close(); if (voiceOwner === socket) voiceOwner = null; });
-  socket.on('error', () => { session?.close(); if (voiceOwner === socket) voiceOwner = null; });
+  socket.on('close', () => { cancelled = true; session?.close(); if (voiceOwner === socket) voiceOwner = null; });
+  socket.on('error', () => { cancelled = true; session?.close(); if (voiceOwner === socket) voiceOwner = null; });
 });
 supervisor.on('change', state => { for (const client of clients) sse(client, { type: 'state', state }); });
 supervisor.on('notification', notification => { for (const client of clients) sse(client, { type: 'notification', notification }); });
@@ -156,4 +159,9 @@ server.on('error', error => {
   if (error.code === 'EADDRINUSE' && port < Number(process.env.PORT || 4317) + 10) { port += 1; server.listen(port, '127.0.0.1'); }
   else { console.error(error.message); process.exitCode = 1; }
 });
-server.listen(port, '127.0.0.1', () => console.log(`Voice Work Supervisor: http://127.0.0.1:${port}`));
+server.listen(port, '127.0.0.1', () => {
+  console.log(`Voice Work Supervisor: http://127.0.0.1:${port}`);
+  if ((process.env.DEFAULT_VOICE_MODE || 'local') === 'local' && process.env.PREWARM_LOCAL_VOICE !== '0') {
+    void warmLocalVoice().then(warmed => { if (warmed) console.log('Local speech models are warm.'); }).catch(error => console.warn(`Local voice warmup deferred: ${error.message}`));
+  }
+});

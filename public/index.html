@@ -436,14 +436,14 @@
     }
 
     @media (max-width: 800px) {
-      body { height: auto; min-height: 100dvh; overflow-y: auto; overflow-x: hidden; }
+      body { height: auto; min-height: 100dvh; padding-bottom: 120px; overflow-y: auto; overflow-x: hidden; }
       .app-main, .application-body, .tool-lab, .settings-view, main.center-pane, section.conversation-pane { overflow: visible; height: auto; min-height: 0; }
       header.top-bar { min-height: 0; padding: 8px 12px; gap: 8px; }
       .header-status { width: 100%; justify-content: flex-start; }
       .areas-disclosure .scroll-list { max-height: none; }
       .tool-list { grid-template-columns: 1fr; }
       .settings-view { padding: 12px; }
-      .voice-strip { padding: 8px 12px; gap: 8px; }
+      .voice-strip { width: 100%; padding: 8px 12px; position: fixed; right: 0; bottom: 0; left: 0; gap: 8px; z-index: 20; }
       .voice-actions { margin-left: 0; width: 100%; justify-content: flex-start; }
       .btn, .view-tab, .select-trigger, .chat-input-bar input, .toggle-control { min-height: 44px; }
       .btn-icon { width: 44px; min-width: 44px; }

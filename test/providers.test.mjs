@@ -1,7 +1,85 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { streamReply } from '../src/llm.mjs';
+import { compactToolResult, streamReply, voiceInstructions } from '../src/llm.mjs';
+import { supervisorInstructions } from '../src/supervisor.mjs';
+import { drainVoiceText, isVoiceResponsePlayable, localSttArguments, parseVoiceResponse, retryPlaybackAction } from '../src/local-voice.mjs';
+
+test('keeps the user-facing agent contract concise and hides implementation details', () => {
+  assert.match(supervisorInstructions, /one or two short sentences/i);
+  assert.match(supervisorInstructions, /Do not narrate tool calls/i);
+  assert.match(supervisorInstructions, /task IDs/i);
+  assert.match(supervisorInstructions, /raw JSON/i);
+  assert.match(supervisorInstructions, /unless explicitly asked/i);
+});
+
+test('uses responsive STT timing without decoding every VAD step', () => {
+  const args = localSttArguments({ moonshineModel: 'moonshine.gguf', moonshineTokenizer: 'tokenizer.bin', vadModel: 'vad.bin' }, {});
+  const value = flag => args[args.indexOf(flag) + 1];
+  assert.equal(value('--stream-step'), '500');
+  assert.equal(value('--stream-length'), '8000');
+  assert.equal(value('--stream-partial-decode-ms'), '1000');
+  assert.equal(value('--stream-partial-tail-sec'), '6');
+  assert.equal(value('--stream-final-on-silence-ms'), '500');
+  assert.equal(value('--stream-final-mode'), 'prefix');
+  assert.equal(value('-t'), '12');
+});
+
+test('streams complete voice text once across stable synthesis chunks', () => {
+  const first = drainVoiceText('This is the first complete clause, followed by text that is still arriving.');
+  assert.deepEqual(first.chunks, ['This is the first complete clause,']);
+  const final = drainVoiceText(`${first.remainder} And this is the end.`, true);
+  assert.equal([...first.chunks, ...final.chunks].join(' '), 'This is the first complete clause, followed by text that is still arriving. And this is the end.');
+  assert.equal(final.remainder, '');
+  const version = drainVoiceText('Version 1.');
+  assert.deepEqual(version.chunks, []);
+  assert.deepEqual(drainVoiceText(`${version.remainder}2 is current.`, true).chunks, ['Version 1.2 is current.']);
+  assert.equal(isVoiceResponsePlayable({ audioSent: true, synthesisFailed: false }), true);
+  assert.equal(isVoiceResponsePlayable({ audioSent: true, synthesisFailed: true }), false);
+  assert.equal(retryPlaybackAction({ id: 'action', playbackRetries: 1 }), null);
+  assert.deepEqual(retryPlaybackAction({ id: 'action' }), { id: 'action', playbackRetries: 1 });
+});
+
+test('routes only explicit ACTION voice responses to deferred work', () => {
+  assert.deepEqual(parseVoiceResponse('SAY: Ten.'), { route: 'say', text: 'Ten.' });
+  assert.deepEqual(parseVoiceResponse('ACTION: I will check after speaking.'), { route: 'action', text: 'I will check after speaking.' });
+  assert.deepEqual(parseVoiceResponse('Unlabelled fallback'), { route: 'say', text: 'Unlabelled fallback' });
+  assert.deepEqual(parseVoiceResponse(''), { route: 'say', text: 'Okay.' });
+});
+
+test('bounds oversized tool results as valid structured data', () => {
+  const compact = compactToolResult({ result: 'x'.repeat(1000) }, 120);
+  assert.deepEqual(Object.keys(compact), ['preview', 'truncated']);
+  assert.equal(compact.truncated, true);
+  assert.ok(JSON.stringify(compact).length <= 120);
+  assert.deepEqual(compactToolResult({ ok: true }, 120), { ok: true });
+});
+
+test('fast voice requests omit tools and keep the prompt compact', async () => {
+  let requestBody;
+  const server = http.createServer(async (req, res) => {
+    let bodyText = '';
+    for await (const chunk of req) bodyText += chunk;
+    requestBody = JSON.parse(bodyText);
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    res.end('data: {"choices":[{"delta":{"content":"SAY: Hello."},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const env = { LOCAL_LLM_URL: `http://127.0.0.1:${server.address().port}/v1`, LOCAL_LLM_MODEL: 'test-local' };
+    const events = [];
+    for await (const event of streamReply({ provider: 'local', profile: 'voice-fast', messages: [{ role: 'user', content: 'Hello' }], env })) events.push(event);
+    assert.equal(requestBody.tools, undefined);
+    assert.equal(requestBody.max_tokens, 96);
+    assert.equal(requestBody.temperature, 0.2);
+    assert.equal(requestBody.cache_prompt, true);
+    assert.equal(requestBody.messages[0].content, voiceInstructions);
+    assert.ok(JSON.stringify(requestBody).length < 1000);
+    assert.equal(events.filter(event => event.type === 'text').map(event => event.text).join(''), 'SAY: Hello.');
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+  }
+});
 
 test('normal local tool/result roundtrip verifies thinking false, tools roundtrip and no reasoning output across split tags', async () => {
   let requestCount = 0;
@@ -91,6 +169,7 @@ test('normal local tool/result roundtrip verifies thinking false, tools roundtri
     const toolMsg = round2Messages.find(m => m.role === 'tool');
     assert.ok(toolMsg, 'Expected tool result message in round 2 continuation');
     assert.equal(toolMsg.name, 'list_work');
+    assert.deepEqual(JSON.parse(toolMsg.content), { areas: [{ id: 'area-1', name: 'UI' }], tasks: [] });
 
     assert.equal(events[events.length - 1].type, 'done');
   } finally {

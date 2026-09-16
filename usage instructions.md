@@ -43,13 +43,15 @@ The supervisor creates an isolated Git worktree and starts the selected backend 
 
 Available voice tools:
 
-- `list_work`: list work areas and recent sessions.
-- `start_work`: start a Copilot CLI or Agency task with backend, model, agent, and context.
-- `send_work_message`: continue a finished task in its existing backend session.
-- `get_work_status`: read state and recent progress for a task.
-- `open_work`: open a task worktree in VS Code.
-- `delete_work`: delete one finished task or unused work area.
-- `invoke_vscode`: open a text note containing prompt, model, context, and directory. It does not start a VS Code agent yet.
+- `list_work`: resolve work-area and recent-task IDs.
+- `start_work`: start asynchronous coding; omit optional fields to use area and app defaults.
+- `send_work_message`: resume a ready task in its existing backend session.
+- `get_work_status`: passively read state, available actions, progress, result, or error.
+- `open_work`: open a ready task worktree in VS Code.
+- `delete_work`: delete exactly one finished task or unused work area.
+- `invoke_vscode`: open a request note. It does not start an agent.
+
+Mutation receipts contain only confirmation and any ID needed for the next call. Status omits repeated backend configuration and returns only dynamic facts; long result fields carry an explicit truncation marker. Oversized provider payloads remain valid structured JSON.
 
 Copilot CLI must be installed and authenticated. Agency must also be installed for Agency sessions; set `AGENCY_CLI` only when its executable is not on `PATH`. `npm run copilot:check` and `npm run agency:check` verify isolated start/resume lifecycles without changing this repository. Neither backend currently supports reliable noninteractive cancellation.
 

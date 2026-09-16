@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { voiceInstructions } from '../src/llm.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const modelPath = path.resolve(root, process.env.LOCAL_LLM_PATH || '../LocalVoiceStack/LLMs/Ling-3.0-tiny-abliterated-APEX-I-Compact.gguf');
@@ -10,6 +11,7 @@ const serverUrl = new URL(process.env.LOCAL_LLM_URL || 'http://127.0.0.1:8081/v1
 const executable = process.env.LLAMA_SERVER_BIN || 'llama-server';
 const threads = process.env.LLAMA_THREADS || String(Math.max(1, Math.min(12, os.availableParallelism() - 4)));
 const contextSize = process.env.LLAMA_CONTEXT || '8192';
+const parallel = process.env.LLAMA_PARALLEL || '2';
 const checkOnly = process.argv.includes('--check');
 
 if (!existsSync(modelPath)) throw new Error(`Ling model not found: ${modelPath}`);
@@ -36,10 +38,10 @@ if (!await healthy()) {
     '--ubatch-size', '256',
     '--threads', threads,
     '--threads-batch', threads,
-    '--parallel', '1',
+    '--parallel', parallel,
     '--flash-attn', 'auto',
     '--load-mode', process.env.LLAMA_LOAD_MODE || 'mmap',
-    '--cache-reuse', process.env.LLAMA_CACHE_REUSE || '256',
+    '--cache-reuse', process.env.LLAMA_CACHE_REUSE || '32',
     '--reasoning', 'off',
     '--no-reasoning-preserve',
     '--cors-origins', 'localhost',
@@ -57,6 +59,29 @@ if (!await healthy()) {
   if (!await healthy()) throw new Error('llama-server did not become healthy within 3 minutes');
 } else {
   console.log(`Using existing llama.cpp server at ${serverUrl.origin}`);
+}
+
+async function warmVoiceLane() {
+  try {
+    const response = await fetch(`${serverUrl.origin}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: process.env.LOCAL_LLM_MODEL || 'ling-local',
+        messages: [{ role: 'system', content: voiceInstructions }, { role: 'user', content: 'Say hello.' }],
+        chat_template_kwargs: { enable_thinking: false },
+        cache_prompt: true,
+        max_tokens: 1,
+        temperature: 0,
+      }),
+      signal: AbortSignal.timeout(30000),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    await response.text();
+    console.log('Fast voice LLM lane is warm.');
+  } catch (error) {
+    console.warn(`Fast voice LLM warmup deferred: ${error.message}`);
+  }
 }
 
 if (checkOnly) {
@@ -83,6 +108,7 @@ if (checkOnly) {
   }
 } else {
 const supervisor = spawn(process.execPath, ['src/server.mjs'], { cwd: root, env: process.env, stdio: 'inherit', windowsHide: true });
+void warmVoiceLane();
 const shutdown = () => {
   supervisor.kill();
   llama?.kill();

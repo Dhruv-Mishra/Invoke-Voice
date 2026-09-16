@@ -2,6 +2,7 @@ import { GoogleGenAI, Modality, ThinkingLevel } from '@google/genai';
 import WebSocket from 'ws';
 import { randomUUID } from 'node:crypto';
 import { tools, supervisorInstructions } from './supervisor.mjs';
+import { compactToolResult } from './llm.mjs';
 
 export async function createRealtimeVoice({ mode, send, callTool, env = process.env }) {
   let closed = false;
@@ -13,8 +14,7 @@ export async function createRealtimeVoice({ mode, send, callTool, env = process.
     if (!results.has(call.id)) results.set(call.id, Promise.resolve().then(() => callTool(call.name, call.args || {}, { requestId: `${sessionId}:${call.id}` })).catch(error => ({ error: error.message })));
     const result = await results.get(call.id);
     send({ type: 'tool', name: call.name, result });
-    const serialized = JSON.stringify(result);
-    return serialized.length > 8000 ? { summary: serialized.slice(0, 8000), truncated: true } : result;
+    return compactToolResult(result, 8000);
   }
   if (mode === 'gemini-live') {
     if (!env.GEMINI_API_KEY) throw new Error('Set GEMINI_API_KEY in .env to use Gemini Live');

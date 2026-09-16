@@ -87,6 +87,7 @@ const btnRefreshTasks = document.getElementById('btn-refresh-tasks');
 const newTaskDialog = document.getElementById('new-task-dialog');
 const newTaskForm = document.getElementById('new-task-form');
 const taskAreaSelect = document.getElementById('task-area-select');
+const taskBackendSelect = document.getElementById('task-backend-select');
 const taskObjectiveInput = document.getElementById('task-objective-input');
 const taskModelSelect = document.getElementById('task-model-select');
 const taskContextSelect = document.getElementById('task-context-select');
@@ -97,13 +98,25 @@ const taskDialogClose = document.getElementById('task-dialog-close');
 const taskDetailDialog = document.getElementById('task-detail-dialog');
 const detailContent = document.getElementById('detail-content');
 const detailDeleteTaskBtn = document.getElementById('detail-delete-task-btn');
+const detailContinueTaskBtn = document.getElementById('detail-continue-task-btn');
 const detailCloseBtn = document.getElementById('detail-close-btn');
 const detailDialogClose = document.getElementById('detail-dialog-close');
 const detailOpenWorktreeBtn = document.getElementById('detail-open-worktree-btn');
 
+const continueThreadDialog = document.getElementById('continue-thread-dialog');
+const continueThreadForm = document.getElementById('continue-thread-form');
+const continueDialogTitle = document.getElementById('continue-dialog-title');
+const continueTaskIdInput = document.getElementById('continue-task-id');
+const continueTaskContext = document.getElementById('continue-task-context');
+const continueMessageInput = document.getElementById('continue-message-input');
+const continueCancelBtn = document.getElementById('continue-cancel-btn');
+const continueDialogClose = document.getElementById('continue-dialog-close');
+const continueSendBtn = document.getElementById('continue-send-btn');
+
 const settingsView = document.getElementById('settings-view');
 const settingsForm = document.getElementById('settings-form');
 const settingsDefaultArea = document.getElementById('settings-default-area');
+const settingsDefaultBackend = document.getElementById('settings-default-backend');
 const settingsCopilotModel = document.getElementById('settings-copilot-model');
 const settingsCopilotContext = document.getElementById('settings-copilot-context');
 const settingsNotifyCompleted = document.getElementById('settings-notify-completed');
@@ -134,6 +147,22 @@ const toolRunStatus = document.getElementById('tool-run-status');
 const toolResult = document.getElementById('tool-result');
 let availableTools = [];
 let selectedTool = null;
+
+function getCodingBackends() {
+  if (Array.isArray(appConfig?.codingBackends) && appConfig.codingBackends.length > 0) {
+    return appConfig.codingBackends;
+  }
+  return [
+    { id: 'copilot', label: 'Copilot CLI', description: 'GitHub Copilot CLI backend' },
+    { id: 'agency', label: 'Agency', description: 'Agency shared backend' }
+  ];
+}
+
+function backendLabel(id) {
+  const found = getCodingBackends().find(b => b.id === id);
+  if (found?.label) return found.label;
+  return id === 'agency' ? 'Agency' : id === 'copilot' ? 'Copilot' : (id || 'Copilot');
+}
 
 const selectShells = new Set();
 function closeSelectShells(except = null) {
@@ -984,22 +1013,36 @@ setInterval(() => {
 }, 750);
 
 function populateSettingsOptions() {
-  if (!appConfig || !settingsCopilotModel || !settingsCopilotContext) return;
-  settingsCopilotModel.replaceChildren();
-  (appConfig.copilotModels || []).forEach(m => {
-    const opt = document.createElement('option');
-    opt.value = m.id;
-    opt.textContent = m.label || m.id;
-    settingsCopilotModel.appendChild(opt);
-  });
+  if (!appConfig) return;
+  if (settingsDefaultBackend) {
+    settingsDefaultBackend.replaceChildren();
+    getCodingBackends().forEach(b => {
+      const opt = document.createElement('option');
+      opt.value = b.id;
+      opt.textContent = b.label || b.id;
+      settingsDefaultBackend.appendChild(opt);
+    });
+  }
 
-  settingsCopilotContext.replaceChildren();
-  (appConfig.copilotContexts || []).forEach(c => {
-    const opt = document.createElement('option');
-    opt.value = c.id;
-    opt.textContent = c.label || c.id;
-    settingsCopilotContext.appendChild(opt);
-  });
+  if (settingsCopilotModel) {
+    settingsCopilotModel.replaceChildren();
+    (appConfig.copilotModels || []).forEach(m => {
+      const opt = document.createElement('option');
+      opt.value = m.id;
+      opt.textContent = m.label || m.id;
+      settingsCopilotModel.appendChild(opt);
+    });
+  }
+
+  if (settingsCopilotContext) {
+    settingsCopilotContext.replaceChildren();
+    (appConfig.copilotContexts || []).forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c.id;
+      opt.textContent = c.label || c.id;
+      settingsCopilotContext.appendChild(opt);
+    });
+  }
 }
 
 function populateIntegrationsTable() {
@@ -1057,6 +1100,19 @@ function populateSettingsView() {
 
   settingsDefaultArea.value = appState.settings?.defaultAreaId || '';
 
+  if (settingsDefaultBackend) {
+    if (settingsDefaultBackend.options.length === 0) {
+      getCodingBackends().forEach(b => {
+        const opt = document.createElement('option');
+        opt.value = b.id;
+        opt.textContent = b.label || b.id;
+        settingsDefaultBackend.appendChild(opt);
+      });
+    }
+    settingsDefaultBackend.value = appState.settings?.defaultBackend || appConfig?.defaults?.codingBackend || 'copilot';
+    refreshSelect(settingsDefaultBackend);
+  }
+
   if (appConfig) {
     if (settingsCopilotModel.options.length === 0) populateSettingsOptions();
     if (appState.settings?.copilotModel) {
@@ -1072,6 +1128,7 @@ function populateSettingsView() {
     }
   }
   refreshSelect(settingsDefaultArea);
+  refreshSelect(settingsDefaultBackend);
   refreshSelect(settingsCopilotModel);
   refreshSelect(settingsCopilotContext);
 
@@ -1094,6 +1151,7 @@ if (settingsForm) {
     }
 
     const defaultAreaId = settingsDefaultArea.value || null;
+    const defaultBackend = settingsDefaultBackend ? settingsDefaultBackend.value : (appState.settings?.defaultBackend || 'copilot');
     const copilotModel = settingsCopilotModel.value;
     const copilotContext = settingsCopilotContext.value;
     const notifyCompleted = settingsNotifyCompleted.checked;
@@ -1115,6 +1173,7 @@ if (settingsForm) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           defaultAreaId,
+          defaultBackend,
           copilotModel,
           copilotContext,
           notifyCompleted,
@@ -1504,8 +1563,12 @@ areaCancelBtn.addEventListener('click', () => areaDialog.close());
 areaDialogClose.addEventListener('click', () => areaDialog.close());
 
 const TERMINAL_STATES = new Set(['completed', 'result_ready', 'failed', 'agent_failed', 'agent_stopped']);
+const RESUMABLE_STATES = new Set(['result_ready', 'completed', 'failed', 'agent_failed', 'agent_stopped', 'needs_input']);
 function isTaskFinished(task) {
   return TERMINAL_STATES.has(task?.state);
+}
+function isTaskResumable(task) {
+  return RESUMABLE_STATES.has(task?.state);
 }
 
 async function deleteTask(taskId, taskTitle = 'task') {
@@ -1565,6 +1628,12 @@ function renderTasks() {
     titleSpan.textContent = task.title || task.objective || 'Task';
     titleGroup.appendChild(titleSpan);
 
+    const backendBadge = document.createElement('span');
+    backendBadge.className = 'badge';
+    backendBadge.textContent = backendLabel(task.backend);
+    backendBadge.title = `Backend: ${task.backend || 'copilot'}`;
+    titleGroup.appendChild(backendBadge);
+
     const stateBadge = document.createElement('span');
     stateBadge.className = `badge badge-${['completed', 'result_ready'].includes(task.state) ? 'success' : ['failed', 'agent_failed'].includes(task.state) ? 'danger' : 'accent'}`;
     stateBadge.textContent = task.state || 'unknown';
@@ -1611,6 +1680,23 @@ function renderTasks() {
         openWorktree(task.id);
       });
       actions.appendChild(openBtn);
+    }
+
+    // Continue thread button
+    if (isTaskResumable(task)) {
+      const continueBtn = document.createElement('button');
+      continueBtn.className = 'btn';
+      continueBtn.type = 'button';
+      continueBtn.title = 'Continue Thread';
+      continueBtn.setAttribute('aria-label', `Continue thread for ${task.title}`);
+      const continueIcon = document.createElement('i');
+      continueIcon.setAttribute('data-lucide', 'message-square-plus');
+      continueBtn.appendChild(continueIcon);
+      continueBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openContinueDialog(task);
+      });
+      actions.appendChild(continueBtn);
     }
 
     if (isTaskFinished(task)) {
@@ -1669,6 +1755,10 @@ function renderTasks() {
     areaInfo.textContent = `Area: ${area ? area.name : (task.areaId || 'None')}`;
     footer.appendChild(areaInfo);
 
+    const backendInfo = document.createElement('span');
+    backendInfo.textContent = `Backend: ${backendLabel(task.backend)}`;
+    footer.appendChild(backendInfo);
+
     if (task.worktree) {
       const wtInfo = document.createElement('span');
       wtInfo.className = 'mono';
@@ -1710,8 +1800,15 @@ function showTaskDetail(task) {
   };
 
   addField('Title', task.title);
+  addField('Backend', backendLabel(task.backend));
   addField('State', task.state);
   addField('Stale', task.stale ? 'Yes' : 'No');
+  if (task.capabilities && typeof task.capabilities === 'object') {
+    const caps = Object.entries(task.capabilities)
+      .map(([k, v]) => `${k}: ${v}`)
+      .join(', ');
+    addField('Capabilities', caps);
+  }
   if (task.error) addField('Error', task.error);
   if (task.result) {
     const resultBlock = document.createElement('div');
@@ -1746,6 +1843,7 @@ function showTaskDetail(task) {
     advancedBody.appendChild(p);
   };
   addAdvanced('Task ID', task.id, true);
+  addAdvanced('Backend', task.backend || 'copilot');
   addAdvanced('Model', task.model);
   addAdvanced('Context', task.context);
   addAdvanced('Worktree', task.worktree, true);
@@ -1794,6 +1892,18 @@ function showTaskDetail(task) {
     }
   }
 
+  if (detailContinueTaskBtn) {
+    if (isTaskResumable(task)) {
+      detailContinueTaskBtn.style.display = 'inline-flex';
+      detailContinueTaskBtn.onclick = () => {
+        taskDetailDialog.close();
+        openContinueDialog(task);
+      };
+    } else {
+      detailContinueTaskBtn.style.display = 'none';
+    }
+  }
+
   if (task.worktree) {
     detailOpenWorktreeBtn.style.display = 'inline-flex';
     detailOpenWorktreeBtn.onclick = () => openWorktree(task.id);
@@ -1807,6 +1917,85 @@ function showTaskDetail(task) {
 detailCloseBtn.addEventListener('click', () => taskDetailDialog.close());
 detailDialogClose.addEventListener('click', () => taskDetailDialog.close());
 
+function openContinueDialog(task) {
+  if (!continueThreadDialog) return;
+  continueTaskIdInput.value = task.id;
+  continueMessageInput.value = '';
+
+  continueTaskContext.replaceChildren();
+
+  const titleP = document.createElement('p');
+  const strongTitle = document.createElement('strong');
+  strongTitle.textContent = 'Task: ';
+  const titleSpan = document.createElement('span');
+  titleSpan.textContent = task.title || task.objective || task.id;
+  titleP.append(strongTitle, titleSpan);
+
+  const metaP = document.createElement('p');
+  metaP.className = 'item-meta';
+
+  const strongBackend = document.createElement('strong');
+  strongBackend.textContent = 'Backend: ';
+  const backendBadge = document.createElement('span');
+  backendBadge.className = 'badge';
+  backendBadge.textContent = backendLabel(task.backend);
+
+  const strongState = document.createElement('strong');
+  strongState.textContent = 'State: ';
+  const stateBadge = document.createElement('span');
+  stateBadge.className = `badge badge-${['completed', 'result_ready'].includes(task.state) ? 'success' : ['failed', 'agent_failed'].includes(task.state) ? 'danger' : 'accent'}`;
+  stateBadge.textContent = task.state;
+
+  metaP.append(strongBackend, backendBadge, strongState, stateBadge);
+
+  const area = appState.areas?.find(a => a.id === task.areaId);
+  if (area) {
+    const areaP = document.createElement('p');
+    const strongArea = document.createElement('strong');
+    strongArea.textContent = 'Area: ';
+    const areaSpan = document.createElement('span');
+    areaSpan.textContent = area.name;
+    areaP.append(strongArea, areaSpan);
+    continueTaskContext.append(titleP, metaP, areaP);
+  } else {
+    continueTaskContext.append(titleP, metaP);
+  }
+
+  continueThreadDialog.showModal();
+  continueMessageInput.focus();
+  updateIcons();
+}
+
+if (continueCancelBtn) continueCancelBtn.addEventListener('click', () => continueThreadDialog.close());
+if (continueDialogClose) continueDialogClose.addEventListener('click', () => continueThreadDialog.close());
+
+if (continueThreadForm) {
+  continueThreadForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const taskId = continueTaskIdInput.value;
+    const message = continueMessageInput.value.trim();
+    if (!taskId || !message) return;
+
+    const task = appState.tasks?.find(t => t.id === taskId);
+    const taskName = task ? (task.title || task.id.slice(0, 8)) : taskId.slice(0, 8);
+    if (continueSendBtn) continueSendBtn.disabled = true;
+
+    try {
+      const requestId = crypto.randomUUID();
+      const receipt = await callSupervisorTool('send_work_message', { taskId, message }, requestId);
+      continueThreadDialog.close();
+      appendMessage('user', `Continue [${taskName}]: ${message}`);
+      appendMessage('tool', `Tool [send_work_message]: ${JSON.stringify(receipt)}`, { plain: true });
+      appendMessage('system', `Follow-up sent for task "${taskName}". State: ${receipt.state || 'dispatching'}.`);
+      await loadState();
+    } catch (err) {
+      alert(`Failed to send follow-up message: ${err.message}`);
+    } finally {
+      if (continueSendBtn) continueSendBtn.disabled = false;
+    }
+  });
+}
+
 // Tools API Calls
 async function callSupervisorTool(name, args = {}, requestId = crypto.randomUUID()) {
   const response = await fetch('/api/tools', {
@@ -1819,7 +2008,7 @@ async function callSupervisorTool(name, args = {}, requestId = crypto.randomUUID
   return result;
 }
 
-const actionTools = new Set(['start_work', 'open_work', 'delete_work', 'invoke_vscode']);
+const actionTools = new Set(['start_work', 'send_work_message', 'open_work', 'delete_work', 'invoke_vscode']);
 
 function toolLabel(name) {
   return name.replaceAll('_', ' ').replace(/\b\w/g, character => character.toUpperCase());
@@ -1860,6 +2049,7 @@ function createToolField(propertyName, schema, required) {
     control = document.createElement('select');
     for (const value of schema.enum) addToolChoice(control, value, toolLabel(value));
     if (propertyName === 'context') control.value = appConfig?.defaults?.copilotContext || 'long_context';
+    if (propertyName === 'backend') control.value = appState?.settings?.defaultBackend || appConfig?.defaults?.codingBackend || 'copilot';
   } else if (['objective', 'prompt'].includes(propertyName)) {
     control = document.createElement('textarea');
     control.rows = 4;
@@ -1981,7 +2171,7 @@ toolForm.addEventListener('submit', async event => {
     toolRunStatus.textContent = `${Math.round(performance.now() - startedAt)} ms`;
     toolRunStatus.className = 'badge badge-success';
     toolResult.textContent = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
-    if (name === 'start_work') await loadState();
+    if (name === 'start_work' || name === 'send_work_message') await loadState();
   } catch (error) {
     toolRunStatus.textContent = 'Failed';
     toolRunStatus.className = 'badge badge-danger';
@@ -2011,6 +2201,16 @@ async function queryTaskStatus(taskId) {
 }
 
 function populateTaskModalOptions() {
+  if (taskBackendSelect) {
+    taskBackendSelect.replaceChildren();
+    getCodingBackends().forEach(b => {
+      const opt = document.createElement('option');
+      opt.value = b.id;
+      opt.textContent = b.label || b.id;
+      taskBackendSelect.appendChild(opt);
+    });
+  }
+
   if (!appConfig) return;
   if (taskModelSelect) {
     taskModelSelect.replaceChildren();
@@ -2089,6 +2289,11 @@ btnNewTask.addEventListener('click', async () => {
   }
   refreshSelect(taskAreaSelect);
 
+  if (taskBackendSelect) {
+    taskBackendSelect.value = appState.settings?.defaultBackend || appConfig?.defaults?.codingBackend || 'copilot';
+    refreshSelect(taskBackendSelect);
+  }
+
   taskObjectiveInput.value = '';
   if (taskModelSelect) {
     taskModelSelect.value = appState.settings?.copilotModel || appConfig?.defaults?.copilotModel || 'gpt-5.6-sol';
@@ -2112,6 +2317,7 @@ taskDialogClose.addEventListener('click', () => newTaskDialog.close());
 newTaskForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   const areaId = taskAreaSelect.value ? taskAreaSelect.value : undefined;
+  const backend = taskBackendSelect ? taskBackendSelect.value : (appState.settings?.defaultBackend || 'copilot');
   const objective = taskObjectiveInput.value.trim();
   const model = taskModelSelect ? taskModelSelect.value : (appState.settings?.copilotModel || 'gpt-5.6-sol');
   const context = taskContextSelect ? taskContextSelect.value : (appState.settings?.copilotContext || 'default');
@@ -2124,7 +2330,7 @@ newTaskForm.addEventListener('submit', async (e) => {
   if (!objective) return;
 
   try {
-    const args = { objective, model, context, agent };
+    const args = { objective, backend, model, context, agent };
     if (areaId) args.areaId = areaId;
     const result = await callSupervisorTool('start_work', args);
     newTaskDialog.close();

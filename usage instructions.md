@@ -8,6 +8,8 @@ npm install
 npm run search:setup
 npm run local:check
 npm run copilot:check
+# Or, to verify Agency start and resume:
+npm run agency:check
 npm run local
 ```
 
@@ -33,22 +35,23 @@ The requested `moonshine-streaming-small-Q8_0.gguf` currently crashes CrispASR 0
 
 ## Coding Sessions
 
-Register a Git repository root as a Work Area. Start a task by voice, typed chat, or **New Task**. Choose the Copilot model, context, and a repository agent discovered from `.github/agents`.
+Register a Git repository root as a Work Area. Start a task by voice, typed chat, or **New Task**. Choose Copilot CLI or Agency, the Copilot-compatible model and context, and a repository agent discovered from `.github/agents`.
 
-The built-in defaults are `gpt-5.6-sol`, `medium` reasoning, and the short CLI context tier. Settings persist a different model, default work area, or long context tier (up to 1M tokens). An explicit private `.env` value supplies the initial defaults.
+The built-in defaults are Copilot CLI, `gpt-5.6-sol`, `medium` reasoning, and the short CLI context tier. Settings persist a different backend, model, default work area, or long context tier (up to 1M tokens). An explicit private `.env` value supplies the initial defaults.
 
-The supervisor creates an isolated Git worktree and starts GitHub Copilot CLI with an explicit session ID. It records JSONL progress, tool/build output, final result, model, context, branch, and worktree. Status checks are passive and survive app restarts; an interrupted active session becomes stale/unknown rather than successful.
+The supervisor creates an isolated Git worktree and starts the selected backend with an explicit session ID. It records JSONL progress, tool/build output, final result, model, context, branch, and worktree. Use **Continue Thread** or `send_work_message` after a terminal result to resume the same task and backend session. Agency adds Hub reporting and suppresses its default MCPs. Status checks are passive and survive app restarts; an interrupted active session becomes stale/unknown rather than successful.
 
 Available voice tools:
 
 - `list_work`: list work areas and recent sessions.
-- `start_work`: start a Copilot CLI task with model and context.
+- `start_work`: start a Copilot CLI or Agency task with backend, model, agent, and context.
+- `send_work_message`: continue a finished task in its existing backend session.
 - `get_work_status`: read state and recent progress for a task.
 - `open_work`: open a task worktree in VS Code.
 - `delete_work`: delete one finished task or unused work area.
 - `invoke_vscode`: open a text note containing prompt, model, context, and directory. It does not start a VS Code agent yet.
 
-Copilot CLI must be installed and authenticated. `npm run copilot:check` verifies the full isolated lifecycle without changing this repository.
+Copilot CLI must be installed and authenticated. Agency must also be installed for Agency sessions; set `AGENCY_CLI` only when its executable is not on `PATH`. `npm run copilot:check` and `npm run agency:check` verify isolated start/resume lifecycles without changing this repository. Neither backend currently supports reliable noninteractive cancellation.
 
 Open **Tool Lab** to inspect the exact schemas supplied to the LLM. Select a tool, enter its arguments, and click **Run Tool**. The panel shows the request ID, arguments, result, duration, and failures; action tools ask for confirmation before execution.
 

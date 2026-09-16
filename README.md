@@ -70,17 +70,18 @@ Open the printed URL and connect the microphone. Local text and voice are presel
 
 `moonshine-streaming-small-Q8_0.gguf` currently crashes CrispASR 0.8.32 on both CPU and Vulkan. The app detects that exact override and uses the installed, verified canonical Small Q4_K instead; `/api/config` reports the requested path, effective path, and warning.
 
-After Kokoro is cached, set `HF_HUB_OFFLINE=1` for offline-only voice startup. Copilot coding sessions still require network access.
+After Kokoro is cached, set `HF_HUB_OFFLINE=1` for offline-only voice startup. Copilot and Agency coding sessions still require network access.
 
 ## Coding Tasks
 
-1. Run `npm run copilot:check` to verify Copilot CLI authentication and lifecycle.
-2. Register a Git repository root as a work area.
-3. Start work by voice, chat, or **New Task**, selecting a Copilot model, context, and repository agent.
+1. Install and authenticate GitHub Copilot CLI. Install Agency when that backend is needed.
+2. Run `npm run copilot:check` or `npm run agency:check` to verify start and same-thread continuation.
+3. Register a Git repository root as a work area.
+4. Start work by voice, chat, or **New Task**, selecting Copilot CLI or Agency, a model, context, and repository agent.
 
-The supervisor owns the Copilot CLI process, assigns an explicit session ID, persists JSONL progress, and records tool/build updates and the final result. Status reads are passive; missing active observations become stale/unknown. Work-area instructions and `.github/agents/*.agent.md` choices are passed to Copilot. Worktrees open in a separate VS Code window.
+Both backends use the same supervisor contract. The supervisor owns the process, assigns and persists an explicit session ID, records JSONL progress and final results, and resumes that session through **Continue Thread** or `send_work_message`. Agency runs Copilot-compatible sessions with Agency Hub reporting and default Agency MCPs disabled; repository MCP configuration remains available. Status reads are passive, and missing active observations become stale/unknown. Work-area instructions and `.github/agents/*.agent.md` choices are passed through. Worktrees open in a separate VS Code window.
 
-The **Settings** view controls the default work area, Copilot model and context, and completion/input/failure notification channels. Ordinary chat requests do not need a work area; coding dispatches may omit one only when a default is configured. Finished tasks and unused work areas can be deleted.
+The **Settings** view controls the default work area, coding backend, Copilot-compatible model and context, and completion/input/failure notification channels. Ordinary chat requests do not need a work area; coding dispatches may omit one only when a default is configured. Finished tasks and unused work areas can be deleted. Neither backend exposes reliable noninteractive cancellation, so the app reports cancellation as unsupported rather than pretending it succeeded.
 
 Azure DevOps and Teams MCP connections are intentionally marked **planned**, not connected. Start Azure DevOps read-only, scoped to work items assigned to the authenticated user. Start Teams with read/list operations; sending a message should require an exact recipient/body preview and one-time confirmation. Add authenticated local access before attaching corporate credentials, and do not grant these business mutations to coding workers.
 

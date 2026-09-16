@@ -11,6 +11,7 @@
     "local": "node --env-file-if-exists=.env scripts/start-local.mjs",
     "local:check": "node --env-file-if-exists=.env scripts/start-local.mjs --check",
     "copilot:check": "node --env-file-if-exists=.env scripts/check-copilot.mjs",
+    "agency:check": "node --env-file-if-exists=.env scripts/check-copilot.mjs --agency",
     "test": "node --test test/*.test.mjs",
     "desktop": "electron desktop.cjs",
     "models": "node --env-file-if-exists=.env scripts/models.mjs",

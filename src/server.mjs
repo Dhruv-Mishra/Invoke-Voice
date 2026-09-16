@@ -37,7 +37,10 @@ function config() {
   const settings = supervisor.snapshot().settings;
   const configuredModels = (process.env.COPILOT_MODELS || '').split(',').map(value => value.trim()).filter(Boolean);
   const modelIds = [...new Set(['auto', 'gpt-5.6-sol', 'gpt-5.6-luna', ...configuredModels, settings.copilotModel])];
-  return { defaults: { provider, voiceMode, copilotModel: settings.copilotModel, copilotContext: settings.copilotContext }, copilotModels: modelIds.map(id => ({ id, label: id === 'auto' ? 'Auto' : id === 'gpt-5.6-sol' ? 'GPT-5.6 Sol' : id === 'gpt-5.6-luna' ? 'GPT-5.6 Luna' : id })), copilotContexts: [
+  return { defaults: { provider, voiceMode, codingBackend: settings.defaultBackend, copilotModel: settings.copilotModel, copilotContext: settings.copilotContext }, codingBackends: [
+    { id: 'copilot', label: 'Copilot CLI', description: 'Direct GitHub Copilot CLI', capabilities: { followUp: true, passiveStatus: true, openWorktree: true, cancel: false, hub: false } },
+    { id: 'agency', label: 'Agency', description: 'Agency-managed Copilot session with Hub reporting', capabilities: { followUp: true, passiveStatus: true, openWorktree: true, cancel: false, hub: true } },
+  ], copilotModels: modelIds.map(id => ({ id, label: id === 'auto' ? 'Auto' : id === 'gpt-5.6-sol' ? 'GPT-5.6 Sol' : id === 'gpt-5.6-luna' ? 'GPT-5.6 Luna' : id })), copilotContexts: [
     { id: 'default', label: 'Short (default)' },
     { id: 'long_context', label: 'Long (up to 1M tokens)' },
   ], integrations: [

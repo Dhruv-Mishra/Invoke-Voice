@@ -16,6 +16,42 @@ export function worktreeWindowArgs(worktree) {
   return ['--new-window', worktree];
 }
 
+export function sessionEventText(event) {
+  if (event.type === 'assistant.message' && typeof event.data?.content === 'string') return event.data.content.trim();
+  if (event.type === 'session.task_complete' && typeof event.data?.summary === 'string') return event.data.summary.trim();
+  return '';
+}
+
+export function sessionLaunch(task, area, env = process.env, { resume = false } = {}) {
+  const logDir = path.join(task.dataDir, task.backend, 'logs');
+  const mcpConfig = [path.join(task.worktree, '.github', 'mcp.json'), path.join(task.worktree, '.mcp.json')].find(existsSync);
+  const common = [
+    '-C', task.worktree,
+    '--add-dir', task.worktree,
+    '--log-dir', logDir,
+    '--no-auto-update',
+    '--disable-builtin-mcps',
+    '--no-remote',
+    '--no-remote-export',
+    '--no-ask-user',
+    '--allow-all-tools',
+    '--output-format', 'json',
+    '--stream', 'on',
+    '--model', task.model,
+    '--reasoning-effort', env.COPILOT_REASONING || 'medium',
+    '--context', task.context,
+  ];
+  if (resume) common.push(`--resume=${task.sessionId}`);
+  else common.push('--session-id', task.sessionId);
+  if (task.agent && task.agent !== 'agent') common.push('--agent', task.agent);
+  if (mcpConfig) common.push('--additional-mcp-config', `@${mcpConfig}`);
+  const executable = task.backend === 'agency'
+    ? (env.AGENCY_CLI || (process.platform === 'win32' ? 'agency.exe' : 'agency'))
+    : (env.COPILOT_CLI || (process.platform === 'win32' ? 'copilot.exe' : 'copilot'));
+  const args = task.backend === 'agency' ? ['copilot', '--hub', '--no-default-mcps', ...common] : common;
+  return { executable, args, logDir, prompt: copilotPrompt(task, area) };
+}
+
 export function resolveVSCodeInstallation(env = process.env) {
   const roots = [env.VSCODE_PATH, path.join(env.LOCALAPPDATA || '', 'Programs', 'Microsoft VS Code'), path.join(env.ProgramFiles || 'C:\\Program Files', 'Microsoft VS Code')].filter(Boolean);
   for (const root of roots) {
@@ -40,35 +76,16 @@ export function createVSCodeBridge(dataDir, env = process.env) {
     const { executable, cli } = resolveVSCodeInstallation(env);
     return execute(executable, [cli, ...args], { cwd, env: { ...env, ELECTRON_RUN_AS_NODE: '1' }, windowsHide: true, timeout: 20000, maxBuffer: 1024 * 1024 });
   }
-  function runCopilot(task, area, report) {
-    const logDir = path.join(dataDir, 'copilot', 'logs');
-    const sessionDir = path.join(dataDir, 'copilot', 'sessions');
-    mkdirSync(logDir, { recursive: true });
+  function runSession(task, area, report, { prompt = task.objective, resume = false } = {}) {
+    const backend = task.backend === 'agency' ? 'agency' : 'copilot';
+    const sessionDir = path.join(dataDir, backend, 'sessions');
     mkdirSync(sessionDir, { recursive: true });
     const sessionLog = path.join(sessionDir, `${task.id}.jsonl`);
-    const prompt = copilotPrompt(task, area);
-    const mcpConfig = [path.join(task.worktree, '.github', 'mcp.json'), path.join(task.worktree, '.mcp.json')].find(existsSync);
-    const args = [
-      '-C', task.worktree,
-      '--add-dir', task.worktree,
-      '--log-dir', logDir,
-      '--no-auto-update',
-      '--disable-builtin-mcps',
-      '--no-remote',
-      '--no-remote-export',
-      '--no-ask-user',
-      '--allow-all-tools',
-      '--output-format', 'json',
-      '--stream', 'on',
-      '--model', task.model,
-      '--reasoning-effort', env.COPILOT_REASONING || 'medium',
-      '--context', task.context,
-      '--session-id', task.sessionId,
-    ];
-    if (task.agent && task.agent !== 'agent') args.push('--agent', task.agent);
-    if (mcpConfig) args.push('--additional-mcp-config', `@${mcpConfig}`);
-    args.push('-p', prompt);
-    const executable = env.COPILOT_CLI || (process.platform === 'win32' ? 'copilot.exe' : 'copilot');
+    const launchTask = { ...task, dataDir };
+    const launch = sessionLaunch(launchTask, area, env, { resume });
+    mkdirSync(launch.logDir, { recursive: true });
+    const args = [...launch.args, '-p', resume ? prompt : launch.prompt];
+    const { executable } = launch;
     const child = spawn(executable, args, { cwd: task.worktree, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
     const output = createInterface({ input: child.stdout });
     let diagnostic = '';
@@ -79,25 +96,26 @@ export function createVSCodeBridge(dataDir, env = process.env) {
       appendFileSync(sessionLog, `${line}\n`);
       let event;
       try { event = JSON.parse(line); } catch { return; }
-      if (event.type === 'assistant.message' && typeof event.data?.content === 'string') finalText = event.data.content.trim();
+      finalText = sessionEventText(event) || finalText;
       if (event.type === 'result') result = event;
       const toolName = event.data?.toolName || event.data?.name || event.data?.tool?.name;
       const toolOutput = event.data?.output || event.data?.content || event.data?.result;
-      if (event.type === 'assistant.turn_start') report({ kind: 'progress', summary: 'Copilot started working.' });
+      if (event.type === 'assistant.turn_start') report({ kind: 'progress', summary: `${backend === 'agency' ? 'Agency' : 'Copilot'} started working.` });
       if (event.type === 'tool.execution_start') report({ kind: 'progress', summary: `Running ${String(toolName || 'tool').slice(0, 120)}.` });
       if (['tool.execution_partial_result', 'tool.execution_complete'].includes(event.type) && toolOutput) {
         const summary = typeof toolOutput === 'string' ? toolOutput : JSON.stringify(toolOutput);
         report({ kind: 'progress', summary: summary.slice(-600) });
       }
-      if (event.type === 'assistant.message' && finalText) report({ kind: 'progress', summary: finalText.slice(0, 600) });
+      if (['assistant.message', 'session.task_complete'].includes(event.type) && finalText) report({ kind: 'progress', summary: finalText.slice(0, 600) });
     });
     return new Promise((resolve, reject) => {
       child.once('error', reject);
       child.once('close', (code, signal) => {
         output.close();
-        if (!result) return reject(new Error(`Copilot CLI ended without a result (${signal || (code ?? 'unknown')}). ${diagnostic}`.trim()));
-        if (result.exitCode !== 0 || code !== 0) return reject(new Error(`Copilot CLI failed (${result.exitCode ?? code}). ${diagnostic}`.trim()));
-        resolve({ sessionLog, result: finalText || 'Copilot CLI completed.', usage: result.usage });
+        const label = backend === 'agency' ? 'Agency' : 'Copilot CLI';
+        if (!result) return reject(new Error(`${label} ended without a result (${signal || (code ?? 'unknown')}). ${diagnostic}`.trim()));
+        if (result.exitCode !== 0 || code !== 0) return reject(new Error(`${label} failed (${result.exitCode ?? code}). ${diagnostic}`.trim()));
+        resolve({ sessionLog, result: finalText || `${label} completed.`, usage: result.usage });
       });
     });
   }
@@ -114,7 +132,10 @@ export function createVSCodeBridge(dataDir, env = process.env) {
       return { worktree: realpathSync(worktree), branch };
     },
     dispatch(task, area, report) {
-      return runCopilot(task, area, report);
+      return runSession(task, area, report);
+    },
+    continue(task, area, prompt, report) {
+      return runSession(task, area, report, { prompt, resume: true });
     },
     async invokeVSCode({ prompt, model, context, directory, requestId }) {
       const folder = path.join(dataDir, 'vscode-requests');

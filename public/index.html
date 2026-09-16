@@ -579,21 +579,26 @@
     <div class="settings-container">
       <div class="settings-header">
         <h2 class="settings-title">Supervisor Settings</h2>
-        <p class="settings-subtitle">Manage default work area, Copilot model defaults, notification routing, and view integrations.</p>
+        <p class="settings-subtitle">Manage default work area, coding agent defaults, notification routing, and view integrations.</p>
       </div>
 
       <form id="settings-form" class="settings-form">
         <section class="settings-section">
-          <h3 class="settings-section-title">General &amp; Copilot Defaults</h3>
+          <h3 class="settings-section-title">General &amp; Coding Agent Defaults</h3>
           <div class="form-group">
             <label class="control-label" for="settings-default-area">Default Work Area</label>
             <select id="settings-default-area" aria-label="Default Work Area"></select>
             <span class="field-hint">Used automatically when a task is dispatched without specifying an area.</span>
           </div>
           <div class="form-group">
+            <label class="control-label" for="settings-default-backend">Default Coding Backend</label>
+            <select id="settings-default-backend" aria-label="Default Coding Backend"></select>
+            <span class="field-hint">Execution backend for automated coding tasks (Copilot CLI or Agency).</span>
+          </div>
+          <div class="form-group">
             <label class="control-label" for="settings-copilot-model">Default Copilot Model</label>
             <select id="settings-copilot-model" aria-label="Default Copilot Model"></select>
-            <span class="field-hint">Model used for Copilot CLI work dispatches by default.</span>
+            <span class="field-hint">Model used for coding agent work dispatches by default.</span>
           </div>
           <div class="form-group">
             <label class="control-label" for="settings-copilot-context">Context Tier</label>
@@ -684,7 +689,7 @@
       </div>
       <div class="form-group">
         <label class="control-label" for="area-instructions-input">Instructions</label>
-        <textarea id="area-instructions-input" rows="3" placeholder="Context or constraints for Copilot in this area..."></textarea>
+        <textarea id="area-instructions-input" rows="3" placeholder="Context or constraints for coding agents in this area..."></textarea>
       </div>
       <div class="form-group">
         <label class="control-label" for="area-agent-select">Agent Choice</label>
@@ -728,6 +733,10 @@
         <select id="task-area-select" aria-label="Select Work Area"></select>
       </div>
       <div class="form-group">
+        <label class="control-label" for="task-backend-select">Coding Backend</label>
+        <select id="task-backend-select" aria-label="Select Coding Backend"></select>
+      </div>
+      <div class="form-group">
         <label class="control-label" for="task-objective-input">Objective &amp; Constraints *</label>
         <textarea id="task-objective-input" required rows="4" placeholder="Describe the goal clearly..."></textarea>
       </div>
@@ -764,12 +773,38 @@
         <i data-lucide="trash-2"></i>
         <span>Delete Task</span>
       </button>
+      <button type="button" class="btn btn-accent" id="detail-continue-task-btn" style="display: none;">
+        <i data-lucide="message-square-plus"></i>
+        <span>Continue Thread</span>
+      </button>
       <button type="button" class="btn btn-accent" id="detail-open-worktree-btn" style="display: none;">
         <i data-lucide="external-link"></i>
         <span>Open Worktree</span>
       </button>
       <button type="button" class="btn" id="detail-close-btn">Close</button>
     </div>
+  </dialog>
+
+  <dialog id="continue-thread-dialog" aria-labelledby="continue-dialog-title">
+    <form id="continue-thread-form" method="dialog">
+      <div class="dialog-header">
+        <span id="continue-dialog-title">Continue Thread</span>
+        <button type="button" class="btn" id="continue-dialog-close" aria-label="Close dialog">✕</button>
+      </div>
+      <input type="hidden" id="continue-task-id">
+      <div id="continue-task-context" class="form-group" style="display: flex; flex-direction: column; gap: 4px; padding: 8px 12px; border: 1px solid var(--cp-border); border-radius: 6px; background: var(--cp-bg-elevated); margin-bottom: 12px;"></div>
+      <div class="form-group">
+        <label class="control-label" for="continue-message-input">Follow-up Instructions *</label>
+        <textarea id="continue-message-input" required rows="4" placeholder="Describe the follow-up request or next steps..."></textarea>
+      </div>
+      <div class="dialog-actions">
+        <button type="button" class="btn" id="continue-cancel-btn">Cancel</button>
+        <button type="submit" class="btn btn-accent" id="continue-send-btn">
+          <i data-lucide="send"></i>
+          <span>Send</span>
+        </button>
+      </div>
+    </form>
   </dialog>
 
   <dialog id="route-config-dialog" aria-labelledby="route-config-title">

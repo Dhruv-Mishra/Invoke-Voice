@@ -6,7 +6,8 @@ import path from 'node:path';
 import { Supervisor, tools } from '../src/supervisor.mjs';
 
 test('exports the canonical LLM tool schemas', () => {
-  assert.deepEqual(tools.map(tool => tool.function.name), ['list_work', 'start_work', 'get_work_status', 'open_work', 'delete_work', 'invoke_vscode']);
+  assert.deepEqual(tools.map(tool => tool.function.name), ['list_work', 'start_work', 'send_work_message', 'get_work_status', 'open_work', 'delete_work', 'invoke_vscode']);
+  assert.deepEqual(tools.find(tool => tool.function.name === 'start_work').function.parameters.properties.backend.enum, ['copilot', 'agency']);
   assert.equal(tools.find(tool => tool.function.name === 'start_work').function.parameters.properties.context.enum.includes('long_context'), true);
   assert.deepEqual(tools.find(tool => tool.function.name === 'start_work').function.parameters.required, ['objective']);
 });
@@ -14,6 +15,7 @@ test('exports the canonical LLM tool schemas', () => {
 test('Copilot dispatch is idempotent, records progress, and exposes passive status', async () => {
   const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-supervisor-test-'));
   let dispatches = 0;
+  let continuations = 0;
   let vscodeRequest;
   const bridge = {
     verifyRepo: async () => {},
@@ -22,6 +24,11 @@ test('Copilot dispatch is idempotent, records progress, and exposes passive stat
       dispatches += 1;
       report({ kind: 'progress', summary: 'Running tests.' });
       return { result: 'Checks passed', sessionLog: path.join(dataDir, `${task.id}.jsonl`) };
+    },
+    continue: async (task, area, prompt, report) => {
+      continuations += 1;
+      report({ kind: 'progress', summary: `Following up: ${prompt}` });
+      return { result: 'Follow-up passed', sessionLog: path.join(dataDir, `${task.id}.jsonl`) };
     },
     invokeVSCode: async request => { vscodeRequest = request; return { invoked: true }; },
     open: async () => {},
@@ -36,7 +43,7 @@ test('Copilot dispatch is idempotent, records progress, and exposes passive stat
     const area = await supervisor.registerArea({ name: 'PDF', repoPath: dataDir, agent: 'builder', instructions: 'Keep compatibility.' });
     assert.deepEqual(supervisor.listAgents(area.id).at(-1), { id: 'builder', name: 'Builder', model: 'GPT-5.6 Luna (copilot)' });
     supervisor.updateSettings({ defaultAreaId: area.id, copilotContext: 'default' });
-    const args = { objective: 'Add encryption tests' };
+    const args = { objective: 'Add encryption tests', backend: 'agency' };
     const receipt = await supervisor.callTool('start_work', args, { requestId: 'request-1' });
     await supervisor.callTool('start_work', args, { requestId: 'request-1' });
     await new Promise(resolve => setImmediate(resolve));
@@ -45,9 +52,17 @@ test('Copilot dispatch is idempotent, records progress, and exposes passive stat
     assert.equal(status.state, 'result_ready');
     assert.equal(status.result, 'Checks passed');
     assert.equal(status.model, 'test-model');
+    assert.equal(status.backend, 'agency');
+    assert.equal(status.capabilities.hub, true);
     assert.equal(status.agent, 'builder');
     assert.equal(status.context, 'default');
     assert.equal(status.update.summary, 'Checks passed');
+    const followUp = await supervisor.callTool('send_work_message', { taskId: receipt.taskId, message: 'Now update the docs' }, { requestId: 'follow-up-1' });
+    await supervisor.callTool('send_work_message', { taskId: receipt.taskId, message: 'Now update the docs' }, { requestId: 'follow-up-1' });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(followUp.state, 'dispatching');
+    assert.equal(continuations, 1);
+    assert.equal((await supervisor.callTool('get_work_status', { taskId: receipt.taskId })).result, 'Follow-up passed');
     const listedTask = (await supervisor.callTool('list_work')).tasks[0];
     assert.equal(Object.hasOwn(listedTask, 'result'), false);
     await supervisor.callTool('invoke_vscode', { prompt: 'Draft a fix', model: 'gpt-5.4', context: 'default' }, { requestId: 'vscode-1' });

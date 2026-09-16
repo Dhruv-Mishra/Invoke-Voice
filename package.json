@@ -19,6 +19,7 @@
     "test": "node --test test/*.test.mjs",
     "desktop": "npm run build && electron desktop.cjs",
     "dist:win": "npm run build && electron-builder --win nsis --x64",
+    "release:beta": "node scripts/publish-beta.mjs",
     "models": "node --env-file-if-exists=.env scripts/models.mjs",
     "search": "zg query",
     "search:index": "zg index --embedding local/potion-code-16m-v2",

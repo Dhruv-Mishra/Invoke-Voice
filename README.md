@@ -119,7 +119,24 @@ Electron builds first and starts its own loopback supervisor. After app setup, i
 
 ### Test On Another Windows Machine
 
-You do not need to push the repository to GitHub to test the installed app. Build the installer on the development machine, transfer only `release\Voice Work Supervisor-Setup-0.1.0.exe` through a trusted channel, and run it on the test machine. Keep the repository remote private if you do publish it; never commit `.env`, `%LOCALAPPDATA%\VoiceSupervisor`, models, caches or generated installers.
+You do not need to push the repository to GitHub to test the installed app. Build the installer on the development machine, transfer only `release\Voice Work Supervisor-Setup-0.1.0.exe` through a trusted channel, and run it on the test machine. Choose repository visibility based on who may access the source and releases; never commit `.env`, `%LOCALAPPDATA%\VoiceSupervisor`, models, caches or generated installers.
+
+### Publish A GitHub Beta
+
+GitHub Releases is the distribution channel for installers; generated `release/` files remain ignored and should not be committed. This repository is public, so anyone with the release URL can download its assets. A private repository uses the same workflow, but downloaders must be authenticated collaborators.
+
+Install and authenticate the GitHub CLI once (`gh auth login`). From a clean, committed `master` branch, publish the next beta with:
+```powershell
+npm run release:beta
+```
+The command pushes any committed local commits, dispatches the Windows GitHub Actions build, waits for it to finish, and then leaves the installer plus its SHA-256 checksum on [GitHub Releases](https://github.com/Dhruv-Mishra/VoiceOrchestration/releases). The workflow runs `npm ci`, the full test suite, and `npm run dist:win` before it commits the generated version, creates the tag, or publishes anything.
+
+The default `prerelease` increment advances `0.1.1-beta.0` to `0.1.1-beta.1`; from the current stable `0.1.0`, it starts `0.1.1-beta.0`. Start a fresh patch or minor beta line explicitly:
+```powershell
+npm run release:beta -- prepatch
+npm run release:beta -- preminor
+```
+GitHub marks every such release as a prerelease rather than `Latest`. The installer is currently unsigned, so Windows SmartScreen or organizational policy may still warn or block it. The beta workflow scopes its GitHub token to `contents: write` for the version commit, tag and release; other workflows retain the repository's read-only default.
 
 For a repeatable full end-to-end test:
 

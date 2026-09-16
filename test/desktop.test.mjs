@@ -45,6 +45,18 @@ test('installer includes physical runtime dependencies, excludes private data an
   assert.equal(config.build.nsis.allowElevation, false);
 });
 
+test('beta publisher builds before atomically pushing its version tag and prerelease', () => {
+  const config = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
+  const workflow = readFileSync(path.join(root, '.github', 'workflows', 'beta-release.yml'), 'utf8');
+  const publisher = readFileSync(path.join(root, 'scripts', 'publish-beta.mjs'), 'utf8');
+  assert.equal(config.scripts['release:beta'], 'node scripts/publish-beta.mjs');
+  assert.match(publisher, /git', \['status', '--porcelain'/);
+  assert.match(publisher, /releaseBranch = process\.env\.RELEASE_BRANCH \|\| 'master'/);
+  assert.ok(workflow.indexOf('run: npm run dist:win') < workflow.indexOf('git push --atomic'));
+  assert.match(workflow, /permissions:\s+contents: write/);
+  assert.match(workflow, /--generate-notes --prerelease --latest=false/);
+});
+
 test('desktop allows setup documentation sources but rejects arbitrary URLs and protocols', context => {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'voice-desktop-links-'));
   context.after(() => rmSync(directory, { recursive: true, force: true }));

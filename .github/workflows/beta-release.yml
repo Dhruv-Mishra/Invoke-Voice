@@ -1,0 +1,96 @@
+name: Beta release
+run-name: Beta release (${{ inputs.bump }}) ${{ inputs.request_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version increment
+        required: true
+        default: prerelease
+        type: choice
+        options:
+          - prerelease
+          - prepatch
+          - preminor
+      request_id:
+        description: Dispatch correlation ID
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: beta-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Set beta version
+        id: version
+        shell: pwsh
+        run: |
+          npm version '${{ inputs.bump }}' --preid=beta --no-git-tag-version
+          $version = node -p "require('./package.json').version"
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=v$version" >> $env:GITHUB_OUTPUT
+
+      - name: Test
+        run: npm test
+
+      - name: Build Windows installer
+        run: npm run dist:win
+
+      - name: Locate release asset
+        id: asset
+        shell: pwsh
+        run: |
+          $installers = @(Get-ChildItem release -Filter '*-Setup-*.exe')
+          if ($installers.Count -ne 1) { throw "Expected one installer, found $($installers.Count)." }
+          $installer = $installers[0]
+          $checksum = "$((Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLower())  $($installer.Name)"
+          $checksumPath = Join-Path $installer.DirectoryName "$($installer.Name).sha256"
+          Set-Content -Path $checksumPath -Value $checksum -Encoding ascii
+          "installer=$($installer.FullName)" >> $env:GITHUB_OUTPUT
+          "checksum=$checksumPath" >> $env:GITHUB_OUTPUT
+
+      - name: Commit and tag version
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add package.json package-lock.json
+          git commit -m "chore: release $env:TAG"
+          git tag -a $env:TAG -m "Voice Work Supervisor $env:VERSION beta"
+          git push --atomic origin "HEAD:${{ github.ref_name }}" "refs/tags/$env:TAG"
+
+      - name: Publish GitHub prerelease
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+          INSTALLER: ${{ steps.asset.outputs.installer }}
+          CHECKSUM: ${{ steps.asset.outputs.checksum }}
+        run: |
+          gh release create $env:TAG $env:INSTALLER $env:CHECKSUM --repo '${{ github.repository }}' --title "Voice Work Supervisor $env:VERSION" --generate-notes --prerelease --latest=false

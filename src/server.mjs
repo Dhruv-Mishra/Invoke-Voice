@@ -13,6 +13,7 @@ import { createLocalVoice, localConfiguration, warmLocalVoice } from './local-vo
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const publicDir = path.join(root, 'public');
+const frontendDir = path.join(root, 'dist');
 const dataDir = path.resolve(process.env.SUPERVISOR_DATA_DIR || path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), '.local', 'share'), 'VoiceSupervisor'));
 const inbox = path.join(dataDir, 'inbox');
 mkdirSync(inbox, { recursive: true });
@@ -95,15 +96,16 @@ const server = http.createServer(async (request, response) => {
     const areaDelete = url.pathname.match(/^\/api\/areas\/([^/]+)$/);
     if (request.method === 'DELETE' && areaDelete) return json(response, 200, supervisor.deleteArea(decodeURIComponent(areaDelete[1])));
     if (request.method !== 'GET') return json(response, 404, { error: 'Not found' });
-    const files = { '/': 'index.html', '/index.html': 'index.html', '/app.js': 'app.js', '/capture-worklet.js': 'capture-worklet.js' };
-    const vendorFiles = {
-      '/vendor/dompurify.js': path.join(root, 'node_modules', 'dompurify', 'dist', 'purify.min.js'),
-      '/vendor/lucide.js': path.join(root, 'node_modules', 'lucide', 'dist', 'umd', 'lucide.js'),
-      '/vendor/marked.js': path.join(root, 'node_modules', 'marked', 'lib', 'marked.umd.js'),
+    const assetName = url.pathname.startsWith('/assets/') ? path.basename(url.pathname) : null;
+    const files = {
+      '/': path.join(frontendDir, 'index.html'),
+      '/index.html': path.join(frontendDir, 'index.html'),
+      '/capture-worklet.js': path.join(publicDir, 'capture-worklet.js'),
     };
-    const file = vendorFiles[url.pathname] || (files[url.pathname] && path.join(publicDir, files[url.pathname]));
+    const file = files[url.pathname] || (assetName && path.join(frontendDir, 'assets', assetName));
     if (!file || !existsSync(file)) return json(response, 404, { error: 'Not found' });
-    response.writeHead(200, { 'Content-Type': file.endsWith('.html') ? 'text/html; charset=utf-8' : 'text/javascript; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Length': statSync(file).size });
+    const contentType = file.endsWith('.html') ? 'text/html; charset=utf-8' : file.endsWith('.css') ? 'text/css; charset=utf-8' : 'text/javascript; charset=utf-8';
+    response.writeHead(200, { 'Content-Type': contentType, 'Cache-Control': 'no-store', 'Content-Length': statSync(file).size });
     createReadStream(file).pipe(response);
   } catch (error) { if (!response.headersSent) json(response, 400, { error: error.message }); else response.end(); }
 });

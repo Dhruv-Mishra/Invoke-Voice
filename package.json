@@ -7,13 +7,15 @@
     "node": ">=22"
   },
   "scripts": {
-    "start": "node --env-file-if-exists=.env src/server.mjs",
-    "local": "node --env-file-if-exists=.env scripts/start-local.mjs",
+    "build": "vite build",
+    "dev": "vite --host 127.0.0.1",
+    "start": "npm run build && node --env-file-if-exists=.env src/server.mjs",
+    "local": "npm run build && node --env-file-if-exists=.env scripts/start-local.mjs",
     "local:check": "node --env-file-if-exists=.env scripts/start-local.mjs --check",
     "copilot:check": "node --env-file-if-exists=.env scripts/check-copilot.mjs",
     "agency:check": "node --env-file-if-exists=.env scripts/check-copilot.mjs --agency",
     "test": "node --test test/*.test.mjs",
-    "desktop": "electron desktop.cjs",
+    "desktop": "npm run build && electron desktop.cjs",
     "models": "node --env-file-if-exists=.env scripts/models.mjs",
     "search": "zg query",
     "search:index": "zg index --embedding local/potion-code-16m-v2",
@@ -26,10 +28,12 @@
     "dompurify": "^3.4.15",
     "lucide": "^1.42.0",
     "marked": "^18.0.12",
+    "vue": "^3.5.21",
     "ws": "^8.21.3"
   },
   "devDependencies": {
     "@zvec/zvec-grep": "^0.2.2",
-    "electron": "^45.0.0-alpha.5"
+    "electron": "^45.0.0-alpha.5",
+    "vite": "^7.1.5"
   }
 }

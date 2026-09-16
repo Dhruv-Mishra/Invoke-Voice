@@ -265,9 +265,17 @@ function setAgentState(state) {
   if (!agentSprite) return;
   const next = ['idle', 'connecting', 'listening', 'thinking', 'speaking'].includes(state) ? state : 'idle';
   agentSprite.dataset.state = next;
-  agentSprite.textContent = next;
+  const label = agentSprite.querySelector('.agent-state-label');
+  if (label) label.textContent = next;
   agentSprite.setAttribute('aria-label', `Agent ${next}`);
   agentSprite.title = `Agent ${next}`;
+  const active = isVoiceStarting || Boolean(voiceSocket);
+  const microphoneLabel = active ? 'Disconnect microphone' : micToggleBtn.disabled ? `Microphone unavailable: ${routeStatusBadge.textContent}` : 'Connect microphone';
+  micToggleBtn.title = microphoneLabel;
+  micToggleBtn.setAttribute('aria-label', microphoneLabel);
+  micToggleBtn.setAttribute('aria-pressed', String(active));
+  document.getElementById('voice-route-status').textContent = routeStatusBadge.textContent;
+  window.dispatchEvent(new CustomEvent('voice-supervisor:agent-state', { detail: { state: next } }));
 }
 
 const MARKDOWN_TAGS = ['p', 'br', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'em', 'strong', 'i', 'b', 'blockquote', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'code', 'pre', 'a', 'hr'];
@@ -310,6 +318,7 @@ function applyState(state) {
   if (!appState.settings || typeof appState.settings !== 'object') appState.settings = {};
   renderAreas();
   renderTasks();
+  renderFiles();
   populateSettingsView();
   updateIcons();
 }
@@ -323,11 +332,14 @@ function updateIcons() {
 updateIcons();
 
 function activateView(viewName) {
+  document.body.dataset.view = viewName;
   workspaceView.hidden = viewName !== 'workspace';
   toolLabView.hidden = viewName !== 'tool-lab';
   if (settingsView) settingsView.hidden = viewName !== 'settings';
+  document.getElementById('calendar-view').hidden = viewName !== 'calendar';
+  document.getElementById('files-view').hidden = viewName !== 'files';
   for (const tab of viewTabs) {
-    const selected = tab.dataset.view === viewName;
+    const selected = tab.dataset.view === (viewName === 'tool-lab' ? 'settings' : viewName);
     tab.setAttribute('aria-selected', String(selected));
     tab.tabIndex = selected ? 0 : -1;
   }
@@ -340,37 +352,113 @@ function activateView(viewName) {
 viewTabs.forEach((tab, index) => {
   tab.addEventListener('click', () => activateView(tab.dataset.view));
   tab.addEventListener('keydown', event => {
-    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
     event.preventDefault();
-    let nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? viewTabs.length - 1 : index + (event.key === 'ArrowRight' ? 1 : -1);
+    let nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? viewTabs.length - 1 : index + (['ArrowRight', 'ArrowDown'].includes(event.key) ? 1 : -1);
     nextIndex = (nextIndex + viewTabs.length) % viewTabs.length;
     viewTabs[nextIndex].focus();
     activateView(viewTabs[nextIndex].dataset.view);
   });
 });
 
+document.querySelectorAll('[data-open-view]').forEach(button => {
+  button.addEventListener('click', () => activateView(button.dataset.openView));
+});
+document.getElementById('settings-route-btn').addEventListener('click', () => routeConfigBtn.click());
+document.getElementById('dock-route-btn').addEventListener('click', () => {
+  closeVoiceOptions();
+  routeConfigBtn.click();
+});
+document.getElementById('calendar-date').textContent = new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric' }).format(new Date());
+document.querySelectorAll('input[name="appearance"]').forEach(input => {
+  input.checked = input.value === document.documentElement.dataset.appearance;
+  input.addEventListener('change', () => {
+    window.dispatchEvent(new CustomEvent('voice-supervisor:theme', { detail: { id: input.value } }));
+    drawMicLevel(0);
+  });
+});
+
+const conversationDialog = document.getElementById('conversation-dialog');
+function openConversation(text) {
+  if (typeof text === 'string') chatInput.value = text;
+  if (!conversationDialog.open) conversationDialog.showModal();
+  chatInput.focus();
+}
+document.getElementById('open-chat-btn').addEventListener('click', () => openConversation());
+document.getElementById('close-chat-btn').addEventListener('click', () => conversationDialog.close());
+window.addEventListener('voice-supervisor:compose', event => openConversation(event.detail?.text));
+const voiceOptions = document.getElementById('voice-options');
+const voiceOptionsButton = document.getElementById('voice-options-btn');
+function closeVoiceOptions() {
+  voiceOptions.hidden = true;
+  voiceOptionsButton.setAttribute('aria-expanded', 'false');
+}
+voiceOptionsButton.addEventListener('click', () => {
+  voiceOptions.hidden = !voiceOptions.hidden;
+  voiceOptionsButton.setAttribute('aria-expanded', String(!voiceOptions.hidden));
+});
+document.addEventListener('click', event => {
+  if (!voiceOptions.contains(event.target) && !voiceOptionsButton.contains(event.target)) closeVoiceOptions();
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && !voiceOptions.hidden) { closeVoiceOptions(); voiceOptionsButton.focus(); }
+});
+
+function renderFiles() {
+  const list = document.getElementById('files-list');
+  list.replaceChildren();
+  for (const area of appState.areas) {
+    const row = document.createElement('div');
+    row.className = 'file-row';
+    const glyph = document.createElement('i');
+    glyph.dataset.lucide = 'folder-kanban';
+    const detail = document.createElement('div');
+    const title = document.createElement('strong');
+    title.textContent = area.name;
+    const path = document.createElement('p');
+    path.textContent = area.repoPath || area.repo || '';
+    detail.append(title, path);
+    row.append(glyph, detail);
+    list.appendChild(row);
+  }
+  if (!appState.areas.length) list.textContent = 'No work areas registered.';
+}
+const documentInput = document.getElementById('document-input');
+document.getElementById('import-document-btn').addEventListener('click', () => documentInput.click());
+documentInput.addEventListener('change', async () => {
+  const file = documentInput.files?.[0];
+  if (!file) return;
+  const feedback = document.getElementById('document-feedback');
+  try {
+    if (!/\.(txt|md|json|csv|log)$/i.test(file.name)) throw new Error('Choose a text, Markdown, JSON, CSV, or log file.');
+    if (file.size > 100000) throw new Error('Choose a document smaller than 100 KB.');
+    const text = await file.text();
+    openConversation(`Summarize this document (${file.name}):\n\n${text}`);
+    feedback.textContent = `${file.name} is ready to send.`;
+  } catch (error) { feedback.textContent = error.message; }
+  documentInput.value = '';
+});
+activateView('home');
+
 // Microphone Level Visualizer
 const canvasCtx = micCanvas.getContext('2d');
 function drawMicLevel(level) {
-  const w = micCanvas.width;
-  const h = micCanvas.height;
-  canvasCtx.clearRect(0, 0, w, h);
-
-  const style = getComputedStyle(document.documentElement);
-  const bgSoft = style.getPropertyValue('--cp-surface-soft').trim();
-  const border = style.getPropertyValue('--cp-border').trim();
-  const accent = style.getPropertyValue('--cp-accent').trim();
-  const success = style.getPropertyValue('--cp-success').trim();
-
-  canvasCtx.fillStyle = bgSoft;
-  canvasCtx.fillRect(0, 0, w, h);
-
-  const barWidth = Math.min(w, Math.max(0, level * w * 2.5));
-  canvasCtx.fillStyle = level > 0.6 ? accent : success;
-  canvasCtx.fillRect(0, 0, barWidth, h);
-
-  canvasCtx.strokeStyle = border;
-  canvasCtx.strokeRect(0.5, 0.5, w - 1, h - 1);
+  const width = micCanvas.width;
+  const height = micCanvas.height;
+  canvasCtx.clearRect(0, 0, width, height);
+  canvasCtx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--cp-wave').trim();
+  for (let index = 0; index < 42; index++) {
+    const sideIndex = index % 21;
+    const envelope = Math.exp(-Math.pow((sideIndex - 10) / 6, 2));
+    const variation = 0.55 + 0.45 * Math.abs(Math.sin(index * 2.3 + level * 15));
+    const barHeight = 5 + envelope * (height * .85) * variation * (0.85 + Math.min(level * 4, .15));
+    const position = index < 21 ? 8 + index * 10 : width - 208 + sideIndex * 10;
+    canvasCtx.globalAlpha = .25 + envelope * .6;
+    canvasCtx.beginPath();
+    canvasCtx.roundRect(position, (height - barHeight) / 2, 5, barHeight, 3);
+    canvasCtx.fill();
+  }
+  canvasCtx.globalAlpha = 1;
 }
 drawMicLevel(0);
 
@@ -2520,7 +2608,7 @@ async function sendChatMessage() {
 
 btnSendChat.addEventListener('click', sendChatMessage);
 chatInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
     e.preventDefault();
     sendChatMessage();
   }
@@ -2562,10 +2650,15 @@ if (routeConfigClose && routeConfigDialog) {
   routeConfigClose.addEventListener('click', () => routeConfigDialog.close());
 }
 
-// Initialize on DOM load
-window.addEventListener('DOMContentLoaded', async () => {
+async function initialize() {
   await loadConfig();
   await loadState();
   await loadTools();
   initEventSource();
-});
+}
+
+if (document.readyState === 'loading') {
+  window.addEventListener('DOMContentLoaded', initialize, { once: true });
+} else {
+  void initialize();
+}

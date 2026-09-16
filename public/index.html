@@ -11,6 +11,12 @@
       const theme =
         param || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
       document.documentElement.setAttribute("data-theme", theme);
+      try {
+        const personality = localStorage.getItem("voice-supervisor-personality-v1") || "copilot";
+        document.documentElement.setAttribute("data-personality", personality);
+      } catch (_) {
+        document.documentElement.setAttribute("data-personality", "copilot");
+      }
     })();
   </script>
   <style>
@@ -459,29 +465,27 @@
     }
   </style>
 </head>
-<body>
+<body data-view="home">
   <header class="top-bar">
-    <div class="brand-zone">
-      <div class="brand-copy">
-        <span class="brand-eyebrow">Local command</span>
-        <span class="brand-title">Voice Supervisor</span>
-      </div>
-    </div>
-
     <nav class="view-tabs" role="tablist" aria-label="Supervisor views">
-      <button class="view-tab" id="workspace-tab" type="button" role="tab" aria-selected="true" aria-controls="workspace-view" data-view="workspace">
-        <i data-lucide="layout-dashboard"></i><span>Workspace</span>
+      <button class="view-tab" id="home-tab" type="button" role="tab" aria-selected="true" aria-controls="voice-personality-app" data-view="home">
+        <i data-lucide="house"></i><span>Home</span>
       </button>
-      <button class="view-tab" id="tool-lab-tab" type="button" role="tab" aria-selected="false" aria-controls="tool-lab-view" data-view="tool-lab">
-        <i data-lucide="flask-conical"></i><span>Tool Lab</span>
+      <button class="view-tab" id="workspace-tab" type="button" role="tab" aria-selected="false" aria-controls="workspace-view" data-view="workspace" tabindex="-1">
+        <i data-lucide="check-square"></i><span>Tasks</span>
       </button>
-      <button class="view-tab" id="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settings-view" data-view="settings">
+      <button class="view-tab" id="calendar-tab" type="button" role="tab" aria-selected="false" aria-controls="calendar-view" data-view="calendar" tabindex="-1">
+        <i data-lucide="calendar-days"></i><span>Calendar</span>
+      </button>
+      <button class="view-tab" id="files-tab" type="button" role="tab" aria-selected="false" aria-controls="files-view" data-view="files" tabindex="-1">
+        <i data-lucide="file"></i><span>Files</span>
+      </button>
+      <button class="view-tab" id="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settings-view" data-view="settings" tabindex="-1">
         <i data-lucide="settings"></i><span>Settings</span>
       </button>
     </nav>
-
+    <div class="sidebar-footer"><p>Less searching.<br>More doing.</p></div>
     <div class="header-status">
-      <span class="agent-status" id="agent-sprite" data-state="idle" role="status" aria-live="polite" aria-label="Agent idle">Idle</span>
       <span class="badge" id="route-status-badge">Checking...</span>
       <button class="btn" id="route-config-btn" type="button" aria-haspopup="dialog" aria-controls="route-config-dialog" title="Configure provider, model, and voice route">
         <i data-lucide="sliders-horizontal"></i>
@@ -489,6 +493,8 @@
       </button>
     </div>
   </header>
+
+  <main id="voice-personality-app" role="tabpanel" aria-labelledby="home-tab"></main>
 
   <div class="app-main">
   <div class="application-body" id="workspace-view" role="tabpanel" aria-labelledby="workspace-tab">
@@ -523,30 +529,29 @@
       </div>
     </main>
 
-    <section class="conversation-pane" aria-label="Supervisor Conversation">
-      <div class="section-header">
-        <span class="section-title">Conversation &amp; Dispatch Log</span>
-        <div class="conversation-actions">
-          <span id="session-reset-notice" class="badge badge-warning" style="display: none;">Session Context Reset</span>
-          <button class="btn" id="btn-clear-chat" type="button" aria-label="Clear Chat History">
-            <i data-lucide="trash-2"></i>
-            <span>Clear Log</span>
-          </button>
-        </div>
-      </div>
-      <div class="chat-messages" id="chat-messages" role="log" aria-live="polite"></div>
-      <div class="partial-line" id="partial-transcript" style="display: none;"></div>
-      <div class="chat-input-bar">
-        <input type="text" id="chat-input" placeholder="Type instructions or query task progress (e.g. 'What is the progress on PDF work?')..." aria-label="Typed message input">
-        <button class="btn btn-accent" id="btn-send-chat" type="button" aria-label="Send typed message">
-          <i data-lucide="send"></i>
-          <span>Send</span>
-        </button>
-      </div>
-    </section>
   </div>
 
-  <section class="tool-lab" id="tool-lab-view" role="tabpanel" aria-labelledby="tool-lab-tab" hidden>
+  <section class="standalone-view" id="calendar-view" role="tabpanel" aria-labelledby="calendar-tab" hidden>
+    <h1>Calendar</h1>
+    <p id="calendar-date"></p>
+    <div class="calendar-empty">
+      <i data-lucide="calendar-days"></i>
+      <h2>No calendar connected</h2>
+      <p>Calendar access isn't available in this workspace yet.</p>
+      <button type="button" class="btn" data-open-view="settings"><i data-lucide="settings"></i>View integrations</button>
+    </div>
+  </section>
+
+  <section class="standalone-view" id="files-view" role="tabpanel" aria-labelledby="files-tab" hidden>
+    <h1>Files</h1>
+    <p>Documents &amp; work areas</p>
+    <button type="button" class="btn btn-accent" id="import-document-btn"><i data-lucide="plus"></i>Open document</button>
+    <input type="file" id="document-input" accept=".txt,.md,.json,.csv,.log" hidden>
+    <p id="document-feedback" role="status"></p>
+    <div class="files-list" id="files-list"></div>
+  </section>
+
+  <section class="tool-lab" id="tool-lab-view" role="tabpanel" aria-label="Tool Lab" hidden>
     <aside class="tool-catalog" aria-label="Available LLM tools">
       <div class="tool-catalog-header">
         <span class="section-title">LLM Tools</span>
@@ -580,6 +585,18 @@
       <div class="settings-header">
         <h2 class="settings-title">Supervisor Settings</h2>
         <p class="settings-subtitle">Manage default work area, coding agent defaults, notification routing, and view integrations.</p>
+      </div>
+
+      <section class="settings-section">
+        <h3 class="settings-section-title">Appearance</h3>
+        <div class="appearance-options" role="radiogroup" aria-label="Theme">
+          <label class="appearance-option"><input type="radio" name="appearance" value="alpine" checked><img src="./aurora-sprite.png" alt="">Alpine</label>
+          <label class="appearance-option"><input type="radio" name="appearance" value="opal"><img src="./opal-sprite.png" alt="">Opal</label>
+        </div>
+      </section>
+      <div class="utility-toolbar">
+        <button class="btn" type="button" id="settings-route-btn"><i data-lucide="sliders-horizontal"></i>Voice &amp; model</button>
+        <button class="btn" type="button" data-open-view="tool-lab"><i data-lucide="flask-conical"></i>Tool Lab</button>
       </div>
 
       <form id="settings-form" class="settings-form">
@@ -667,6 +684,25 @@
     </div>
   </section>
   </div>
+
+  <dialog id="conversation-dialog" aria-labelledby="conversation-title">
+    <section class="conversation-pane" aria-label="Supervisor Conversation">
+      <div class="section-header">
+        <h2 class="section-title" id="conversation-title">Conversation</h2>
+        <div class="conversation-actions">
+          <span id="session-reset-notice" class="badge badge-warning" style="display: none;">Session Context Reset</span>
+          <button class="btn btn-icon" id="btn-clear-chat" type="button" aria-label="Clear Chat History" title="Clear conversation"><i data-lucide="trash-2"></i></button>
+          <button class="btn btn-icon" id="close-chat-btn" type="button" aria-label="Close conversation" title="Close conversation"><i data-lucide="x"></i></button>
+        </div>
+      </div>
+      <div class="chat-messages" id="chat-messages" role="log" aria-live="polite"></div>
+      <div class="partial-line" id="partial-transcript" style="display: none;"></div>
+      <div class="chat-input-bar">
+        <textarea id="chat-input" rows="2" placeholder="Ask anything..." aria-label="Typed message input"></textarea>
+        <button class="btn btn-accent btn-icon" id="btn-send-chat" type="button" aria-label="Send typed message" title="Send message"><i data-lucide="send"></i></button>
+      </div>
+    </section>
+  </dialog>
 
   <dialog id="area-dialog" aria-labelledby="area-dialog-title">
     <form id="area-form" method="dialog">
@@ -836,6 +872,15 @@
   </dialog>
 
   <div class="voice-strip" role="region" aria-label="Voice controls">
+    <button type="button" class="dock-utility" id="voice-options-btn" aria-label="Voice options" title="Voice options" aria-expanded="false" aria-controls="voice-options"><i data-lucide="sliders-horizontal"></i></button>
+    <canvas id="mic-canvas" width="600" height="96" aria-label="Microphone volume level"></canvas>
+    <button class="btn btn-accent" id="mic-toggle-btn" type="button" aria-label="Connect or Disconnect Microphone" title="Connect microphone">
+      <i data-lucide="mic"></i><span id="mic-btn-label">Connect Mic</span>
+    </button>
+    <button type="button" class="dock-utility" id="open-chat-btn" aria-label="Open conversation" title="Type a message" aria-haspopup="dialog" aria-controls="conversation-dialog"><i data-lucide="keyboard"></i></button>
+    <div class="voice-options" id="voice-options" hidden>
+    <h2>Voice options</h2>
+    <p class="voice-route-status" id="voice-route-status" role="status"></p>
     <div class="voice-strip-toggles">
       <label class="toggle-control" title="Mute microphone input">
         <input type="checkbox" id="mute-mic-opt" aria-label="Mute microphone">
@@ -846,13 +891,10 @@
         <span class="toggle-track" aria-hidden="true"></span><span>PTT</span>
       </label>
     </div>
-    <canvas id="mic-canvas" width="70" height="22" aria-label="Microphone volume level"></canvas>
-    <div class="voice-actions">
+    <div class="voice-options-actions">
+      <button class="btn btn-icon" id="dock-route-btn" type="button" title="Voice &amp; model" aria-label="Configure voice and model"><i data-lucide="settings"></i></button>
       <button class="btn btn-icon" id="quiet-mode-btn" type="button" aria-label="Toggle Quiet Mode" title="Block proactive spoken notifications">
         <i data-lucide="bell-off"></i><span class="badge" id="quiet-badge" style="display: none;">On</span>
-      </button>
-      <button class="btn btn-accent" id="mic-toggle-btn" type="button" aria-label="Connect or Disconnect Microphone">
-        <i data-lucide="mic"></i><span id="mic-btn-label">Connect Mic</span>
       </button>
       <button class="btn" id="ptt-btn" type="button" disabled aria-label="Hold to talk or commit speech" title="Commit speech or hold to talk in PTT mode">
         <i data-lucide="radio"></i><span id="ptt-btn-label">Commit</span>
@@ -861,11 +903,9 @@
         <i data-lucide="square"></i>
       </button>
     </div>
+    </div>
   </div>
 
-  <script src="/vendor/marked.js"></script>
-  <script src="/vendor/dompurify.js"></script>
-  <script src="/vendor/lucide.js"></script>
-  <script type="module" src="app.js"></script>
+  <script type="module" src="/main.js"></script>
 </body>
 </html>

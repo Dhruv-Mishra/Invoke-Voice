@@ -76,6 +76,14 @@ Conversational voice turns omit all tool schemas and produce one short spoken re
 
 After Kokoro is cached, set `HF_HUB_OFFLINE=1` for offline-only voice startup. Copilot and Agency coding sessions still require network access.
 
+## Interface And Themes
+
+Home opens the voice assistant; Tasks keeps the existing dispatch and work-area controls. The keyboard button opens the conversation. Suggestions prefill a message for review before sending. Files accepts local text, Markdown, JSON, CSV, and log documents up to 100 KB; content is sent only when you press Send. Calendar reports its disconnected state until a calendar integration exists.
+
+Settings > Appearance switches between Alpine and Opal without remounting audio or transport. Add themes in `public/themes.js`: each supplies a background bitmap, transparent sprite, state-to-animation map, and `--cp-*` tokens for colors, opacity, and typography. `public/VoiceSprite.js` is a presentation-only Vue component. Animation respects reduced-motion preferences.
+
+The bundled Alpine background adapts Bernard Spragg's [Misty Lake Pukaki and Mt Cook](https://commons.wikimedia.org/wiki/File:Misty_Lake_Pukaki_and_Mt_Cook._%2817717782294%29.jpg), CC0. The Aurora sprite is generated artwork; Opal uses the provided `center_sprite.jpeg`. These approximate the supplied visual reference, rather than reproducing its unavailable original artwork.
+
 ## Coding Tasks
 
 1. Install and authenticate GitHub Copilot CLI. Install Agency when that backend is needed.

@@ -14,6 +14,7 @@ const requirements = path.join(root, 'requirements-local.txt');
 const pythonVersion = '3.12.11';
 const englishModel = 'https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl';
 const receiptVersion = createHash('sha256').update(readFileSync(requirements)).update(`${pythonVersion}:torch2.8.0:spacy3.8.0:kokoro-local-v1`).digest('hex');
+const CHAT_ASSET_IDS = new Set(['ling', 'llama']);
 
 export function isolatedEnvironment(env, paths) {
   const isolated = Object.fromEntries(Object.entries(env).filter(([key]) => /^(PATH|SYSTEMROOT|WINDIR|COMSPEC|TEMP|TMP|USERPROFILE|LOCALAPPDATA|APPDATA|PROCESSOR_ARCHITECTURE|NUMBER_OF_PROCESSORS)$/i.test(key)));
@@ -108,6 +109,14 @@ function pythonReady(paths) {
   try { const stat = statSync(paths.python); return stat.isFile() && stat.size === receipt.size && stat.mtimeMs === receipt.mtimeMs; } catch { return false; }
 }
 
+function packageIndex(value, fallback, label) {
+  let url;
+  try { url = new URL(value || fallback); } catch { throw setupError(`${label} must be a valid HTTPS or loopback URL.`); }
+  const loopback = url.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname.toLowerCase());
+  if (url.protocol !== 'https:' && !loopback || url.username || url.password) throw setupError(`${label} must use HTTPS or HTTP loopback without credentials.`);
+  return url.href.replace(/\/$/, '');
+}
+
 export function createLocalSetup({ env = process.env, activateLLM, run = runSetupCommand, provision = ensureAsset, warm = warmLocalVoice } = {}) {
   const paths = stackPaths(env);
   const completionFile = path.join(paths.home, 'local-setup.json');
@@ -119,44 +128,160 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
       if (typeof candidate === 'string' && path.isAbsolute(candidate) && assetReady(paths, asset, candidate)) paths[asset.id] = candidate;
     }
   }
-  let llama;
+  const initialExternalUrl = env.LOCAL_LLM_URL;
+  let llama = null;
+  let ownedLlm = false;
   let active = false;
   let closing = false;
+  let chatReady = false;
+  let chatMessage = 'Local chat runtime is not ready. Start setup to initialize it.';
+  let voiceReady = false;
+  let voiceMessage = 'Local voice pipeline is not ready. Start setup to initialize it.';
+
   const inspect = () => [...ASSETS.map(asset => ({ id: asset.id, label: asset.label, sourceUrl: asset.repo ? `https://huggingface.co/${asset.repo}` : asset.sourceUrl.replace(/\/releases\/download\/([^/]+)\/.*$/, '/releases/tag/$1'), ready: assetReady(paths, asset) })),
     { id: 'kokoro', label: 'Kokoro Python environment', sourceUrl: 'https://pypi.org/project/kokoro/0.9.4/', ready: pythonReady(paths) }];
-  const applyPaths = () => {
+
+  const applyChatPaths = () => {
     Object.assign(env, {
-      LOCAL_LLM_PATH: paths.ling, LLAMA_SERVER_BIN: paths.llama,
-      MOONSHINE_EFFECTIVE_MODEL: paths.moonshine, MOONSHINE_TOKENIZER: paths.tokenizer,
-      CRISPASR_BIN: paths.crispasr, VAD_MODEL: paths.vad, PYTHON_BIN: paths.python,
-      KOKORO_LOCAL_DIR: path.dirname(paths.kokoroModel), KOKORO_READY: '1',
-      KOKORO_REPO: 'hexgrad/Kokoro-82M', KOKORO_VOICE: 'af_heart',
-      HF_HOME: path.join(paths.home, 'huggingface'), PIP_CACHE_DIR: path.join(paths.home, 'pip-cache'),
+      LOCAL_LLM_PATH: paths.ling,
+      LLAMA_SERVER_BIN: paths.llama,
     });
   };
+
+  const applyVoicePaths = () => {
+    Object.assign(env, {
+      MOONSHINE_EFFECTIVE_MODEL: paths.moonshine,
+      MOONSHINE_TOKENIZER: paths.tokenizer,
+      CRISPASR_BIN: paths.crispasr,
+      VAD_MODEL: paths.vad,
+      PYTHON_BIN: paths.python,
+      KOKORO_LOCAL_DIR: path.dirname(paths.kokoroModel),
+      KOKORO_READY: '1',
+      KOKORO_REPO: 'hexgrad/Kokoro-82M',
+      KOKORO_VOICE: 'af_heart',
+      HF_HOME: path.join(paths.home, 'huggingface'),
+      PIP_CACHE_DIR: path.join(paths.home, 'pip-cache'),
+    });
+  };
+
+  const applyPaths = () => {
+    applyChatPaths();
+    applyVoicePaths();
+  };
+
   if (inspect().every(component => component.ready)) applyPaths();
+
+  const isChatAlive = () => {
+    if (!chatReady) return false;
+    if (llama && (llama.exitCode !== null || llama.signalCode !== null)) return false;
+    return true;
+  };
+
+  const getCapabilities = () => ({
+    chat: {
+      ready: isChatAlive(),
+      message: chatMessage,
+    },
+    voice: {
+      ready: Boolean(voiceReady && active && isChatAlive()),
+      message: voiceMessage,
+    },
+  });
+
+  const activateChat = async ({ report = () => {}, signal } = {}) => {
+    if (isChatAlive()) {
+      chatMessage = 'Local chat runtime passed startup checks. Ready for messages.';
+      return;
+    }
+    applyChatPaths();
+    report({ stage: 'chat', message: 'Starting and checking the local chat runtime.' });
+    let child;
+    try {
+      const ensureLLM = activateLLM || (await import('../scripts/start.mjs')).ensureLocalLLM;
+      const result = await ensureLLM({ env, signal, privatePort: env.SUPERVISOR_DESKTOP === '1' || !env.LOCAL_LLM_URL, cwd: paths.home, requireWarm: true });
+      llama = result.llama;
+      ownedLlm = Boolean(result.llama);
+      if (result.url) env.LOCAL_LLM_URL = result.url;
+      else if (!env.LOCAL_LLM_URL) env.LOCAL_LLM_URL = 'http://127.0.0.1:8081/v1';
+
+      child = llama;
+      let exited = false;
+      child?.once('exit', () => {
+        exited = true;
+        if (llama !== child) return;
+        llama = null;
+        active = false;
+        chatReady = false;
+        voiceReady = false;
+        chatMessage = 'The local language runtime stopped. Retry setup to restart it; completed downloads will be reused.';
+        voiceMessage = 'Local voice is unavailable because the chat runtime stopped.';
+        if (ownedLlm) {
+          if (initialExternalUrl !== undefined) env.LOCAL_LLM_URL = initialExternalUrl;
+          else delete env.LOCAL_LLM_URL;
+        }
+        if (!closing) setup.invalidate('The local language runtime stopped. Retry setup to restart it; completed downloads will be reused.');
+      });
+      if (exited || (child && (child.exitCode !== null || child.signalCode !== null))) {
+        throw new Error('Local language runtime stopped');
+      }
+      chatReady = true;
+      chatMessage = 'Local chat runtime passed startup checks. Ready for messages.';
+      if (!voiceReady) {
+        voiceMessage = 'Local voice pipeline is waiting for speech dependencies.';
+      }
+    } catch (error) {
+      chatReady = false;
+      chatMessage = 'llama.cpp did not pass startup checks. Check available memory, Windows runtime requirements and security software, then retry. Completed models are retained.';
+      voiceReady = false;
+      voiceMessage = 'Local voice requires a running chat runtime. Retry setup after resolving chat errors.';
+      const failedChild = llama || child;
+      llama = null;
+      failedChild?.kill?.();
+      if (ownedLlm) {
+        if (initialExternalUrl !== undefined) env.LOCAL_LLM_URL = initialExternalUrl;
+        else delete env.LOCAL_LLM_URL;
+      }
+      throw setupError(chatMessage);
+    }
+  };
+
   const setup = createSetup({
-    cacheDir: paths.home, runtimeDir: paths.runtimeDir, inspect,
+    cacheDir: paths.home, runtimeDir: paths.runtimeDir, inspect, getCapabilities,
     install: ({ report, signal }) => withSetupLock(paths, async () => {
       const commandEnv = isolatedEnvironment(env, paths);
       mkdirSync(paths.home, { recursive: true });
-      for (const asset of ASSETS) await provision(paths, asset, { report, signal });
+      for (const asset of ASSETS.filter(asset => CHAT_ASSET_IDS.has(asset.id))) {
+        await provision(paths, asset, { report, signal });
+      }
+      applyChatPaths();
+      await activateChat({ report, signal });
+      writeJson(completionFile, { version: 1, pathInputs, paths: Object.fromEntries(ASSETS.map(asset => [asset.id, paths[asset.id]])) });
+
+      for (const asset of ASSETS.filter(asset => !CHAT_ASSET_IDS.has(asset.id))) {
+        await provision(paths, asset, { report, signal });
+      }
       if (!pythonReady(paths)) {
-        const command = (executable, args, stage, message) => run(executable, args, { env: commandEnv, redactEnv: env, cwd: paths.home, signal, report, stage, message });
-        const configuredPython = env.PYTHON_BIN && env.PYTHON_BIN !== 'python' ? path.resolve(env.SUPERVISOR_CONFIG_DIR || root, env.PYTHON_BIN) : null;
-        let python = pythonVersion;
-        if (configuredPython && configuredPython !== paths.python && existsSync(configuredPython)) {
-          await command(configuredPython, ['-I', '-c', 'import sys; assert sys.version_info[:2] == (3, 12), "Python 3.12 required"'], 'python', 'Checking your existing Python 3.12.');
-          python = configuredPython;
-        } else {
-          await command(paths.uv, ['--no-config', 'python', 'install', pythonVersion], 'python', 'Installing private Python 3.12.11.');
+        try {
+          const command = (executable, args, stage, message) => run(executable, args, { env: commandEnv, redactEnv: env, cwd: paths.home, signal, report, stage, message });
+          const configuredPython = env.PYTHON_BIN && env.PYTHON_BIN !== 'python' ? path.resolve(env.SUPERVISOR_CONFIG_DIR || root, env.PYTHON_BIN) : null;
+          let python = pythonVersion;
+          if (configuredPython && configuredPython !== paths.python && existsSync(configuredPython)) {
+            await command(configuredPython, ['-I', '-c', 'import sys; assert sys.version_info[:2] == (3, 12), "Python 3.12 required"'], 'python', 'Checking your existing Python 3.12.');
+            python = configuredPython;
+          } else {
+            await command(paths.uv, ['--no-config', 'python', 'install', pythonVersion], 'python', 'Installing private Python 3.12.11.');
+          }
+          if (!existsSync(paths.python)) await command(paths.uv, ['--no-config', 'venv', '--python', python, ...(python === pythonVersion ? ['--managed-python'] : []), paths.venv], 'python', 'Creating the isolated Kokoro environment.');
+          await command(paths.uv, ['--no-config', 'pip', 'install', '--python', paths.python, '--index-url', packageIndex(env.LOCAL_TORCH_INDEX_URL, 'https://download.pytorch.org/whl/cpu', 'PyTorch package index'), 'torch==2.8.0'], 'kokoro', 'Installing CPU speech dependencies.');
+          await command(paths.uv, ['--no-config', 'pip', 'install', '--python', paths.python, '--index-url', packageIndex(env.LOCAL_PYPI_INDEX_URL, 'https://pypi.org/simple', 'Python package index'), '--only-binary', ':all:', '--no-binary', 'docopt', 'docopt==0.6.2', '-r', requirements, englishModel], 'kokoro', 'Installing Kokoro and its English language model.');
+          await command(paths.python, ['-I', '-c', 'import kokoro, soundfile, en_core_web_sm, torch; assert torch.__version__.startswith("2.8.0")'], 'kokoro', 'Checking installed speech dependencies.');
+          const stat = statSync(paths.python);
+          writeJson(path.join(paths.venv, 'complete.json'), { version: receiptVersion, size: stat.size, mtimeMs: stat.mtimeMs });
+        } catch (error) {
+          voiceReady = false;
+          voiceMessage = error.setupMessage || error.message || 'Kokoro speech dependencies failed to install. Retry setup to complete speech.';
+          throw error;
         }
-        if (!existsSync(paths.python)) await command(paths.uv, ['--no-config', 'venv', '--python', python, ...(python === pythonVersion ? ['--managed-python'] : []), paths.venv], 'python', 'Creating the isolated Kokoro environment.');
-        await command(paths.uv, ['--no-config', 'pip', 'install', '--python', paths.python, '--index-url', 'https://download.pytorch.org/whl/cpu', 'torch==2.8.0'], 'kokoro', 'Installing CPU speech dependencies.');
-        await command(paths.uv, ['--no-config', 'pip', 'install', '--python', paths.python, '--index-url', 'https://pypi.org/simple', '--only-binary', ':all:', '--no-binary', 'docopt', 'docopt==0.6.2', '-r', requirements, englishModel], 'kokoro', 'Installing Kokoro and its English language model.');
-        await command(paths.python, ['-I', '-c', 'import kokoro, soundfile, en_core_web_sm, torch; assert torch.__version__.startswith("2.8.0")'], 'kokoro', 'Checking installed speech dependencies.');
-        const stat = statSync(paths.python);
-        writeJson(path.join(paths.venv, 'complete.json'), { version: receiptVersion, size: stat.size, mtimeMs: stat.mtimeMs });
       }
       applyPaths();
       writeJson(completionFile, { version: 1, pathInputs, paths: Object.fromEntries(ASSETS.map(asset => [asset.id, paths[asset.id]])) });
@@ -164,47 +289,69 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
     async activate({ signal }) {
       if (active) return;
       await closeLocalVoice();
+      await activateChat({ report: () => {}, signal });
       applyPaths();
-      let runtime = 'llama.cpp';
+      let runtime = 'Moonshine / Kokoro';
       try {
-        const ensureLLM = activateLLM || (await import('../scripts/start.mjs')).ensureLocalLLM;
-        const result = await ensureLLM({ env, signal, privatePort: env.SUPERVISOR_DESKTOP === '1' || !env.LOCAL_LLM_URL, cwd: paths.home, requireWarm: true });
-        llama = result.llama;
-        const child = llama;
-        let exited = false;
-        child?.once('exit', () => {
-          exited = true;
-          if (llama !== child) return;
-          active = false;
-          if (!closing) setup.invalidate('The local language runtime stopped. Retry setup to restart it; completed downloads will be reused.');
-        });
-        const checkRuntime = () => {
-          if (exited || (child && (child.exitCode !== null || child.signalCode !== null))) {
-            runtime = 'llama.cpp';
-            throw new Error('Local language runtime stopped');
-          }
-        };
-        checkRuntime();
+        if (!isChatAlive()) {
+          runtime = 'llama.cpp';
+          throw new Error('Local language runtime stopped');
+        }
         runtime = 'Moonshine / Kokoro';
         if (!localConfiguration(env).configured || !await warm(env)) throw new Error('Speech not configured');
         signal.throwIfAborted();
-        checkRuntime();
+        if (!isChatAlive()) {
+          runtime = 'llama.cpp';
+          throw new Error('Local language runtime stopped');
+        }
         active = true;
+        voiceReady = true;
+        voiceMessage = 'Local voice runtimes passed startup checks. Ready for voice interaction.';
       } catch (error) {
         if (error.message.includes('Kokoro')) runtime = 'Kokoro';
         else if (error.message.includes('CrispASR')) runtime = 'CrispASR';
+        else if (error.message.includes('language runtime') || error.message.includes('llama')) runtime = 'llama.cpp';
         active = false;
-        const failedChild = llama;
-        llama = null;
-        failedChild?.kill();
+        voiceReady = false;
         await closeLocalVoice();
-        throw setupError(`${runtime} did not pass startup checks. Check available memory, Windows runtime requirements and security software, then retry. If Kokoro dependencies are damaged, close the app and remove only runtimes/kokoro-venv from the cache before retrying. Completed models are retained.`);
+        if (runtime === 'llama.cpp') {
+          chatReady = false;
+          const failedChild = llama;
+          llama = null;
+          failedChild?.kill?.();
+          if (ownedLlm) {
+            if (initialExternalUrl !== undefined) env.LOCAL_LLM_URL = initialExternalUrl;
+            else delete env.LOCAL_LLM_URL;
+          }
+          chatMessage = 'llama.cpp did not pass startup checks. Retry setup to restart it.';
+          voiceMessage = 'Local voice is unavailable because the chat runtime stopped.';
+          throw setupError(`${runtime} did not pass startup checks. Check available memory, Windows runtime requirements and security software, then retry. Completed models are retained.`);
+        }
+        voiceMessage = `${runtime} did not pass startup checks. Check available memory, Windows runtime requirements and security software, then retry. If Kokoro dependencies are damaged, close the app and remove only runtimes/kokoro-venv from the cache before retrying. Completed models are retained.`;
+        throw setupError(voiceMessage);
       }
     },
   });
   return {
     ...setup,
-    resume() { if (saved?.version === 1 && inspect().every(component => component.ready)) setup.resume(); },
-    async close() { closing = true; await setup.close(); llama?.kill(); await closeLocalVoice(); },
+    resume() { if (saved?.version === 1 && ASSETS.filter(asset => CHAT_ASSET_IDS.has(asset.id)).every(asset => assetReady(paths, asset))) setup.resume(); },
+    invalidate(message) {
+      chatReady = false;
+      voiceReady = false;
+      chatMessage = message;
+      voiceMessage = 'Local voice is unavailable because the chat runtime stopped.';
+      setup.invalidate(message);
+    },
+    async close() {
+      closing = true;
+      await setup.close();
+      if (ownedLlm) {
+        llama?.kill?.();
+        llama = null;
+        if (initialExternalUrl !== undefined) env.LOCAL_LLM_URL = initialExternalUrl;
+        else delete env.LOCAL_LLM_URL;
+      }
+      await closeLocalVoice();
+    },
   };
 }

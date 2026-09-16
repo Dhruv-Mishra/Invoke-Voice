@@ -1,10 +1,43 @@
-export function createSetup({ platform = process.platform, arch = process.arch, cacheDir, runtimeDir, inspect, install, activate }) {
+export function createSetup({ platform = process.platform, arch = process.arch, cacheDir, runtimeDir, inspect, install, activate, getCapabilities }) {
   const supported = platform === 'win32' && arch === 'x64';
   let state = { status: 'idle', stage: 'consent', message: 'Local setup requires your permission. No downloads have started.' };
   let job;
   let controller;
   const log = [];
-  const snapshot = () => ({ platform, supported, cacheDir, runtimeDir, ...state, components: inspect(), log: [...log] });
+  const defaultCapabilities = () => {
+    if (state.status === 'ready') {
+      return {
+        chat: { ready: true, message: 'Local chat runtime is ready.' },
+        voice: { ready: true, message: 'Local voice runtimes passed startup checks. Cached files can be reused offline.' },
+      };
+    }
+    if (state.status === 'error') {
+      return {
+        chat: { ready: false, message: state.message || 'Local chat setup failed.' },
+        voice: { ready: false, message: state.message || 'Local voice setup failed.' },
+      };
+    }
+    if (state.status === 'running') {
+      return {
+        chat: { ready: false, message: state.message || 'Local setup is running.' },
+        voice: { ready: false, message: state.message || 'Local setup is running.' },
+      };
+    }
+    return {
+      chat: { ready: false, message: 'Local chat runtime is not ready. Start setup to initialize it.' },
+      voice: { ready: false, message: 'Local voice pipeline is not ready. Start setup to initialize it.' },
+    };
+  };
+  const snapshot = () => ({
+    platform,
+    supported,
+    cacheDir,
+    runtimeDir,
+    ...state,
+    capabilities: getCapabilities ? getCapabilities({ state, supported }) : defaultCapabilities(),
+    components: inspect(),
+    log: [...log],
+  });
   const report = ({ stage, message, progress }) => {
     state = { status: 'running', stage, message, ...(progress ? { progress } : {}) };
     if (message !== log.at(-1)) log.push(message);

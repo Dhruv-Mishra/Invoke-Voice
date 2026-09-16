@@ -22,6 +22,7 @@ let eventConnections = 0;
 let eventResponse;
 let setupReads = 0;
 let setupWrites = 0;
+let settingsWrites = 0;
 let configReads = 0;
 let setupHttpStatus = 200;
 const setupRequests = [];
@@ -32,16 +33,23 @@ const fixtureTasks = [
 const setup = {
   platform: 'win32', supported: true, cacheDir: 'C:\\VoiceSupervisor\\cache', runtimeDir: 'C:\\VoiceSupervisor\\runtime',
   status: 'idle', stage: '', message: 'Ready to install',
+  capabilities: { chat: { ready: false, message: 'Local chat is not ready.' }, voice: { ready: false, message: 'Local voice is not ready.' } },
   components: [
     { id: 'runtime', label: 'Local runtime', ready: false, sourceUrl: 'https://example.com/runtime' },
     { id: 'model', label: 'Voice model', ready: false, sourceUrl: 'javascript:alert(1)' },
   ],
 };
 const errors = [];
+const settings = {};
 const config = {
   providers: [{ id: 'local', label: 'Local', model: 'fixture', configured: true }],
   voiceModes: [{ id: 'local', label: 'Local voice', configured: true }],
   defaults: { provider: 'local', voiceMode: 'local' },
+  configuration: { fields: [
+    { key: 'CUSTOM_BASE_URL', label: 'Custom URL', group: 'Fixture', type: 'url', secret: false, value: 'https://example.test' },
+    { key: 'LLAMA_THREADS', label: 'Threads', group: 'Fixture', type: 'number', secret: false, value: '8', min: 1, max: 128 },
+    { key: 'CUSTOM_API_KEY', label: 'Custom key', group: 'Fixture', type: 'password', secret: true, configured: true },
+  ] },
 };
 
 const evaluate = (callback, ...args) => browser.webContents.executeJavaScript(`(${callback})(${args.map(value => JSON.stringify(value)).join(',')})`, true);
@@ -124,10 +132,19 @@ try {
           response.end(JSON.stringify(setupHttpStatus === 200 ? setup : { error: 'Setup service unavailable' }));
           return;
         }
+        if (request.url === '/api/settings' && request.method === 'POST') {
+          let body = '';
+          for await (const chunk of request) body += chunk;
+          Object.assign(settings, JSON.parse(body));
+          settingsWrites++;
+          response.writeHead(200, { 'Content-Type': 'application/json' });
+          response.end(JSON.stringify(settings));
+          return;
+        }
         if (request.url === '/api/config') configReads++;
         const routes = {
           '/api/config': config,
-          '/api/state': { areas: [{ id: 'fixture-area', name: 'Fixture repository', repoPath: 'C:\\fixture' }], tasks: fixtureTasks, settings: {} },
+          '/api/state': { areas: [{ id: 'fixture-area', name: 'Fixture repository', repoPath: 'C:\\fixture' }], tasks: fixtureTasks, settings },
           '/api/areas/fixture-area/agents': [{ id: 'agent', name: 'Default agent' }],
           '/api/tools': [{ type: 'function', function: { name: 'list_work', description: 'List work', parameters: { type: 'object', properties: {} } } }],
         };
@@ -173,10 +190,25 @@ try {
 
   assert.equal(await evaluate(() => document.querySelectorAll('.appearance-options input').length), 0);
   assert.equal(await evaluate(() => document.querySelector('.top-bar').getBoundingClientRect().width), 288);
-  assert.equal(setupReads, 0);
+  await waitFor(() => document.getElementById('local-setup-prompt').open);
+  assert.equal(setupReads, 1);
   assert.equal(setupWrites, 0);
-  await visit('settings');
+  assert.equal(await evaluate(() => document.getElementById('local-setup-prompt').open), true);
+  await click('#local-setup-start');
+  await waitFor(() => document.body.dataset.view === 'settings' && document.activeElement.id === 'setup-consent');
+  assert.equal(settingsWrites, 1);
   await waitFor(() => document.getElementById('setup-status').textContent === 'idle');
+  assert.deepEqual(await evaluate(() => [...document.querySelectorAll('#config-fields input')].map(control => [control.type, getComputedStyle(control).borderRadius, control.value])), [
+    ['url', '10px', 'https://example.test'], ['number', '10px', '8'], ['password', '10px', ''],
+  ]);
+  const toggleCheck = await evaluate(() => {
+    const inputs = [...document.querySelectorAll('.toggle-control input[type="checkbox"]:not(:disabled)')];
+    const before = inputs.map(input => input.checked);
+    inputs.forEach(input => { input.click(); input.click(); });
+    return { count: inputs.length, stable: before.every((value, index) => value === inputs[index].checked) && document.body.dataset.view === 'settings' && document.body.innerText.length > 100 };
+  });
+  assert.ok(toggleCheck.count >= 10);
+  assert.equal(toggleCheck.stable, true);
   assert.equal(await evaluate(() => document.getElementById('setup-install-btn').disabled), true);
   assert.equal(await evaluate(() => document.getElementById('setup-cache').textContent), setup.cacheDir);
   assert.equal(await evaluate(() => document.querySelectorAll('#setup-components a[href]').length), 1);
@@ -198,10 +230,10 @@ try {
   const readsWhileClosed = setupReads;
   await evaluate(() => new Promise(resolve => setTimeout(resolve, 2200)));
   assert.equal(setupReads, readsWhileClosed);
-  Object.assign(setup, { status: 'error', stage: 'install', message: 'Installation stopped', error: 'Fixture download failed', log: ['<script>not executable</script>'] });
+  Object.assign(setup, { status: 'error', stage: 'install', message: 'Installation stopped', error: 'Fixture download failed', capabilities: { chat: { ready: true, message: 'Local chat is ready.' }, voice: { ready: false, message: 'Kokoro installation failed.' } }, log: ['<script>not executable</script>'] });
   await visit('settings');
-  await waitFor(() => document.getElementById('setup-status').textContent === 'error');
-  assert.equal(await evaluate(() => document.getElementById('setup-install-label').textContent), 'Retry installation');
+  await waitFor(() => document.getElementById('setup-status').textContent === 'Chat ready');
+  assert.equal(await evaluate(() => document.getElementById('setup-install-label').textContent), 'Retry voice setup');
   assert.equal(await evaluate(() => document.querySelectorAll('#setup-log script').length), 0);
   setupHttpStatus = 503;
   await click('#setup-refresh-btn');
@@ -216,7 +248,7 @@ try {
   assert.equal(await evaluate(() => document.getElementById('setup-install-btn').disabled), true);
   setupHttpStatus = 200;
   await click('#setup-refresh-btn');
-  await waitFor(() => document.getElementById('setup-status').textContent === 'running');
+  await waitFor(() => document.getElementById('setup-install-label').textContent === 'Installing local AI');
   assert.equal(setupWrites, 2);
   await evaluate(() => {
     Object.defineProperty(document, 'hidden', { configurable: true, value: true });
@@ -226,7 +258,7 @@ try {
   await evaluate(() => new Promise(resolve => setTimeout(resolve, 2200)));
   assert.equal(setupReads, readsWhileHidden);
   const configReadsBeforeReady = configReads;
-  Object.assign(setup, { status: 'ready', stage: 'complete', message: 'Installed', error: '' });
+  Object.assign(setup, { status: 'ready', stage: 'complete', message: 'Installed', error: '', capabilities: { chat: { ready: true, message: 'Local chat is ready.' }, voice: { ready: true, message: 'Local voice is ready.' } } });
   await evaluate(() => { delete document.hidden; document.dispatchEvent(new Event('visibilitychange')); });
   await waitFor(() => document.getElementById('setup-status').textContent === 'ready');
   assert.equal(configReads, configReadsBeforeReady + 1);
@@ -279,6 +311,7 @@ try {
   await choose('#motion-preference', 'reduce');
   await browser.loadURL(url);
   await waitFor(() => document.querySelector('.sprite-image') && document.getElementById('route-status-badge').textContent.includes('Ready'));
+  assert.equal(await evaluate(() => document.getElementById('local-setup-prompt').open), false);
   assert.equal(await evaluate(() => document.documentElement.dataset.motion), 'reduce');
   assert.equal(await evaluate(() => document.documentElement.dataset.appearance), 'jarvis');
   assert.equal(await evaluate(() => getComputedStyle(document.querySelector('.sprite-image')).animationName), 'none');
@@ -389,11 +422,12 @@ try {
           dockClear: surface.bottom <= dock.top,
           freeFloating: getComputedStyle(document.querySelector('.app-main')).backgroundColor === 'rgba(0, 0, 0, 0)' && getComputedStyle(document.querySelector('.app-main')).boxShadow === 'none',
           captionFits: caption.top >= content.bottom && caption.bottom <= surface.bottom && caption.left >= surface.left && caption.right <= surface.right,
+          captionCentered: Math.abs((caption.left + caption.right - dock.left - dock.right) / 2) < 1,
           modalCorrect: document.getElementById('view-dialog').matches(':modal') === (innerWidth > 760 && document.body.dataset.view !== 'home'),
           spriteCentered: document.getElementById('voice-personality-app').hidden || Math.abs((document.getElementById('agent-sprite').getBoundingClientRect().left + document.getElementById('agent-sprite').getBoundingClientRect().right - dock.left - dock.right) / 2) < 1,
         };
       });
-      assert.deepEqual(layout, { noOverflow: true, surfaceVisible: true, dockClear: true, freeFloating: true, captionFits: true, modalCorrect: true, spriteCentered: true }, `${width}x${height} ${view}`);
+      assert.deepEqual(layout, { noOverflow: true, surfaceVisible: true, dockClear: true, freeFloating: true, captionFits: true, captionCentered: true, modalCorrect: true, spriteCentered: true }, `${width}x${height} ${view}`);
       if (view === 'settings') {
         assert.equal(await evaluate(() => {
           const settings = document.getElementById('settings-view');
@@ -424,7 +458,8 @@ try {
 } catch (error) {
   console.error(error.stack);
   console.error('Browser console:', JSON.stringify(errors));
-  if (browser && !browser.isDestroyed()) console.error(await evaluate(() => ({ state: document.getElementById('agent-sprite')?.dataset.state, route: document.getElementById('route-status-badge')?.textContent, messages: document.getElementById('chat-messages')?.textContent })));
+  if (browser && !browser.isDestroyed()) console.error(await evaluate(() => ({ state: document.getElementById('agent-sprite')?.dataset.state, route: document.getElementById('route-status-badge')?.textContent, view: document.body.dataset.view, promptOpen: document.getElementById('local-setup-prompt')?.open, viewOpen: document.getElementById('view-dialog')?.open, focus: document.activeElement?.id, setupStatus: document.getElementById('setup-status')?.textContent, setupError: document.getElementById('setup-error')?.textContent, consent: document.getElementById('setup-consent')?.checked, installDisabled: document.getElementById('setup-install-btn')?.disabled, messages: document.getElementById('chat-messages')?.textContent })));
+  console.error({ setupReads, setupWrites, settingsWrites });
   process.exitCode = 1;
 } finally {
   chatResponse?.end();

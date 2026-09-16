@@ -2,6 +2,7 @@
 // Follows Clawpilot theme and local-only zero-build plain JS architecture
 
 import { createConversationUI } from './conversation-ui.js';
+import captureWorkletUrl from './capture-worklet.js?url';
 
 let appConfig = null;
 let appState = { areas: [], tasks: [] };
@@ -433,12 +434,14 @@ documentInput.addEventListener('change', async () => {
   documentInput.value = '';
 });
 
-const setupElements = Object.fromEntries(['status', 'message', 'error', 'progress-region', 'progress', 'progress-label', 'platform', 'cache', 'runtime', 'components', 'consent', 'consent-label', 'install-btn', 'install-label', 'refresh-btn', 'log-details', 'log']
+const setupElements = Object.fromEntries(['status', 'message', 'error', 'chat-status', 'voice-status', 'progress-region', 'progress', 'progress-label', 'platform', 'cache', 'runtime', 'components', 'consent', 'consent-label', 'install-btn', 'install-label', 'refresh-btn', 'log-details', 'log']
   .map(name => [name, document.getElementById(`setup-${name}`)]));
+const localSetupPrompt = document.getElementById('local-setup-prompt');
 let setupSnapshot = null;
 let setupRequest = null;
 let setupPoll;
 let setupHttpError = '';
+let setupConsentFocusPending = false;
 
 function setupVisible() {
   return !document.hidden && document.body.dataset.view === 'settings' && viewDialog.open;
@@ -454,15 +457,21 @@ function renderSetup() {
   const snapshot = setupSnapshot;
   const running = snapshot?.status === 'running';
   const ready = snapshot?.status === 'ready';
+  const chatReady = snapshot?.capabilities?.chat?.ready === true;
+  const voiceReady = snapshot?.capabilities?.voice?.ready === true;
   const supported = snapshot?.supported === true;
   const busy = Boolean(setupRequest);
-  setupElements.status.textContent = setupHttpError ? 'Status unavailable' : snapshot ? (supported ? snapshot.status : 'Unsupported platform') : busy ? 'Checking' : 'Not checked';
-  setupElements.status.className = `badge${setupHttpError || snapshot?.status === 'error' ? ' badge-danger' : ready ? ' badge-success' : running ? ' badge-accent' : ''}`;
+  setupElements.status.textContent = setupHttpError ? 'Status unavailable' : snapshot ? (supported ? chatReady && !voiceReady ? 'Chat ready' : snapshot.status : 'Unsupported platform') : busy ? 'Checking' : 'Not checked';
+  setupElements.status.className = `badge${setupHttpError || snapshot?.status === 'error' && !chatReady ? ' badge-danger' : ready ? ' badge-success' : chatReady ? ' badge-warning' : running ? ' badge-accent' : ''}`;
   setupElements.message.textContent = snapshot
     ? [snapshot.stage, snapshot.message].filter(Boolean).join(': ') || (ready ? 'Local voice is installed.' : 'Local voice is not installed.')
     : busy ? 'Checking local voice setup...' : 'Local voice setup status is unavailable.';
-  setupElements.error.textContent = setupHttpError || snapshot?.error || '';
+  setupElements.error.textContent = setupHttpError || (snapshot?.error ? `${chatReady ? 'Local chat is ready. Voice setup needs attention: ' : ''}${snapshot.error}` : '');
   setupElements.error.hidden = !setupElements.error.textContent;
+  for (const [name, capability] of [['chat-status', snapshot?.capabilities?.chat], ['voice-status', snapshot?.capabilities?.voice]]) {
+    setupElements[name].textContent = capability?.message || 'Not ready';
+    setupElements[name].dataset.ready = String(capability?.ready === true);
+  }
   setupElements.platform.textContent = snapshot?.platform || 'Not available';
   setupElements.cache.textContent = snapshot?.cacheDir || 'Not available';
   setupElements.runtime.textContent = snapshot?.runtimeDir || 'Not available';
@@ -477,7 +486,7 @@ function renderSetup() {
   setupElements.consent.disabled = busy || running || ready || !supported;
   setupElements['consent-label'].hidden = running || ready;
   setupElements['install-btn'].disabled = busy || running || ready || !supported || Boolean(setupHttpError) || !setupElements.consent.checked;
-  setupElements['install-label'].textContent = ready ? 'Installed' : running ? 'Installing local voice' : snapshot?.status === 'error' ? 'Retry installation' : 'Install local voice';
+  setupElements['install-label'].textContent = ready ? 'Installed' : running ? 'Installing local AI' : snapshot?.status === 'error' && chatReady ? 'Retry voice setup' : snapshot?.status === 'error' ? 'Retry installation' : 'Install local AI';
   setupElements['refresh-btn'].disabled = busy;
   const components = Array.isArray(snapshot?.components) ? snapshot.components : [];
   const existing = new Map([...setupElements.components.children].map(item => [item.dataset.componentId, item]));
@@ -490,7 +499,7 @@ function renderSetup() {
     label.textContent = component.label || component.id;
     status.className = component.ready ? 'setup-ready' : 'setup-pending';
     status.textContent = component.ready ? 'Installed' : 'Required';
-    link.textContent = 'Source';
+    link.textContent = component.id === 'kokoro' ? 'Release info' : 'Source';
     link.setAttribute('aria-label', `Download source for ${component.label || component.id} (opens in a new tab)`);
     link.target = '_blank';
     link.rel = 'noopener noreferrer';
@@ -531,9 +540,9 @@ async function requestSetup(start = false) {
       throw new Error('The setup service returned an invalid status. Refresh to try again.');
     }
     setupSnapshot = snapshot;
-    if (snapshot.status === 'ready') {
+    if (snapshot.status === 'ready' || snapshot.capabilities?.chat?.ready && !appConfig?.providers?.find(provider => provider.id === 'local')?.configured) {
       setupElements.consent.checked = false;
-      if (!await loadConfig(true)) throw new Error('Local voice is installed, but its configuration could not be refreshed.');
+      if (!await loadConfig(true)) throw new Error('Local AI is installed, but its configuration could not be refreshed.');
     }
   } catch (error) {
     setupHttpError = `${error.name === 'AbortError' ? 'Setup status request timed out.' : error.message} Refresh status before retrying installation.`;
@@ -541,6 +550,10 @@ async function requestSetup(start = false) {
     clearTimeout(timeout);
     setupRequest = null;
     renderSetup();
+    if (setupConsentFocusPending && setupVisible() && !setupElements.consent.disabled) {
+      setupConsentFocusPending = false;
+      setupElements.consent.focus({ preventScroll: true });
+    }
     if (setupVisible() && setupSnapshot?.status === 'running' && !setupHttpError) {
       setupPoll = window.setTimeout(() => requestSetup(), 2000);
     }
@@ -556,6 +569,32 @@ setupElements.consent.addEventListener('change', renderSetup);
 setupElements['install-btn'].addEventListener('click', () => requestSetup(true));
 setupElements['refresh-btn'].addEventListener('click', () => requestSetup());
 document.addEventListener('visibilitychange', syncSetupVisibility);
+
+async function acknowledgeLocalSetupPrompt() {
+  try {
+    const response = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ localSetupPrompted: true }) });
+    if (response.ok) appState.settings = await response.json();
+  } catch {}
+}
+
+function closeLocalSetupPrompt(destination) {
+  void acknowledgeLocalSetupPrompt();
+  localSetupPrompt.close();
+  if (!destination) return;
+  if (destination === 'local') setupConsentFocusPending = true;
+  activateView('settings');
+  requestAnimationFrame(() => {
+    const target = destination === 'local' ? document.getElementById('local-setup') : document.getElementById('config-section');
+    if (target instanceof HTMLDetailsElement) target.open = true;
+    target?.scrollIntoView({ block: 'start' });
+    if (destination !== 'local') target?.querySelector('input, select')?.focus({ preventScroll: true });
+  });
+}
+
+document.getElementById('local-setup-start').addEventListener('click', () => closeLocalSetupPrompt('local'));
+document.getElementById('local-setup-provider').addEventListener('click', () => closeLocalSetupPrompt('provider'));
+document.getElementById('local-setup-prompt-close').addEventListener('click', () => closeLocalSetupPrompt());
+localSetupPrompt.addEventListener('cancel', event => { event.preventDefault(); void closeLocalSetupPrompt(); });
 window.addEventListener('pagehide', () => {
   clearTimeout(setupPoll);
   setupRequest?.abort();
@@ -924,7 +963,7 @@ async function startVoiceSession() {
       await sessionAudioContext.close().catch(() => {});
       return;
     }
-    await sessionAudioContext.audioWorklet.addModule('/capture-worklet.js');
+    await sessionAudioContext.audioWorklet.addModule(captureWorkletUrl);
     if (sessionToken !== currentSessionToken) {
       await sessionAudioContext.close().catch(() => {});
       return;
@@ -1453,6 +1492,7 @@ function renderApplicationConfig() {
     const grid = document.createElement('div');
     grid.className = 'config-grid';
     for (const field of groupFields) {
+      const secret = field.secret === true || field.type === 'password';
       const wrapper = document.createElement('div');
       wrapper.className = 'config-field';
       const id = `config-${field.key.toLowerCase().replaceAll('_', '-')}`;
@@ -1477,10 +1517,10 @@ function renderApplicationConfig() {
         }
       } else {
         control = document.createElement('input');
-        control.type = field.type === 'password' ? 'password' : field.type === 'number' ? 'number' : field.type === 'url' ? 'url' : 'text';
+        control.type = secret ? 'password' : field.type === 'number' ? 'number' : field.type === 'url' ? 'url' : 'text';
         if (field.min !== undefined) control.min = String(field.min);
         if (field.max !== undefined) control.max = String(field.max);
-        if (field.type === 'password') {
+        if (secret) {
           control.autocomplete = 'new-password';
           control.spellcheck = false;
           control.placeholder = field.configured ? 'Saved - enter a replacement' : 'Enter API key';
@@ -1488,10 +1528,10 @@ function renderApplicationConfig() {
       }
       control.id = id;
       control.dataset.configKey = field.key;
-      control.dataset.configSecret = String(field.type === 'password');
-      if (field.type !== 'password') control.value = field.value || '';
+      control.dataset.configSecret = String(secret);
+      if (!secret) control.value = field.value || '';
       wrapper.appendChild(control);
-      if (field.type === 'password' && field.configured) {
+      if (secret && field.configured) {
         const saved = document.createElement('span');
         saved.className = 'config-saved';
         saved.textContent = 'Saved on this device';
@@ -2776,6 +2816,11 @@ btnRefreshTasks.addEventListener('click', () => loadState());
 async function sendChatMessage() {
   const text = chatInput.value.trim();
   if (!text) return;
+  const selectedProvider = appConfig?.providers?.find(provider => provider.id === providerSelect.value);
+  if (providerSelect.value === 'local' && !selectedProvider?.configured) {
+    appendMessage('system', 'Local chat is not ready. Open Settings to finish local setup, or choose a configured provider.');
+    return;
+  }
   chatInput.value = '';
 
   appendMessage('user', text);
@@ -2924,6 +2969,14 @@ if (routeConfigClose && routeConfigDialog) {
 async function initialize() {
   await loadConfig();
   await loadState();
+  try {
+    const response = await fetch('/api/setup', { cache: 'no-store' });
+    if (response.ok) {
+      setupSnapshot = await response.json();
+      renderSetup();
+      if (appState.settings?.localSetupPrompted !== true && setupSnapshot.status !== 'ready') localSetupPrompt.showModal();
+    }
+  } catch {}
   await loadTools();
   initEventSource();
 }

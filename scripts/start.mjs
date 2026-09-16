@@ -95,14 +95,16 @@ export async function ensureLocalLLM(options = {}) {
   const env = options.env || process.env;
   const paths = stackPaths(env);
   const modelPath = paths.ling;
+  const initialUrl = env.LOCAL_LLM_URL;
+  let allocatedPort = null;
   if (options.privatePort) {
     const reservation = net.createServer();
     await new Promise((resolve, reject) => { reservation.once('error', reject); reservation.listen(0, '127.0.0.1', resolve); });
-    const port = reservation.address().port;
+    allocatedPort = reservation.address().port;
     await new Promise(resolve => reservation.close(resolve));
-    env.LOCAL_LLM_URL = `http://127.0.0.1:${port}/v1`;
   }
-  const serverUrl = new URL(env.LOCAL_LLM_URL || 'http://127.0.0.1:8081/v1');
+  const candidateUrl = allocatedPort ? `http://127.0.0.1:${allocatedPort}/v1` : (env.LOCAL_LLM_URL || 'http://127.0.0.1:8081/v1');
+  const serverUrl = new URL(candidateUrl);
   const executable = existsSync(paths.llama) ? paths.llama : env.LLAMA_SERVER_BIN || 'llama-server';
   const threads = env.LLAMA_THREADS || String(Math.max(1, Math.min(12, os.availableParallelism() - 4)));
   const contextSize = env.LLAMA_CONTEXT || '8192';
@@ -111,7 +113,6 @@ export async function ensureLocalLLM(options = {}) {
 
   if (!existsSync(modelPath)) throw new Error(`Ling model not found: ${modelPath}`);
   if (serverUrl.protocol !== 'http:' || serverUrl.username || serverUrl.password || !['127.0.0.1', 'localhost'].includes(serverUrl.hostname)) throw new Error('LOCAL_LLM_URL must use HTTP loopback without credentials');
-  env.LOCAL_LLM_URL = serverUrl.href;
 
   async function healthy() {
     try {
@@ -123,7 +124,9 @@ export async function ensureLocalLLM(options = {}) {
   }
 
   let llama = null;
+  let owned = false;
   if (!await healthy()) {
+    owned = true;
     llama = spawn(executable, [
       '-m', modelPath,
       '--host', serverUrl.hostname,
@@ -161,11 +164,17 @@ export async function ensureLocalLLM(options = {}) {
       if (!await healthy()) throw new Error('llama-server did not become healthy within 3 minutes');
     } catch (error) {
       llama.kill();
+      if (owned) {
+        if (initialUrl !== undefined) env.LOCAL_LLM_URL = initialUrl;
+        else delete env.LOCAL_LLM_URL;
+      }
       throw error;
     }
   } else {
     console.log(`Using existing llama.cpp server at ${serverUrl.origin}`);
   }
+
+  env.LOCAL_LLM_URL = serverUrl.href;
 
   async function warmVoiceLane() {
     try {
@@ -211,16 +220,27 @@ export async function ensureLocalLLM(options = {}) {
       const text = String(result.choices?.[0]?.message?.content || '').trim();
       if (!text) throw new Error('Ling returned no text');
       console.log(`Local Ling check: ${text}`);
-      return { llama, text, checked: true };
+      return { llama, text, checked: true, url: serverUrl.href };
     } finally {
       llama?.kill();
+      if (owned) {
+        if (initialUrl !== undefined) env.LOCAL_LLM_URL = initialUrl;
+        else delete env.LOCAL_LLM_URL;
+      }
     }
   }
 
   if (options.requireWarm) {
-    try { await warmVoiceLane(); } catch (error) { llama?.kill(); throw error; }
+    try { await warmVoiceLane(); } catch (error) {
+      if (owned) {
+        llama?.kill();
+        if (initialUrl !== undefined) env.LOCAL_LLM_URL = initialUrl;
+        else delete env.LOCAL_LLM_URL;
+      }
+      throw error;
+    }
   } else void warmVoiceLane();
-  return { llama, checked: false };
+  return { llama, checked: false, owned, url: serverUrl.href };
 }
 
 export async function start(options = {}) {

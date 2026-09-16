@@ -93,7 +93,7 @@ export async function startSupervisor(options = {}) {
   }
   function config() {
     const voiceMode = process.env.DEFAULT_VOICE_MODE || 'local';
-    const provider = voiceMode === 'local' ? 'local' : (process.env.DEFAULT_PROVIDER || 'local');
+    const provider = process.env.DEFAULT_PROVIDER || 'local';
     const settings = supervisor.snapshot().settings;
     const configuredModels = (process.env.COPILOT_MODELS || '').split(',').map(value => value.trim()).filter(Boolean);
     const modelIds = [...new Set(['auto', 'gpt-5.6-sol', 'gpt-5.6-luna', ...configuredModels, settings.copilotModel])];

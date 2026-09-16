@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync, utimesSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync, statSync, utimesSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -23,10 +23,11 @@ function controller(options = {}) {
 }
 
 function localFixture(context, options = {}) {
+  const { env: envOverrides = {}, ...setupOptions } = options;
   const { directory } = fixture(context);
   const commands = [];
   const children = [];
-  const env = { SUPERVISOR_CACHE_DIR: directory };
+  const env = { SUPERVISOR_CACHE_DIR: directory, ...envOverrides };
   const paths = stackPaths(env);
   const setup = createLocalSetup({
     env,
@@ -48,10 +49,10 @@ function localFixture(context, options = {}) {
       return { llama: child };
     },
     warm: async () => true,
-    ...options,
+    ...setupOptions,
   });
   context.after(() => setup.close());
-  return { setup, paths, commands, children };
+  return { setup, paths, commands, children, env };
 }
 
 const windowsSetup = { skip: process.platform !== 'win32' || process.arch !== 'x64' };
@@ -126,7 +127,39 @@ test('llama exitCode and signalCode are checked even without an observed exit ev
   }
 });
 
-test('a failed speech attempt cannot invalidate the replacement runtime with a late exit', windowsSetup, async context => {
+test('a speech warmup failure keeps the validated chat runtime alive and retry reuses it', windowsSetup, async context => {
+  let warmups = 0;
+  const { setup, children } = localFixture(context, { warm: async () => {
+    if (++warmups === 1) throw new Error('Kokoro fixture failure');
+    return true;
+  } });
+  setup.start({ consent: true });
+  const failed = await setup.settled();
+  assert.equal(failed.status, 'error');
+  assert.equal(children[0].killed, false, 'validated owned llama runtime is kept alive');
+  assert.equal(failed.capabilities.chat.ready, true, 'chat capability remains ready');
+  assert.equal(failed.capabilities.voice.ready, false, 'voice capability is not ready');
+  assert.ok(typeof failed.capabilities.chat.message === 'string' && failed.capabilities.chat.message.length > 0);
+  assert.ok(typeof failed.capabilities.voice.message === 'string' && failed.capabilities.voice.message.length > 0);
+
+  // Retry reuses downloaded and validated chat runtime without creating a new child:
+  setup.start({ consent: true });
+  const ready = await setup.settled();
+  assert.equal(ready.status, 'ready');
+  assert.equal(children.length, 1, 'reused the existing validated llama runtime');
+  assert.equal(ready.capabilities.chat.ready, true);
+  assert.equal(ready.capabilities.voice.ready, true);
+
+  // If the active runtime later exits, ready is invalidated:
+  children[0].signalCode = 'SIGTERM';
+  children[0].emit('exit', null, 'SIGTERM');
+  const stopped = setup.snapshot();
+  assert.equal(stopped.status, 'error');
+  assert.equal(stopped.capabilities.chat.ready, false);
+  assert.equal(stopped.capabilities.voice.ready, false);
+});
+
+test('a replacement runtime is started after exit and late exit from dead runtime cannot invalidate it', windowsSetup, async context => {
   let warmups = 0;
   const { setup, children } = localFixture(context, { warm: async () => {
     if (++warmups === 1) throw new Error('Kokoro fixture failure');
@@ -134,11 +167,95 @@ test('a failed speech attempt cannot invalidate the replacement runtime with a l
   } });
   setup.start({ consent: true });
   assert.equal((await setup.settled()).status, 'error');
-  assert.equal(children[0].killed, true);
+  // Explicitly simulate dead first child:
+  children[0].exitCode = 1;
+  children[0].emit('exit', 1, null);
+  assert.equal(setup.snapshot().capabilities.chat.ready, false);
+
+  // Retry starts replacement child:
   setup.start({ consent: true });
   assert.equal((await setup.settled()).status, 'ready');
+  assert.equal(children.length, 2);
+  // Late exit emitted on old dead child cannot invalidate active replacement runtime:
   children[0].emit('exit', null, 'SIGTERM');
   assert.equal(setup.snapshot().status, 'ready');
+});
+
+test('Kokoro install failure keeps validated chat runtime alive with chat ready and voice unready', windowsSetup, async context => {
+  let attempts = 0;
+  const { setup, paths, children } = localFixture(context, {
+    run: async (executable, args, options) => {
+      if (args.includes('venv')) {
+        mkdirSync(path.dirname(paths.python), { recursive: true });
+        writeFileSync(paths.python, 'fixture Python');
+      }
+      if (args.includes('pip') && args.includes('install') && ++attempts === 1) {
+        throw new Error('pip installation failed: network error');
+      }
+    },
+  });
+  setup.start({ consent: true });
+  const failed = await setup.settled();
+  assert.equal(failed.status, 'error');
+  assert.equal(children.length, 1, 'chat was activated before Kokoro install');
+  assert.equal(children[0].killed, false, 'owned llama runtime kept alive');
+  assert.equal(failed.capabilities.chat.ready, true, 'chat is ready');
+  assert.equal(failed.capabilities.voice.ready, false, 'voice is not ready');
+  assert.match(failed.capabilities.voice.message, /pip installation failed/);
+
+  // Retry reuses validated chat runtime:
+  setup.start({ consent: true });
+  const ready = await setup.settled();
+  assert.equal(ready.status, 'ready');
+  assert.equal(children.length, 1, 'reused chat runtime on retry');
+  assert.equal(ready.capabilities.chat.ready, true);
+  assert.equal(ready.capabilities.voice.ready, true);
+});
+
+test('LOCAL_LLM_URL is only published after healthy startup and cleaned up on failure', windowsSetup, async context => {
+  const { directory } = fixture(context);
+  const env = { SUPERVISOR_CACHE_DIR: directory };
+
+  // When startup fails, no stale URL is left:
+  const failingSetup = createLocalSetup({
+    env,
+    provision: async () => {},
+    activateLLM: async () => { throw new Error('startup failed'); },
+  });
+  failingSetup.start({ consent: true });
+  const failed = await failingSetup.settled();
+  assert.equal(failed.status, 'error');
+  assert.equal(env.LOCAL_LLM_URL, undefined, 'no stale URL left after failed startup');
+
+  // When external URL was pre-configured, it is preserved:
+  env.LOCAL_LLM_URL = 'http://127.0.0.1:9999/v1';
+  const externalSetup = createLocalSetup({
+    env,
+    provision: async () => {},
+    activateLLM: async () => { throw new Error('startup failed'); },
+  });
+  externalSetup.start({ consent: true });
+  await externalSetup.settled();
+  assert.equal(env.LOCAL_LLM_URL, 'http://127.0.0.1:9999/v1', 'pre-existing external URL is preserved');
+  delete env.LOCAL_LLM_URL;
+
+  // When startup succeeds, URL is published:
+  const child = Object.assign(new EventEmitter(), { exitCode: null, signalCode: null, kill() {} });
+  const succeedingSetup = createLocalSetup({
+    env,
+    provision: async () => {},
+    run: async () => {},
+    activateLLM: async () => ({ llama: child, url: 'http://127.0.0.1:4567/v1' }),
+    warm: async () => true,
+  });
+  succeedingSetup.start({ consent: true });
+  await succeedingSetup.settled();
+  assert.equal(env.LOCAL_LLM_URL, 'http://127.0.0.1:4567/v1', 'URL is published after healthy startup');
+
+  // When owned child exits, URL is removed:
+  child.signalCode = 'SIGTERM';
+  child.emit('exit', null, 'SIGTERM');
+  assert.equal(env.LOCAL_LLM_URL, undefined, 'URL cleaned up when owned runtime dies');
 });
 
 test('setup command failures retain bounded sanitized stream tails only in the local log', async context => {
@@ -205,6 +322,8 @@ test('setup requires exact consent and serializes asynchronous starts', async ()
   const gate = new Promise(resolve => { release = resolve; });
   const setup = controller({ install: async () => { installs += 1; await gate; }, activate: async () => { activations += 1; } });
   assert.equal(setup.snapshot().status, 'idle');
+  assert.equal(setup.snapshot().capabilities.chat.ready, false);
+  assert.equal(setup.snapshot().capabilities.voice.ready, false);
   for (const input of [undefined, null, {}, { consent: false }, { consent: 'true' }, { consent: true, url: 'https://evil.test' }, { consent: true, command: 'anything' }, { consent: true, path: 'C:\\' }]) assert.throws(() => setup.start(input), /consent/);
   assert.equal(installs, 0);
   assert.equal(setup.start({ consent: true }).status, 'running');
@@ -213,7 +332,10 @@ test('setup requires exact consent and serializes asynchronous starts', async ()
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(installs, 1);
   release();
-  assert.equal((await setup.settled()).status, 'ready');
+  const settled = await setup.settled();
+  assert.equal(settled.status, 'ready');
+  assert.equal(settled.capabilities.chat.ready, true);
+  assert.equal(settled.capabilities.voice.ready, true);
   assert.equal(activations, 1);
   setup.start({ consent: true });
   assert.equal(installs, 1);
@@ -473,7 +595,10 @@ test('setup API is same-origin, consent-gated and returns 202 without waiting fo
   try {
     const initial = await fetch(`${app.url}/api/setup`);
     assert.equal(initial.status, 200);
-    assert.equal((await initial.json()).status, 'idle');
+    const initialJson = await initial.json();
+    assert.equal(initialJson.status, 'idle');
+    assert.equal(initialJson.capabilities.chat.ready, false);
+    assert.equal(initialJson.capabilities.voice.ready, false);
     assert.equal(installs, 0);
     const post = body => fetch(`${app.url}/api/setup`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     assert.equal((await post({ consent: false })).status, 400);
@@ -484,6 +609,72 @@ test('setup API is same-origin, consent-gated and returns 202 without waiting fo
     assert.equal(installs, 1);
     release();
     await setup.settled();
-    assert.equal((await (await fetch(`${app.url}/api/setup`)).json()).status, 'ready');
+    const readyJson = await (await fetch(`${app.url}/api/setup`)).json();
+    assert.equal(readyJson.status, 'ready');
+    assert.equal(readyJson.capabilities.chat.ready, true);
+    assert.equal(readyJson.capabilities.voice.ready, true);
   } finally { release(); await app.close(); }
+});
+
+test('local setup accepts explicit HTTPS package mirrors and rejects insecure indexes', windowsSetup, async context => {
+  const mirrored = localFixture(context, { env: {
+    LOCAL_PYPI_INDEX_URL: 'https://packages.contoso.test/pypi/',
+    LOCAL_TORCH_INDEX_URL: 'https://packages.contoso.test/torch/',
+  } });
+  mirrored.setup.start({ consent: true });
+  assert.equal((await mirrored.setup.settled()).status, 'ready');
+  const installs = mirrored.commands.filter(command => command.args[1] === 'pip' && command.args[2] === 'install');
+  assert.equal(installs[0].args[6], 'https://packages.contoso.test/torch');
+  assert.equal(installs[1].args[6], 'https://packages.contoso.test/pypi');
+
+  const insecure = localFixture(context, { env: { LOCAL_PYPI_INDEX_URL: 'http://packages.example.test/simple' } });
+  insecure.setup.start({ consent: true });
+  const failed = await insecure.setup.settled();
+  assert.equal(failed.capabilities.chat.ready, true);
+  assert.equal(failed.capabilities.voice.ready, false);
+  assert.match(failed.error, /Python package index must use HTTPS/);
+});
+
+test('cached chat resumes after restart when Kokoro installation was incomplete', windowsSetup, async context => {
+  const fixtureSetup = localFixture(context, {
+    run: async (executable, args, options) => {
+      if (args.includes('venv')) {
+        mkdirSync(path.dirname(fixtureSetup.paths.python), { recursive: true });
+        writeFileSync(fixtureSetup.paths.python, 'fixture Python');
+      }
+      if (args.includes('pip')) throw new Error('Kokoro mirror unavailable');
+    },
+  });
+  fixtureSetup.setup.start({ consent: true });
+  const failed = await fixtureSetup.setup.settled();
+  assert.equal(failed.capabilities.chat.ready, true);
+  const completionFile = path.join(fixtureSetup.paths.home, 'local-setup.json');
+  assert.equal(existsSync(completionFile), true);
+  const completed = JSON.parse(readFileSync(completionFile, 'utf8'));
+  mkdirSync(fixtureSetup.paths.receiptDir, { recursive: true });
+  for (const asset of ASSETS.filter(candidate => ['ling', 'llama'].includes(candidate.id))) {
+    const destination = completed.paths[asset.id];
+    const stat = statSync(destination);
+    const receipt = path.join(fixtureSetup.paths.receiptDir, `${asset.id}-${createHash('sha256').update(destination).digest('hex').slice(0, 20)}.json`);
+    writeFileSync(receipt, JSON.stringify({ sourceUrl: asset.sourceUrl, files: [{ path: destination, size: stat.size, mtimeMs: stat.mtimeMs }] }));
+  }
+  await fixtureSetup.setup.close();
+  for (const key of ['LOCAL_LLM_PATH', 'MOONSHINE_MODEL', 'LLAMA_SERVER_BIN', 'CRISPASR_BIN', 'VAD_MODEL', 'PYTHON_BIN']) delete fixtureSetup.env[key];
+
+  let activations = 0;
+  const restarted = createLocalSetup({
+    env: fixtureSetup.env,
+    provision: async () => { throw new Error('Offline resume must not download'); },
+    activateLLM: async () => {
+      activations++;
+      return { llama: Object.assign(new EventEmitter(), { exitCode: null, signalCode: null, kill() {} }) };
+    },
+    warm: async () => false,
+  });
+  context.after(() => restarted.close());
+  restarted.resume();
+  const resumed = await restarted.settled();
+  assert.equal(activations, 1);
+  assert.equal(resumed.capabilities.chat.ready, true);
+  assert.equal(resumed.capabilities.voice.ready, false);
 });

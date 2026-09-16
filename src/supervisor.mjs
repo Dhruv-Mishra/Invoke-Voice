@@ -62,6 +62,7 @@ export class Supervisor extends EventEmitter {
       notifyFailed: true,
       voiceNotifications: true,
       browserNotifications: false,
+      localSetupPrompted: false,
       ...this.state.settings,
     };
     if (!BACKENDS.includes(this.state.settings.defaultBackend)) this.state.settings.defaultBackend = 'copilot';
@@ -113,7 +114,7 @@ export class Supervisor extends EventEmitter {
       if (!CONTEXTS.includes(input.copilotContext)) throw new Error('Invalid context tier');
       next.copilotContext = input.copilotContext;
     }
-    for (const key of ['notifyCompleted', 'notifyNeedsInput', 'notifyFailed', 'voiceNotifications', 'browserNotifications']) {
+    for (const key of ['notifyCompleted', 'notifyNeedsInput', 'notifyFailed', 'voiceNotifications', 'browserNotifications', 'localSetupPrompted']) {
       if (Object.hasOwn(input, key)) next[key] = input[key] === true;
     }
     this.state.settings = next;

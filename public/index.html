@@ -292,13 +292,13 @@
     .badge-danger { background: var(--cp-surface); color: var(--cp-danger); border-color: var(--cp-danger); }
     .badge-accent { background: var(--cp-accent-soft); color: var(--cp-accent); border-color: var(--cp-accent); }
 
-    input[type="text"], textarea, select {
+    input:is([type="text"], [type="url"], [type="number"], [type="password"]), textarea, select {
       min-width: 0; max-width: 100%; min-height: 40px; padding: 8px 10px; border: 1px solid var(--cp-border);
       border-radius: 6px; background: var(--cp-surface); color: var(--cp-text); font: inherit; font-size: 13px; transition: border-color 120ms ease;
     }
     textarea { resize: vertical; }
-    input[type="text"]:hover:not(:disabled), textarea:hover:not(:disabled), select:hover:not(:disabled) { border-color: var(--cp-border-strong); }
-    input[type="text"]:focus, textarea:focus, select:focus { border-color: var(--cp-accent); }
+    input:is([type="text"], [type="url"], [type="number"], [type="password"]):hover:not(:disabled), textarea:hover:not(:disabled), select:hover:not(:disabled) { border-color: var(--cp-border-strong); }
+    input:is([type="text"], [type="url"], [type="number"], [type="password"]):focus, textarea:focus, select:focus { border-color: var(--cp-accent); }
     input::placeholder, textarea::placeholder { color: var(--cp-text-soft); opacity: 1; }
     input:disabled, textarea:disabled, select:disabled { opacity: 0.6; cursor: not-allowed; }
     input[type="checkbox"], input[type="radio"] { accent-color: var(--cp-accent); flex-shrink: 0; width: 16px; height: 16px; }
@@ -458,6 +458,14 @@
   </style>
 </head>
 <body data-view="home">
+  <dialog id="local-setup-prompt" aria-labelledby="local-setup-prompt-title">
+    <div class="dialog-header"><span id="local-setup-prompt-title">Choose how to run AI</span><button type="button" class="btn btn-icon" id="local-setup-prompt-close" aria-label="Decide later" title="Decide later"><i data-lucide="x"></i></button></div>
+    <p>Local setup downloads the private chat and voice components to this device. You can also configure an existing provider.</p>
+    <div class="dialog-actions onboarding-actions">
+      <button class="btn" type="button" id="local-setup-provider"><i data-lucide="key-round"></i>Configure provider</button>
+      <button class="btn btn-accent" type="button" id="local-setup-start"><i data-lucide="hard-drive-download"></i>Set up local</button>
+    </div>
+  </dialog>
   <header class="top-bar">
     <div class="sidebar-brand"><i data-lucide="sparkles" aria-hidden="true"></i><span>Supervisor</span></div>
     <nav class="view-tabs" role="tablist" aria-label="Supervisor views">
@@ -626,6 +634,10 @@
         <p class="setup-estimate">Approximately 5-6 GB of downloads, plus Python dependencies. Allow at least 12 GB of free disk space for the persistent cache and installed runtimes; Python dependencies may require more.</p>
         <p id="setup-message" role="status" aria-live="polite">Setup status is available when Settings is open.</p>
         <p id="setup-error" role="alert" hidden></p>
+        <ul class="setup-capabilities" aria-label="Local capability readiness">
+          <li><span>Local chat</span><strong id="setup-chat-status">Not ready</strong></li>
+          <li><span>Local voice</span><strong id="setup-voice-status">Not ready</strong></li>
+        </ul>
         <div id="setup-progress-region" hidden>
           <progress id="setup-progress" aria-label="Local voice download progress"></progress>
           <p id="setup-progress-label"></p>

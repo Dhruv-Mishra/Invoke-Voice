@@ -8,7 +8,7 @@ This workspace's installer is [Voice Work Supervisor Setup](release/Voice%20Work
 
 Open the **Voice Work Supervisor Setup** executable from a trusted build. The one-click installer installs for your Windows user without administrator access. Launch **Voice Work Supervisor** from Start. The app includes its own Node runtime; you do not need Node or Python installed just to open it.
 
-Local voice is optional. In Settings, review the local setup sources and explicitly start setup. Nothing downloads when you simply open the app. Setup installs Ling, Moonshine Small Q4_K, its tokenizer, Silero VAD, CPU llama.cpp/CrispASR, and an isolated Kokoro Python environment. Keep the app open until setup finishes. Progress and retry are available in Settings. Allow several GB of downloads and at least 12 GB of free disk space; 16 GB RAM is recommended. CPU speed and available memory affect voice latency.
+Local AI is optional. On first start, choose local setup, configure a provider, or decide later. Local setup opens Settings and still requires explicit download consent; nothing downloads just by opening the app. Setup installs and configures Ling/llama.cpp chat first, followed by Moonshine, Silero VAD, CrispASR, and an isolated Kokoro Python environment. If speech setup fails, local chat remains available and voice can be retried separately. Keep the app open until setup finishes. Allow several GB of downloads and at least 12 GB of free disk space; 16 GB RAM is recommended.
 
 Files are kept under `%LOCALAPPDATA%\VoiceSupervisor`: `models`, `runtimes`, `huggingface`, `pip-cache`, and `uv-cache`. Existing configured `LocalVoiceStack` models are verified in place, not copied. Completed, verified files are reused on retry and future launches, including offline. Unfinished downloads are never reported ready. First verification of previously unrecorded models needs source metadata online. Local setup does not edit your `.env` or system Python/PATH.
 
@@ -16,7 +16,7 @@ After successful setup, local runtimes start automatically on desktop launch wit
 
 Configure provider keys, models, endpoints, defaults and local performance under **Settings > Config**. Values are stored in `%LOCALAPPDATA%\VoiceSupervisor\config.json`, excluded from the installer and never returned to the browser UI. The file contains secrets in plain text under the current Windows user profile, so do not share it or the app-data folder. Logs are in `%LOCALAPPDATA%\VoiceSupervisor\logs\desktop.log` and are replaced on launch. Cached models and user data are retained on uninstall. Remove the cache folder yourself only when the app is closed and you no longer need that data.
 
-Installation failures keep a bounded, sanitized diagnostic tail in `logs/local-setup.log` inside the cache directory. Completed downloads are retained for retry.
+Installation failures keep a bounded, sanitized diagnostic tail in `logs/local-setup.log` inside the cache directory. Completed downloads are retained for retry. The Kokoro `https://pypi.org/project/kokoro/0.9.4/` link is the genuine human-readable PyPI release page; installation uses the package index and artifact hosts, normally `pypi.org/simple`, `files.pythonhosted.org`, and `download.pytorch.org`. If policy blocks those public services, set **Python package index** and **PyTorch package index** under **Settings > Config > Local setup network** to IT-approved HTTPS mirrors. Do not disable TLS verification or bypass organizational policy.
 
 Builds are unsigned unless your distributor adds signing. Windows SmartScreen or organizational policy may warn or block them. Only run a build you trust; do not bypass organizational security policy.
 
@@ -126,7 +126,7 @@ For a repeatable full end-to-end test:
 1. On the development machine, run `npm ci`, `npm test`, then `npm run dist:win`.
 2. Transfer the generated installer to a Windows x64 test machine and launch it. The current build is unsigned, so organizational policy may block it.
 3. Open **Settings > Config**, add hosted-provider keys if needed, and save. Runtime provider changes apply to new sessions immediately. Options marked **Restart required** are persisted but apply after closing and reopening the app; no rebuild is required.
-4. Under **Settings > Local voice**, consent to the 5-6 GB download and wait for every component to become ready. The machine needs HTTPS access to GitHub, Hugging Face, PyPI, `files.pythonhosted.org`, and the PyTorch CPU index.
+4. Choose **Set up local**, consent to the 5-6 GB download, and wait for the desired capabilities to become ready. The machine needs HTTPS access to GitHub, Hugging Face, PyPI artifacts, and the PyTorch CPU index, or equivalent IT-approved mirrors configured under **Local setup network**.
 5. Allow microphone access and verify local voice, hosted voice, text chat, interruption and reconnect behavior.
 6. For coding tasks, separately install Git, VS Code and an authenticated GitHub Copilot CLI, then confirm `git --version`, `code --version` and `copilot --version` in PowerShell. Install and authenticate Agency only when testing that backend.
 7. Register a disposable repository as a work area, dispatch a task, continue it, open its worktree and verify notifications.

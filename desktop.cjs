@@ -4,6 +4,8 @@ const fs = require('node:fs');
 const { app, BrowserWindow, session, dialog, shell } = require('electron');
 const { serverLaunch, allowedExternal } = require('./scripts/desktop-launch.cjs');
 
+app.disableHardwareAcceleration();
+
 let mainWindow = null;
 let serverOrigin = null;
 let child;
@@ -40,6 +42,9 @@ function createWindow() {
     title: 'Voice Work Supervisor',
     show: false,
     autoHideMenuBar: true,
+    backgroundColor: '#f5f7f6',
+    titleBarStyle: 'hidden',
+    titleBarOverlay: { color: '#f5f7f6', symbolColor: '#202624', height: 32 },
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -61,7 +66,10 @@ function createWindow() {
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => { external(url); return { action: 'deny' }; });
   mainWindow.webContents.on('will-attach-webview', event => event.preventDefault());
-  mainWindow.webContents.on('render-process-gone', () => fail('The app window stopped unexpectedly.'));
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    try { fs.writeSync(logDescriptor, `Renderer stopped: ${details.reason}; exit code ${details.exitCode}.\n`); } catch {}
+    fail(`The app window stopped unexpectedly (${details.reason}).`);
+  });
 
   mainWindow.on('closed', () => {
     mainWindow = null;

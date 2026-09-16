@@ -11,6 +11,7 @@ export default defineConfig({
     outDir: path.resolve(root, '../dist'),
     emptyOutDir: true,
     manifest: true,
+    assetsInlineLimit: 0,
   },
   server: {
     port: 4318,

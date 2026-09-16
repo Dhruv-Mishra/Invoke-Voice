@@ -409,6 +409,24 @@
     .empty-detail { max-width: 260px; color: var(--cp-text-muted); font-size: 11px; line-height: 1.4; }
     .loading-spinner { color: var(--cp-text-muted); font-size: 12px; display: flex; align-items: center; gap: 6px; padding: 12px; }
 
+    .settings-view { min-height: 0; flex: 1; overflow-y: auto; background: var(--cp-bg); padding: 20px 24px; }
+    .settings-container { width: min(720px, 100%); margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
+    .settings-header { padding-bottom: 14px; border-bottom: 1px solid var(--cp-border); }
+    .settings-title { font-size: 16px; font-weight: 650; color: var(--cp-text); }
+    .settings-subtitle { margin-top: 4px; font-size: 12px; color: var(--cp-text-muted); }
+    .settings-form { display: flex; flex-direction: column; gap: 16px; }
+    .settings-section { background: var(--cp-surface); border: 1px solid var(--cp-border); border-radius: 8px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+    .settings-section-title { font-size: 11px; font-weight: 700; color: var(--cp-text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+    .field-hint { font-size: 11px; color: var(--cp-text-muted); margin-top: 2px; }
+    .settings-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
+    .settings-feedback { font-size: 12px; color: var(--cp-success); }
+    .settings-feedback.error { color: var(--cp-danger); }
+    .integrations-table-wrapper { overflow-x: auto; }
+    .integrations-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .integrations-table th, .integrations-table td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--cp-border); }
+    .integrations-table th { font-size: 11px; font-weight: 600; color: var(--cp-text-muted); text-transform: uppercase; letter-spacing: 0.04em; background: var(--cp-surface-soft); }
+    .integrations-table tr:last-child td { border-bottom: none; }
+
     /* Responsive Stack */
     @media (max-width: 1080px) {
       .application-body { grid-template-columns: 1fr; overflow: auto; }
@@ -419,11 +437,12 @@
 
     @media (max-width: 800px) {
       body { height: auto; min-height: 100dvh; overflow-y: auto; overflow-x: hidden; }
-      .app-main, .application-body, .tool-lab, main.center-pane, section.conversation-pane { overflow: visible; height: auto; min-height: 0; }
+      .app-main, .application-body, .tool-lab, .settings-view, main.center-pane, section.conversation-pane { overflow: visible; height: auto; min-height: 0; }
       header.top-bar { min-height: 0; padding: 8px 12px; gap: 8px; }
       .header-status { width: 100%; justify-content: flex-start; }
       .areas-disclosure .scroll-list { max-height: none; }
       .tool-list { grid-template-columns: 1fr; }
+      .settings-view { padding: 12px; }
       .voice-strip { padding: 8px 12px; gap: 8px; }
       .voice-actions { margin-left: 0; width: 100%; justify-content: flex-start; }
       .btn, .view-tab, .select-trigger, .chat-input-bar input, .toggle-control { min-height: 44px; }
@@ -455,6 +474,9 @@
       </button>
       <button class="view-tab" id="tool-lab-tab" type="button" role="tab" aria-selected="false" aria-controls="tool-lab-view" data-view="tool-lab">
         <i data-lucide="flask-conical"></i><span>Tool Lab</span>
+      </button>
+      <button class="view-tab" id="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settings-view" data-view="settings">
+        <i data-lucide="settings"></i><span>Settings</span>
       </button>
     </nav>
 
@@ -552,9 +574,95 @@
       </div>
     </div>
   </section>
+
+  <section class="settings-view" id="settings-view" role="tabpanel" aria-labelledby="settings-tab" hidden>
+    <div class="settings-container">
+      <div class="settings-header">
+        <h2 class="settings-title">Supervisor Settings</h2>
+        <p class="settings-subtitle">Manage default work area, Copilot model defaults, notification routing, and view integrations.</p>
+      </div>
+
+      <form id="settings-form" class="settings-form">
+        <section class="settings-section">
+          <h3 class="settings-section-title">General &amp; Copilot Defaults</h3>
+          <div class="form-group">
+            <label class="control-label" for="settings-default-area">Default Work Area</label>
+            <select id="settings-default-area" aria-label="Default Work Area"></select>
+            <span class="field-hint">Used automatically when a task is dispatched without specifying an area.</span>
+          </div>
+          <div class="form-group">
+            <label class="control-label" for="settings-copilot-model">Default Copilot Model</label>
+            <select id="settings-copilot-model" aria-label="Default Copilot Model"></select>
+            <span class="field-hint">Model used for Copilot CLI work dispatches by default.</span>
+          </div>
+          <div class="form-group">
+            <label class="control-label" for="settings-copilot-context">Context Tier</label>
+            <select id="settings-copilot-context" aria-label="Context Tier"></select>
+            <span class="field-hint">Short default context or long context up to 1M tokens.</span>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <h3 class="settings-section-title">Notification Scenarios</h3>
+          <span class="field-hint">Select which task events trigger notifications.</span>
+          <div class="form-row-checkbox">
+            <input type="checkbox" id="settings-notify-completed">
+            <label for="settings-notify-completed" style="cursor: pointer;">Task completed (result ready)</label>
+          </div>
+          <div class="form-row-checkbox">
+            <input type="checkbox" id="settings-notify-needs-input">
+            <label for="settings-notify-needs-input" style="cursor: pointer;">Task needs input</label>
+          </div>
+          <div class="form-row-checkbox">
+            <input type="checkbox" id="settings-notify-failed">
+            <label for="settings-notify-failed" style="cursor: pointer;">Task failed / error</label>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <h3 class="settings-section-title">Delivery Channels</h3>
+          <span class="field-hint">Choose how notifications are delivered when triggered.</span>
+          <div class="form-row-checkbox">
+            <input type="checkbox" id="settings-browser-notifications">
+            <label for="settings-browser-notifications" style="cursor: pointer;">Browser notifications (desktop toasts)</label>
+          </div>
+          <div class="form-row-checkbox">
+            <input type="checkbox" id="settings-voice-notifications">
+            <label for="settings-voice-notifications" style="cursor: pointer;">Voice notifications (spoken when idle)</label>
+          </div>
+        </section>
+
+        <div class="settings-actions">
+          <span id="settings-feedback" class="settings-feedback" role="status" aria-live="polite"></span>
+          <button type="submit" class="btn btn-accent" id="settings-save-btn">
+            <i data-lucide="save"></i>
+            <span>Save Settings</span>
+          </button>
+        </div>
+      </form>
+
+      <section class="settings-section">
+        <h3 class="settings-section-title">MCP Integrations</h3>
+        <span class="field-hint">Configured MCP tools and integrations.</span>
+        <div class="integrations-table-wrapper">
+          <table class="integrations-table" aria-label="MCP Integrations">
+            <thead>
+              <tr>
+                <th>Integration</th>
+                <th>Status</th>
+                <th>Mode</th>
+              </tr>
+            </thead>
+            <tbody id="integrations-table-body">
+              <tr><td colspan="3" class="loading-spinner">Loading integrations...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </section>
   </div>
 
-  <!-- Work Area Registration/Edit Modal -->
   <dialog id="area-dialog" aria-labelledby="area-dialog-title">
     <form id="area-form" method="dialog">
       <div class="dialog-header">
@@ -575,7 +683,15 @@
         <input type="text" id="area-aliases-input" placeholder="pdf, encryption, security">
       </div>
       <div class="form-group">
-        <label class="control-label" for="area-agent-input">Agent Mode (default: agent)</label>
+        <label class="control-label" for="area-instructions-input">Instructions</label>
+        <textarea id="area-instructions-input" rows="3" placeholder="Context or constraints for Copilot in this area..."></textarea>
+      </div>
+      <div class="form-group">
+        <label class="control-label" for="area-agent-select">Agent Choice</label>
+        <select id="area-agent-select" aria-label="Agent Choice"></select>
+      </div>
+      <div class="form-group" id="area-custom-agent-group">
+        <label class="control-label" for="area-agent-input">Agent Identifier</label>
         <input type="text" id="area-agent-input" value="agent" placeholder="agent">
       </div>
       <div class="form-group">
@@ -586,14 +702,21 @@
         <input type="checkbox" id="area-allow-publish-input">
         <label for="area-allow-publish-input" style="cursor: pointer;">Allow Publish (commits, pushes, draft PRs)</label>
       </div>
+      <div class="form-row-checkbox">
+        <input type="checkbox" id="area-default-input">
+        <label for="area-default-input" style="cursor: pointer;">Set as default work area</label>
+      </div>
       <div class="dialog-actions">
+        <button type="button" class="btn btn-danger" id="area-delete-btn" style="margin-right: auto; display: none;">
+          <i data-lucide="trash-2"></i>
+          <span>Delete Area</span>
+        </button>
         <button type="button" class="btn" id="area-cancel-btn">Cancel</button>
         <button type="submit" class="btn btn-accent" id="area-save-btn">Save Area</button>
       </div>
     </form>
   </dialog>
 
-  <!-- New Task Dispatch Dialog -->
   <dialog id="new-task-dialog" aria-labelledby="new-task-dialog-title">
     <form id="new-task-form" method="dialog">
       <div class="dialog-header">
@@ -601,25 +724,26 @@
         <button type="button" class="btn" id="task-dialog-close" aria-label="Close dialog">✕</button>
       </div>
       <div class="form-group">
-        <label class="control-label" for="task-area-select">Work Area *</label>
-        <select id="task-area-select" required aria-label="Select Work Area"></select>
+        <label class="control-label" for="task-area-select">Work Area</label>
+        <select id="task-area-select" aria-label="Select Work Area"></select>
       </div>
       <div class="form-group">
         <label class="control-label" for="task-objective-input">Objective &amp; Constraints *</label>
         <textarea id="task-objective-input" required rows="4" placeholder="Describe the goal clearly..."></textarea>
       </div>
-      <details class="advanced-disclosure">
-        <summary>Advanced</summary>
+      <details class="advanced-disclosure" open>
+        <summary>Advanced Options</summary>
         <div class="form-group">
-          <label class="control-label" for="task-model-input">Copilot Model</label>
-          <input type="text" id="task-model-input" value="gpt-5.6-sol" placeholder="gpt-5.6-sol">
+          <label class="control-label" for="task-model-select">Copilot Model</label>
+          <select id="task-model-select" aria-label="Copilot Model"></select>
         </div>
         <div class="form-group">
           <label class="control-label" for="task-context-select">Context</label>
-          <select id="task-context-select">
-            <option value="default">Default</option>
-            <option value="long_context" selected>Long context</option>
-          </select>
+          <select id="task-context-select" aria-label="Copilot Context"></select>
+        </div>
+        <div class="form-group">
+          <label class="control-label" for="task-agent-select">Agent</label>
+          <select id="task-agent-select" aria-label="Agent"></select>
         </div>
       </details>
       <div class="dialog-actions">
@@ -629,7 +753,6 @@
     </form>
   </dialog>
 
-  <!-- Task Detail & Observations Modal -->
   <dialog id="task-detail-dialog" aria-labelledby="detail-dialog-title">
     <div class="dialog-header">
       <span id="detail-dialog-title">Task Details</span>
@@ -637,6 +760,10 @@
     </div>
     <div id="detail-content" class="detail-content"></div>
     <div class="dialog-actions">
+      <button type="button" class="btn btn-danger" id="detail-delete-task-btn" style="display: none; margin-right: auto;">
+        <i data-lucide="trash-2"></i>
+        <span>Delete Task</span>
+      </button>
       <button type="button" class="btn btn-accent" id="detail-open-worktree-btn" style="display: none;">
         <i data-lucide="external-link"></i>
         <span>Open Worktree</span>

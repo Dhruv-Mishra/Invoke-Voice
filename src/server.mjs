@@ -34,7 +34,17 @@ async function body(request) {
 function config() {
   const voiceMode = process.env.DEFAULT_VOICE_MODE || 'local';
   const provider = voiceMode === 'local' ? 'local' : (process.env.DEFAULT_PROVIDER || 'local');
-  return { defaults: { provider, voiceMode, copilotModel: process.env.COPILOT_MODEL || 'gpt-5.6-sol', copilotContext: process.env.COPILOT_CONTEXT || 'long_context' }, providers: providerProfiles(), voiceModes: [
+  const settings = supervisor.snapshot().settings;
+  const configuredModels = (process.env.COPILOT_MODELS || '').split(',').map(value => value.trim()).filter(Boolean);
+  const modelIds = [...new Set(['auto', 'gpt-5.6-sol', 'gpt-5.6-luna', ...configuredModels, settings.copilotModel])];
+  return { defaults: { provider, voiceMode, copilotModel: settings.copilotModel, copilotContext: settings.copilotContext }, copilotModels: modelIds.map(id => ({ id, label: id === 'auto' ? 'Auto' : id === 'gpt-5.6-sol' ? 'GPT-5.6 Sol' : id === 'gpt-5.6-luna' ? 'GPT-5.6 Luna' : id })), copilotContexts: [
+    { id: 'default', label: 'Short (default)' },
+    { id: 'long_context', label: 'Long (up to 1M tokens)' },
+  ], integrations: [
+    { id: 'azure-devops', label: 'Azure DevOps MCP', status: 'planned', mode: 'read-only first' },
+    { id: 'teams', label: 'Teams MCP', status: 'planned', mode: 'confirm sends' },
+    { id: 'zvec-grep', label: 'zvec-grep MCP', status: 'workspace_configured', mode: 'search_only' },
+  ], providers: providerProfiles(), voiceModes: [
     { id: 'gemini-live', label: 'Gemini Live', configured: Boolean(process.env.GEMINI_API_KEY), model: process.env.GEMINI_LIVE_MODEL || 'gemini-3.1-flash-live-preview' },
     { id: 'openai-realtime', label: 'OpenAI Realtime', configured: Boolean(process.env.OPENAI_API_KEY), model: process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime' },
     { id: 'local', label: 'Moonshine + Ling + Kokoro', configured: localConfiguration().configured },
@@ -51,6 +61,8 @@ const server = http.createServer(async (request, response) => {
     if (request.method === 'GET' && url.pathname === '/api/config') return json(response, 200, config());
     if (request.method === 'GET' && url.pathname === '/api/state') return json(response, 200, supervisor.snapshot());
     if (request.method === 'GET' && url.pathname === '/api/tools') return json(response, 200, tools);
+    const areaAgents = url.pathname.match(/^\/api\/areas\/([^/]+)\/agents$/);
+    if (request.method === 'GET' && areaAgents) return json(response, 200, supervisor.listAgents(decodeURIComponent(areaAgents[1])));
     if (request.method === 'GET' && url.pathname === '/api/events') {
       response.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
       clients.add(response);
@@ -59,6 +71,7 @@ const server = http.createServer(async (request, response) => {
       return;
     }
     if (request.method === 'POST' && url.pathname === '/api/areas') return json(response, 200, await supervisor.registerArea(await body(request)));
+    if (request.method === 'POST' && url.pathname === '/api/settings') return json(response, 200, supervisor.updateSettings(await body(request)));
     if (request.method === 'POST' && url.pathname === '/api/tools') {
       const input = await body(request);
       return json(response, 200, await supervisor.callTool(input.name, input.args, { requestId: input.requestId }));
@@ -74,6 +87,10 @@ const server = http.createServer(async (request, response) => {
       response.end();
       return;
     }
+    const taskDelete = url.pathname.match(/^\/api\/tasks\/([^/]+)$/);
+    if (request.method === 'DELETE' && taskDelete) return json(response, 200, supervisor.deleteTask(decodeURIComponent(taskDelete[1])));
+    const areaDelete = url.pathname.match(/^\/api\/areas\/([^/]+)$/);
+    if (request.method === 'DELETE' && areaDelete) return json(response, 200, supervisor.deleteArea(decodeURIComponent(areaDelete[1])));
     if (request.method !== 'GET') return json(response, 404, { error: 'Not found' });
     const files = { '/': 'index.html', '/index.html': 'index.html', '/app.js': 'app.js', '/capture-worklet.js': 'capture-worklet.js' };
     const vendorFiles = {

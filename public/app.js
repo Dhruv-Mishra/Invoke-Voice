@@ -70,9 +70,14 @@ const areaIdInput = document.getElementById('area-id-input');
 const areaNameInput = document.getElementById('area-name-input');
 const areaRepoInput = document.getElementById('area-repo-input');
 const areaAliasesInput = document.getElementById('area-aliases-input');
+const areaInstructionsInput = document.getElementById('area-instructions-input');
+const areaAgentSelect = document.getElementById('area-agent-select');
+const areaCustomAgentGroup = document.getElementById('area-custom-agent-group');
 const areaAgentInput = document.getElementById('area-agent-input');
 const areaBaseRefInput = document.getElementById('area-base-ref-input');
 const areaAllowPublishInput = document.getElementById('area-allow-publish-input');
+const areaDefaultInput = document.getElementById('area-default-input');
+const areaDeleteBtn = document.getElementById('area-delete-btn');
 const areaCancelBtn = document.getElementById('area-cancel-btn');
 const areaDialogClose = document.getElementById('area-dialog-close');
 
@@ -83,16 +88,32 @@ const newTaskDialog = document.getElementById('new-task-dialog');
 const newTaskForm = document.getElementById('new-task-form');
 const taskAreaSelect = document.getElementById('task-area-select');
 const taskObjectiveInput = document.getElementById('task-objective-input');
-const taskModelInput = document.getElementById('task-model-input');
+const taskModelSelect = document.getElementById('task-model-select');
 const taskContextSelect = document.getElementById('task-context-select');
+const taskAgentSelect = document.getElementById('task-agent-select');
 const taskCancelBtn = document.getElementById('task-cancel-btn');
 const taskDialogClose = document.getElementById('task-dialog-close');
 
 const taskDetailDialog = document.getElementById('task-detail-dialog');
 const detailContent = document.getElementById('detail-content');
+const detailDeleteTaskBtn = document.getElementById('detail-delete-task-btn');
 const detailCloseBtn = document.getElementById('detail-close-btn');
 const detailDialogClose = document.getElementById('detail-dialog-close');
 const detailOpenWorktreeBtn = document.getElementById('detail-open-worktree-btn');
+
+const settingsView = document.getElementById('settings-view');
+const settingsForm = document.getElementById('settings-form');
+const settingsDefaultArea = document.getElementById('settings-default-area');
+const settingsCopilotModel = document.getElementById('settings-copilot-model');
+const settingsCopilotContext = document.getElementById('settings-copilot-context');
+const settingsNotifyCompleted = document.getElementById('settings-notify-completed');
+const settingsNotifyNeedsInput = document.getElementById('settings-notify-needs-input');
+const settingsNotifyFailed = document.getElementById('settings-notify-failed');
+const settingsVoiceNotifications = document.getElementById('settings-voice-notifications');
+const settingsBrowserNotifications = document.getElementById('settings-browser-notifications');
+const settingsSaveBtn = document.getElementById('settings-save-btn');
+const settingsFeedback = document.getElementById('settings-feedback');
+const integrationsTableBody = document.getElementById('integrations-table-body');
 
 const chatMessages = document.getElementById('chat-messages');
 const partialTranscript = document.getElementById('partial-transcript');
@@ -166,6 +187,7 @@ function enhanceSelect(select) {
       menu.appendChild(item);
     }
   };
+  select.refreshEnhanced = sync;
 
   trigger.addEventListener('click', () => {
     const opening = !shell.classList.contains('open');
@@ -194,6 +216,10 @@ function enhanceSelect(select) {
   select.addEventListener('change', sync);
   new MutationObserver(sync).observe(select, { childList: true, subtree: true, attributes: true });
   sync();
+}
+
+function refreshSelect(select) {
+  select?.refreshEnhanced?.();
 }
 
 document.querySelectorAll('select').forEach(enhanceSelect);
@@ -244,11 +270,13 @@ function renderSafeMarkdown(target, text) {
 }
 
 function applyState(state) {
-  appState = state && typeof state === 'object' ? state : { areas: [], tasks: [] };
+  appState = state && typeof state === 'object' ? state : { areas: [], tasks: [], settings: {} };
   if (!Array.isArray(appState.areas)) appState.areas = [];
   if (!Array.isArray(appState.tasks)) appState.tasks = [];
+  if (!appState.settings || typeof appState.settings !== 'object') appState.settings = {};
   renderAreas();
   renderTasks();
+  populateSettingsView();
   updateIcons();
 }
 
@@ -261,14 +289,18 @@ function updateIcons() {
 updateIcons();
 
 function activateView(viewName) {
-  const isToolLab = viewName === 'tool-lab';
-  workspaceView.hidden = isToolLab;
-  toolLabView.hidden = !isToolLab;
+  workspaceView.hidden = viewName !== 'workspace';
+  toolLabView.hidden = viewName !== 'tool-lab';
+  if (settingsView) settingsView.hidden = viewName !== 'settings';
   for (const tab of viewTabs) {
     const selected = tab.dataset.view === viewName;
     tab.setAttribute('aria-selected', String(selected));
     tab.tabIndex = selected ? 0 : -1;
   }
+  if (viewName === 'settings') {
+    populateSettingsView();
+  }
+  updateIcons();
 }
 
 viewTabs.forEach((tab, index) => {
@@ -908,10 +940,40 @@ function initEventSource() {
   };
 }
 
+function isNotificationScenarioEnabled(state) {
+  const settings = appState?.settings || {};
+  if (state === 'completed' || state === 'result_ready') {
+    return settings.notifyCompleted !== false;
+  }
+  if (state === 'needs_input') {
+    return settings.notifyNeedsInput !== false;
+  }
+  if (state === 'failed' || state === 'agent_failed') {
+    return settings.notifyFailed !== false;
+  }
+  return true;
+}
+
 function handleNotification(n) {
-  const text = `[Notification] ${n.title}: ${n.text || n.state}`;
-  appendMessage('system', text);
-  if (!isQuietMode && isServerReady) pendingNotifications.push(`${n.title}: ${n.text || n.state}`);
+  if (!n) return;
+  const settings = appState?.settings || {};
+
+  if (isNotificationScenarioEnabled(n.state)) {
+    const text = `[Notification] ${n.title}: ${n.text || n.state}`;
+    appendMessage('system', text);
+  }
+
+  if (settings.browserNotifications && isNotificationScenarioEnabled(n.state) && typeof window.Notification !== 'undefined' && Notification.permission === 'granted') {
+    try {
+      new Notification(n.title || 'Voice Supervisor', {
+        body: n.text || n.state || 'Task update'
+      });
+    } catch (_) {}
+  }
+
+  if (settings.voiceNotifications !== false && isNotificationScenarioEnabled(n.state) && !isQuietMode && isServerReady) {
+    pendingNotifications.push(`${n.title}: ${n.text || n.state}`);
+  }
 }
 
 setInterval(() => {
@@ -920,6 +982,166 @@ setInterval(() => {
   isVoiceThinking = true;
   voiceSocket.send(JSON.stringify({ type: 'notify', text: pendingNotifications.shift() }));
 }, 750);
+
+function populateSettingsOptions() {
+  if (!appConfig || !settingsCopilotModel || !settingsCopilotContext) return;
+  settingsCopilotModel.replaceChildren();
+  (appConfig.copilotModels || []).forEach(m => {
+    const opt = document.createElement('option');
+    opt.value = m.id;
+    opt.textContent = m.label || m.id;
+    settingsCopilotModel.appendChild(opt);
+  });
+
+  settingsCopilotContext.replaceChildren();
+  (appConfig.copilotContexts || []).forEach(c => {
+    const opt = document.createElement('option');
+    opt.value = c.id;
+    opt.textContent = c.label || c.id;
+    settingsCopilotContext.appendChild(opt);
+  });
+}
+
+function populateIntegrationsTable() {
+  if (!appConfig || !integrationsTableBody) return;
+  integrationsTableBody.replaceChildren();
+  const list = appConfig.integrations || [];
+  if (list.length === 0) {
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 3;
+    td.className = 'empty-detail';
+    td.textContent = 'No integrations reported.';
+    tr.appendChild(td);
+    integrationsTableBody.appendChild(tr);
+    return;
+  }
+  list.forEach(item => {
+    const tr = document.createElement('tr');
+
+    const tdName = document.createElement('td');
+    tdName.textContent = item.label || item.id;
+
+    const tdStatus = document.createElement('td');
+    const statusBadge = document.createElement('span');
+    const isOk = ['configured', 'workspace_configured'].includes(item.status);
+    statusBadge.className = `badge ${isOk ? 'badge-success' : 'badge-warning'}`;
+    statusBadge.textContent = item.status || 'unknown';
+    tdStatus.appendChild(statusBadge);
+
+    const tdMode = document.createElement('td');
+    const modeBadge = document.createElement('span');
+    modeBadge.className = 'badge';
+    modeBadge.textContent = item.mode || 'read_only';
+    tdMode.appendChild(modeBadge);
+
+    tr.append(tdName, tdStatus, tdMode);
+    integrationsTableBody.appendChild(tr);
+  });
+}
+
+function populateSettingsView() {
+  if (!settingsDefaultArea) return;
+  settingsDefaultArea.replaceChildren();
+  const emptyOpt = document.createElement('option');
+  emptyOpt.value = '';
+  emptyOpt.textContent = '(No default area)';
+  settingsDefaultArea.appendChild(emptyOpt);
+
+  (appState.areas || []).forEach(area => {
+    const opt = document.createElement('option');
+    opt.value = area.id;
+    opt.textContent = area.name;
+    settingsDefaultArea.appendChild(opt);
+  });
+
+  settingsDefaultArea.value = appState.settings?.defaultAreaId || '';
+
+  if (appConfig) {
+    if (settingsCopilotModel.options.length === 0) populateSettingsOptions();
+    if (appState.settings?.copilotModel) {
+      settingsCopilotModel.value = appState.settings.copilotModel;
+    } else if (appConfig.defaults?.copilotModel) {
+      settingsCopilotModel.value = appConfig.defaults.copilotModel;
+    }
+
+    if (appState.settings?.copilotContext) {
+      settingsCopilotContext.value = appState.settings.copilotContext;
+    } else if (appConfig.defaults?.copilotContext) {
+      settingsCopilotContext.value = appConfig.defaults.copilotContext;
+    }
+  }
+  refreshSelect(settingsDefaultArea);
+  refreshSelect(settingsCopilotModel);
+  refreshSelect(settingsCopilotContext);
+
+  const s = appState.settings || {};
+  if (settingsNotifyCompleted) settingsNotifyCompleted.checked = s.notifyCompleted !== false;
+  if (settingsNotifyNeedsInput) settingsNotifyNeedsInput.checked = s.notifyNeedsInput !== false;
+  if (settingsNotifyFailed) settingsNotifyFailed.checked = s.notifyFailed !== false;
+  if (settingsVoiceNotifications) settingsVoiceNotifications.checked = s.voiceNotifications !== false;
+  if (settingsBrowserNotifications) settingsBrowserNotifications.checked = s.browserNotifications !== false;
+
+  populateIntegrationsTable();
+}
+
+if (settingsForm) {
+  settingsForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (settingsFeedback) {
+      settingsFeedback.textContent = '';
+      settingsFeedback.className = 'settings-feedback';
+    }
+
+    const defaultAreaId = settingsDefaultArea.value || null;
+    const copilotModel = settingsCopilotModel.value;
+    const copilotContext = settingsCopilotContext.value;
+    const notifyCompleted = settingsNotifyCompleted.checked;
+    const notifyNeedsInput = settingsNotifyNeedsInput.checked;
+    const notifyFailed = settingsNotifyFailed.checked;
+    const voiceNotifications = settingsVoiceNotifications.checked;
+    const browserNotifications = settingsBrowserNotifications.checked;
+
+    if (browserNotifications && typeof window.Notification !== 'undefined' && Notification.permission === 'default') {
+      try {
+        await Notification.requestPermission();
+      } catch (_) {}
+    }
+    const browserAllowed = browserNotifications && typeof window.Notification !== 'undefined' && Notification.permission === 'granted';
+
+    try {
+      const res = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          defaultAreaId,
+          copilotModel,
+          copilotContext,
+          notifyCompleted,
+          notifyNeedsInput,
+          notifyFailed,
+          voiceNotifications,
+          browserNotifications: browserAllowed
+        })
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        throw new Error(err.error || `HTTP ${res.status}`);
+      }
+      const updated = await res.json();
+      appState.settings = updated;
+      if (settingsFeedback) {
+        settingsFeedback.textContent = browserNotifications && !browserAllowed ? 'Settings saved; browser notifications were not permitted.' : 'Settings saved.';
+      }
+      await loadState();
+    } catch (err) {
+      if (settingsFeedback) {
+        settingsFeedback.textContent = `Error: ${err.message}`;
+        settingsFeedback.className = 'settings-feedback error';
+      }
+    }
+  });
+}
 
 // REST: Config and State Loading
 async function loadConfig() {
@@ -937,6 +1159,7 @@ async function loadConfig() {
     });
     if (appConfig.defaults?.provider) {
       providerSelect.value = appConfig.defaults.provider;
+      refreshSelect(providerSelect);
     }
 
     voiceModeSelect.replaceChildren();
@@ -949,6 +1172,7 @@ async function loadConfig() {
     });
     if (appConfig.defaults?.voiceMode) {
       voiceModeSelect.value = appConfig.defaults.voiceMode;
+      refreshSelect(voiceModeSelect);
     }
 
     const currentProv = appConfig.providers?.find(p => p.id === providerSelect.value);
@@ -956,6 +1180,9 @@ async function loadConfig() {
       modelInput.value = currentProv.model;
     }
 
+    populateSettingsOptions();
+    populateTaskModalOptions();
+    populateIntegrationsTable();
     updateRouteReadiness();
   } catch (err) {
     routeStatusBadge.textContent = 'Config Error';
@@ -977,10 +1204,30 @@ async function loadState() {
   }
 }
 
+function populateTaskAreaChoices() {
+  taskAreaSelect.replaceChildren();
+  const defaultId = appState.settings?.defaultAreaId;
+  const defaultArea = appState.areas?.find(a => a.id === defaultId);
+
+  if (defaultArea) {
+    const defaultOpt = document.createElement('option');
+    defaultOpt.value = '';
+    defaultOpt.textContent = `Use default area (${defaultArea.name})`;
+    taskAreaSelect.appendChild(defaultOpt);
+  }
+
+  (appState.areas || []).forEach(area => {
+    const opt = document.createElement('option');
+    opt.value = area.id;
+    opt.textContent = `${area.name}${area.id === defaultId ? ' (default)' : ''}`;
+    taskAreaSelect.appendChild(opt);
+  });
+}
+
 // Render Work Areas
 function renderAreas() {
   areasList.replaceChildren();
-  taskAreaSelect.replaceChildren();
+  populateTaskAreaChoices();
   if (areasDisclosure && (!appState.areas || appState.areas.length === 0)) areasDisclosure.open = true;
 
   if (!appState.areas || appState.areas.length === 0) {
@@ -1000,13 +1247,6 @@ function renderAreas() {
   }
 
   appState.areas.forEach(area => {
-    // Select option for new tasks
-    const opt = document.createElement('option');
-    opt.value = area.id;
-    opt.textContent = area.name;
-    taskAreaSelect.appendChild(opt);
-
-    // Sidebar item
     const row = document.createElement('article');
     row.className = 'item-row';
     row.setAttribute('aria-label', `Work area ${area.name}`);
@@ -1032,6 +1272,13 @@ function renderAreas() {
     const meta = document.createElement('div');
     meta.className = 'item-meta';
 
+    if (appState.settings?.defaultAreaId === area.id) {
+      const defBadge = document.createElement('span');
+      defBadge.className = 'badge badge-accent';
+      defBadge.textContent = 'Default';
+      meta.appendChild(defBadge);
+    }
+
     const pathSpan = document.createElement('span');
     pathSpan.className = 'mono';
     pathSpan.textContent = area.repoPath;
@@ -1046,6 +1293,12 @@ function renderAreas() {
     const agentSpan = document.createElement('span');
     agentSpan.textContent = `[${area.agent || 'agent'} @ ${area.baseRef || 'HEAD'}]`;
     meta.appendChild(agentSpan);
+
+    if (area.instructions) {
+      const instSpan = document.createElement('span');
+      instSpan.textContent = `Instructions: ${area.instructions.slice(0, 30)}${area.instructions.length > 30 ? '...' : ''}`;
+      meta.appendChild(instSpan);
+    }
 
     if (area.allowPublish) {
       const pubBadge = document.createElement('span');
@@ -1071,37 +1324,136 @@ function renderAreas() {
   });
 }
 
-function openAreaModal(area = null) {
+async function openAreaModal(area = null) {
+  if (areaAgentSelect) {
+    areaAgentSelect.replaceChildren();
+    const defaultAgentOpt = document.createElement('option');
+    defaultAgentOpt.value = 'agent';
+    defaultAgentOpt.textContent = 'Default agent (agent)';
+    areaAgentSelect.appendChild(defaultAgentOpt);
+  }
+
   if (area) {
     areaDialogTitle.textContent = 'Edit Work Area';
     areaIdInput.value = area.id;
     areaNameInput.value = area.name;
     areaRepoInput.value = area.repoPath;
     areaAliasesInput.value = (area.aliases || []).join(', ');
+    if (areaInstructionsInput) areaInstructionsInput.value = area.instructions || '';
     areaAgentInput.value = area.agent || 'agent';
     areaBaseRefInput.value = area.baseRef || 'HEAD';
     areaAllowPublishInput.checked = Boolean(area.allowPublish);
+    if (areaDefaultInput) areaDefaultInput.checked = Boolean(appState.settings?.defaultAreaId === area.id);
+    if (areaDeleteBtn) areaDeleteBtn.style.display = 'inline-flex';
+
+    try {
+      const res = await fetch(`/api/areas/${encodeURIComponent(area.id)}/agents`);
+      if (res.ok) {
+        const agents = await res.json();
+        for (const ag of agents) {
+          if (ag.id === 'agent') continue;
+          const opt = document.createElement('option');
+          opt.value = ag.id;
+          opt.textContent = `${ag.name}${ag.id !== ag.name ? ` (${ag.id})` : ''}${ag.model ? ` [${ag.model}]` : ''}`;
+          areaAgentSelect.appendChild(opt);
+        }
+      }
+    } catch (_) {}
+
+    const customOpt = document.createElement('option');
+    customOpt.value = '__custom__';
+    customOpt.textContent = 'Custom agent identifier...';
+    areaAgentSelect.appendChild(customOpt);
+
+    const currentAgent = area.agent || 'agent';
+    const hasAgentOpt = [...areaAgentSelect.options].some(o => o.value === currentAgent);
+    if (hasAgentOpt) {
+      areaAgentSelect.value = currentAgent;
+      if (areaCustomAgentGroup) areaCustomAgentGroup.style.display = 'none';
+    } else {
+      areaAgentSelect.value = '__custom__';
+      if (areaCustomAgentGroup) areaCustomAgentGroup.style.display = 'flex';
+      areaAgentInput.value = currentAgent;
+    }
+    refreshSelect(areaAgentSelect);
   } else {
     areaDialogTitle.textContent = 'Register Work Area';
     areaIdInput.value = '';
     areaNameInput.value = '';
     areaRepoInput.value = '';
     areaAliasesInput.value = '';
+    if (areaInstructionsInput) areaInstructionsInput.value = '';
     areaAgentInput.value = 'agent';
     areaBaseRefInput.value = 'HEAD';
     areaAllowPublishInput.checked = false;
+    if (areaDefaultInput) areaDefaultInput.checked = false;
+    if (areaDeleteBtn) areaDeleteBtn.style.display = 'none';
+
+    if (areaAgentSelect) {
+      const customOpt = document.createElement('option');
+      customOpt.value = '__custom__';
+      customOpt.textContent = 'Custom agent identifier...';
+      areaAgentSelect.appendChild(customOpt);
+
+      areaAgentSelect.value = 'agent';
+      if (areaCustomAgentGroup) areaCustomAgentGroup.style.display = 'none';
+    }
+    refreshSelect(areaAgentSelect);
   }
   areaDialog.showModal();
+  updateIcons();
+}
+
+if (areaAgentSelect) {
+  areaAgentSelect.addEventListener('change', () => {
+    if (areaAgentSelect.value === '__custom__') {
+      if (areaCustomAgentGroup) areaCustomAgentGroup.style.display = 'flex';
+      areaAgentInput.focus();
+    } else {
+      if (areaCustomAgentGroup) areaCustomAgentGroup.style.display = 'none';
+      areaAgentInput.value = areaAgentSelect.value;
+    }
+  });
+}
+
+if (areaDeleteBtn) {
+  areaDeleteBtn.addEventListener('click', async () => {
+    const areaId = areaIdInput.value;
+    if (!areaId) return;
+    const name = areaNameInput.value || 'this work area';
+    if (!confirm(`Delete work area "${name}"?`)) return;
+
+    try {
+      const res = await fetch(`/api/areas/${encodeURIComponent(areaId)}`, {
+        method: 'DELETE'
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        throw new Error(err.error || `HTTP ${res.status}`);
+      }
+      areaDialog.close();
+      await loadState();
+    } catch (err) {
+      alert(`Failed to delete area: ${err.message}`);
+    }
+  });
 }
 
 areaForm.addEventListener('submit', async (e) => {
   e.preventDefault();
+  const selectedAgent = areaAgentSelect?.value === '__custom__'
+    ? areaAgentInput.value.trim()
+    : (areaAgentSelect?.value || areaAgentInput.value.trim());
+  const agent = selectedAgent || 'agent';
+  const instructions = areaInstructionsInput ? areaInstructionsInput.value.trim() : '';
+
   const areaData = {
     name: areaNameInput.value.trim(),
     repoPath: areaRepoInput.value.trim(),
     aliases: areaAliasesInput.value.split(',').map(s => s.trim()).filter(Boolean),
-    agent: areaAgentInput.value.trim() || 'agent',
+    agent,
     baseRef: areaBaseRefInput.value.trim() || 'HEAD',
+    instructions,
     allowPublish: areaAllowPublishInput.checked
   };
   if (areaIdInput.value) {
@@ -1118,6 +1470,28 @@ areaForm.addEventListener('submit', async (e) => {
       const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
       throw new Error(err.error || `HTTP ${res.status}`);
     }
+    const savedArea = await res.json();
+
+    if (areaDefaultInput) {
+      const isDefault = areaDefaultInput.checked;
+      const currentDefault = appState.settings?.defaultAreaId;
+      if (isDefault && currentDefault !== savedArea.id) {
+        const settingsResponse = await fetch('/api/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ defaultAreaId: savedArea.id })
+        });
+        if (!settingsResponse.ok) throw new Error((await settingsResponse.json().catch(() => ({}))).error || `HTTP ${settingsResponse.status}`);
+      } else if (!isDefault && currentDefault === savedArea.id) {
+        const settingsResponse = await fetch('/api/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ defaultAreaId: null })
+        });
+        if (!settingsResponse.ok) throw new Error((await settingsResponse.json().catch(() => ({}))).error || `HTTP ${settingsResponse.status}`);
+      }
+    }
+
     areaDialog.close();
     await loadState();
   } catch (err) {
@@ -1128,6 +1502,28 @@ areaForm.addEventListener('submit', async (e) => {
 btnNewArea.addEventListener('click', () => openAreaModal(null));
 areaCancelBtn.addEventListener('click', () => areaDialog.close());
 areaDialogClose.addEventListener('click', () => areaDialog.close());
+
+const TERMINAL_STATES = new Set(['completed', 'result_ready', 'failed', 'agent_failed', 'agent_stopped']);
+function isTaskFinished(task) {
+  return TERMINAL_STATES.has(task?.state);
+}
+
+async function deleteTask(taskId, taskTitle = 'task') {
+  if (!confirm(`Delete finished task "${taskTitle}"?`)) return;
+  try {
+    const res = await fetch(`/api/tasks/${encodeURIComponent(taskId)}`, {
+      method: 'DELETE'
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    if (taskDetailDialog?.open) taskDetailDialog.close();
+    await loadState();
+  } catch (err) {
+    alert(`Failed to delete task: ${err.message}`);
+  }
+}
 
 // Render Tasks
 function renderTasks() {
@@ -1215,6 +1611,22 @@ function renderTasks() {
         openWorktree(task.id);
       });
       actions.appendChild(openBtn);
+    }
+
+    if (isTaskFinished(task)) {
+      const deleteBtn = document.createElement('button');
+      deleteBtn.className = 'btn btn-danger';
+      deleteBtn.type = 'button';
+      deleteBtn.title = 'Delete Finished Task';
+      deleteBtn.setAttribute('aria-label', `Delete ${task.title || 'task'}`);
+      const deleteIcon = document.createElement('i');
+      deleteIcon.setAttribute('data-lucide', 'trash-2');
+      deleteBtn.appendChild(deleteIcon);
+      deleteBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        await deleteTask(task.id, task.title);
+      });
+      actions.appendChild(deleteBtn);
     }
 
     header.appendChild(actions);
@@ -1371,6 +1783,17 @@ function showTaskDetail(task) {
     detailContent.appendChild(obsList);
   }
 
+  if (detailDeleteTaskBtn) {
+    if (isTaskFinished(task)) {
+      detailDeleteTaskBtn.style.display = 'inline-flex';
+      detailDeleteTaskBtn.onclick = async () => {
+        await deleteTask(task.id, task.title);
+      };
+    } else {
+      detailDeleteTaskBtn.style.display = 'none';
+    }
+  }
+
   if (task.worktree) {
     detailOpenWorktreeBtn.style.display = 'inline-flex';
     detailOpenWorktreeBtn.onclick = () => openWorktree(task.id);
@@ -1396,7 +1819,7 @@ async function callSupervisorTool(name, args = {}, requestId = crypto.randomUUID
   return result;
 }
 
-const actionTools = new Set(['start_work', 'open_work', 'invoke_vscode']);
+const actionTools = new Set(['start_work', 'open_work', 'delete_work', 'invoke_vscode']);
 
 function toolLabel(name) {
   return name.replaceAll('_', ' ').replace(/\b\w/g, character => character.toUpperCase());
@@ -1427,9 +1850,11 @@ function createToolField(propertyName, schema, required) {
   let control;
   if (propertyName === 'areaId' && appState.areas.length) {
     control = document.createElement('select');
+    if (!required) addToolChoice(control, '', 'Not set');
     for (const area of appState.areas) addToolChoice(control, area.id, `${area.name} / ${area.id.slice(0, 8)}`);
   } else if (propertyName === 'taskId' && appState.tasks.length) {
     control = document.createElement('select');
+    if (!required) addToolChoice(control, '', 'Not set');
     for (const task of [...appState.tasks].reverse()) addToolChoice(control, task.id, `${task.title} / ${task.state}`);
   } else if (schema.enum) {
     control = document.createElement('select');
@@ -1464,7 +1889,7 @@ function selectToolDefinition(definition) {
   toolKindBadge.className = actionTools.has(name) ? 'badge badge-warning' : 'badge badge-success';
   toolRunStatus.textContent = 'Idle';
   toolRunStatus.className = 'badge';
-  toolResult.textContent = JSON.stringify({ name, args: {} }, null, 2);
+  toolResult.textContent = 'Ready';
   for (const shell of selectShells) if (toolForm.contains(shell)) selectShells.delete(shell);
   toolForm.replaceChildren();
 
@@ -1550,17 +1975,17 @@ toolForm.addEventListener('submit', async event => {
   submit.disabled = true;
   toolRunStatus.textContent = 'Running';
   toolRunStatus.className = 'badge badge-warning';
-  toolResult.textContent = JSON.stringify({ request: { name, args, requestId } }, null, 2);
+  toolResult.textContent = `${name} running...`;
   try {
     const result = await callSupervisorTool(name, args, requestId);
     toolRunStatus.textContent = `${Math.round(performance.now() - startedAt)} ms`;
     toolRunStatus.className = 'badge badge-success';
-    toolResult.textContent = JSON.stringify({ request: { name, args, requestId }, result }, null, 2);
+    toolResult.textContent = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
     if (name === 'start_work') await loadState();
   } catch (error) {
     toolRunStatus.textContent = 'Failed';
     toolRunStatus.className = 'badge badge-danger';
-    toolResult.textContent = JSON.stringify({ request: { name, args, requestId }, error: error.message }, null, 2);
+    toolResult.textContent = error.message;
   } finally {
     submit.disabled = false;
   }
@@ -1568,8 +1993,8 @@ toolForm.addEventListener('submit', async event => {
 
 async function openWorktree(taskId) {
   try {
-    const result = await callSupervisorTool('open_work', { taskId });
-    appendMessage('system', `Opened worktree: ${result.opened || taskId}`);
+    await callSupervisorTool('open_work', { taskId });
+    appendMessage('system', `Opened worktree for task ${taskId.slice(0, 8)} in a new window.`);
   } catch (err) {
     alert(`Could not open worktree: ${err.message}`);
   }
@@ -1585,16 +2010,100 @@ async function queryTaskStatus(taskId) {
   }
 }
 
-// New Task Dispatch
-btnNewTask.addEventListener('click', () => {
+function populateTaskModalOptions() {
+  if (!appConfig) return;
+  if (taskModelSelect) {
+    taskModelSelect.replaceChildren();
+    (appConfig.copilotModels || []).forEach(m => {
+      const opt = document.createElement('option');
+      opt.value = m.id;
+      opt.textContent = m.label || m.id;
+      taskModelSelect.appendChild(opt);
+    });
+  }
+
+  if (taskContextSelect) {
+    taskContextSelect.replaceChildren();
+    (appConfig.copilotContexts || []).forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c.id;
+      opt.textContent = c.label || c.id;
+      taskContextSelect.appendChild(opt);
+    });
+  }
+}
+
+async function updateTaskAgents(areaId) {
+  if (!taskAgentSelect) return;
+  taskAgentSelect.replaceChildren();
+  if (!areaId) {
+    const opt = document.createElement('option');
+    opt.value = 'agent';
+    opt.textContent = 'Default agent (agent)';
+    taskAgentSelect.appendChild(opt);
+    return;
+  }
+  try {
+    const res = await fetch(`/api/areas/${encodeURIComponent(areaId)}/agents`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const agents = await res.json();
+    (agents || []).forEach(ag => {
+      const opt = document.createElement('option');
+      opt.value = ag.id;
+      opt.textContent = `${ag.name}${ag.id !== ag.name ? ` (${ag.id})` : ''}${ag.model ? ` [${ag.model}]` : ''}`;
+      taskAgentSelect.appendChild(opt);
+    });
+    const currentArea = appState.areas?.find(a => a.id === areaId);
+    if (currentArea?.agent && [...taskAgentSelect.options].some(o => o.value === currentArea.agent)) {
+      taskAgentSelect.value = currentArea.agent;
+    }
+    refreshSelect(taskAgentSelect);
+  } catch (_) {
+    const opt = document.createElement('option');
+    opt.value = 'agent';
+    opt.textContent = 'Default agent (agent)';
+    taskAgentSelect.appendChild(opt);
+  }
+}
+
+if (taskAreaSelect) {
+  taskAreaSelect.addEventListener('change', async () => {
+    const effectiveAreaId = taskAreaSelect.value || appState.settings?.defaultAreaId;
+    await updateTaskAgents(effectiveAreaId);
+  });
+}
+
+btnNewTask.addEventListener('click', async () => {
   if (!appState.areas || appState.areas.length === 0) {
     alert('Please register at least one Work Area before dispatching a task.');
     return;
   }
+  populateTaskAreaChoices();
+  populateTaskModalOptions();
+
+  const defaultId = appState.settings?.defaultAreaId;
+  if (defaultId && appState.areas.some(a => a.id === defaultId)) {
+    taskAreaSelect.value = '';
+  } else {
+    taskAreaSelect.value = appState.areas[0]?.id || '';
+  }
+  refreshSelect(taskAreaSelect);
+
   taskObjectiveInput.value = '';
-  taskModelInput.value = appConfig?.defaults?.copilotModel || 'gpt-5.6-sol';
-  taskContextSelect.value = appConfig?.defaults?.copilotContext || 'long_context';
+  if (taskModelSelect) {
+    taskModelSelect.value = appState.settings?.copilotModel || appConfig?.defaults?.copilotModel || 'gpt-5.6-sol';
+  }
+  if (taskContextSelect) {
+    taskContextSelect.value = appState.settings?.copilotContext || appConfig?.defaults?.copilotContext || 'default';
+  }
+  refreshSelect(taskModelSelect);
+  refreshSelect(taskContextSelect);
+
+  const effectiveAreaId = taskAreaSelect.value || appState.settings?.defaultAreaId || appState.areas[0]?.id;
+  await updateTaskAgents(effectiveAreaId);
+
   newTaskDialog.showModal();
+  updateIcons();
 });
 
 taskCancelBtn.addEventListener('click', () => newTaskDialog.close());
@@ -1602,14 +2111,22 @@ taskDialogClose.addEventListener('click', () => newTaskDialog.close());
 
 newTaskForm.addEventListener('submit', async (e) => {
   e.preventDefault();
-  const areaId = taskAreaSelect.value;
+  const areaId = taskAreaSelect.value ? taskAreaSelect.value : undefined;
   const objective = taskObjectiveInput.value.trim();
-  const model = taskModelInput.value.trim();
-  const context = taskContextSelect.value;
-  if (!areaId || !objective) return;
+  const model = taskModelSelect ? taskModelSelect.value : (appState.settings?.copilotModel || 'gpt-5.6-sol');
+  const context = taskContextSelect ? taskContextSelect.value : (appState.settings?.copilotContext || 'default');
+  const agent = taskAgentSelect?.value || 'agent';
+
+  if (!areaId && !appState.settings?.defaultAreaId) {
+    alert('Please select a work area or configure a default work area in Settings.');
+    return;
+  }
+  if (!objective) return;
 
   try {
-    const result = await callSupervisorTool('start_work', { areaId, objective, model, context });
+    const args = { objective, model, context, agent };
+    if (areaId) args.areaId = areaId;
+    const result = await callSupervisorTool('start_work', args);
     newTaskDialog.close();
     appendMessage('system', `Dispatched task [${result.taskId}]: state=${result.state}`);
     await loadState();

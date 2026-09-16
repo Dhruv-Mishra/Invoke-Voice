@@ -5,6 +5,7 @@
 ```powershell
 cd voice-supervisor
 npm install
+npm run search:setup
 npm run local:check
 npm run copilot:check
 npm run local
@@ -32,9 +33,9 @@ The requested `moonshine-streaming-small-Q8_0.gguf` currently crashes CrispASR 0
 
 ## Coding Sessions
 
-Register a Git repository root as a Work Area. Start a task by voice, typed chat, or **New Task**. Choose the Copilot model and context for each task.
+Register a Git repository root as a Work Area. Start a task by voice, typed chat, or **New Task**. Choose the Copilot model, context, and a repository agent discovered from `.github/agents`.
 
-The built-in and `example.env` defaults are `gpt-5.6-sol`, `medium` reasoning, and the CLI `long_context` tier. An explicit private `.env` value overrides these defaults.
+The built-in defaults are `gpt-5.6-sol`, `medium` reasoning, and the short CLI context tier. Settings persist a different model, default work area, or long context tier (up to 1M tokens). An explicit private `.env` value supplies the initial defaults.
 
 The supervisor creates an isolated Git worktree and starts GitHub Copilot CLI with an explicit session ID. It records JSONL progress, tool/build output, final result, model, context, branch, and worktree. Status checks are passive and survive app restarts; an interrupted active session becomes stale/unknown rather than successful.
 
@@ -44,6 +45,7 @@ Available voice tools:
 - `start_work`: start a Copilot CLI task with model and context.
 - `get_work_status`: read state and recent progress for a task.
 - `open_work`: open a task worktree in VS Code.
+- `delete_work`: delete one finished task or unused work area.
 - `invoke_vscode`: open a text note containing prompt, model, context, and directory. It does not start a VS Code agent yet.
 
 Copilot CLI must be installed and authenticated. `npm run copilot:check` verifies the full isolated lifecycle without changing this repository.

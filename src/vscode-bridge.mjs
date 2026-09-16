@@ -6,6 +6,16 @@ import path from 'node:path';
 
 const execute = promisify(execFile);
 
+export function copilotPrompt(task, area) {
+  const publish = area.allowPublish ? 'You may commit, push, and create a draft PR.' : 'Do not commit, push, or create a PR.';
+  const instructions = area.instructions ? `\n\nWork area instructions:\n${area.instructions}` : '';
+  return `Task: ${task.objective}\n\nWork only in ${task.worktree}. Keep changes scoped and run focused checks. ${publish} Never merge, deploy, manage work items, or send messages. Finish with a concise result and validation.${instructions}`;
+}
+
+export function worktreeWindowArgs(worktree) {
+  return ['--new-window', worktree];
+}
+
 export function resolveVSCodeInstallation(env = process.env) {
   const roots = [env.VSCODE_PATH, path.join(env.LOCALAPPDATA || '', 'Programs', 'Microsoft VS Code'), path.join(env.ProgramFiles || 'C:\\Program Files', 'Microsoft VS Code')].filter(Boolean);
   for (const root of roots) {
@@ -36,13 +46,13 @@ export function createVSCodeBridge(dataDir, env = process.env) {
     mkdirSync(logDir, { recursive: true });
     mkdirSync(sessionDir, { recursive: true });
     const sessionLog = path.join(sessionDir, `${task.id}.jsonl`);
-    const prompt = `Task: ${task.objective}\n\nWork only in ${task.worktree}. Keep changes scoped and run focused checks. ${area.allowPublish ? 'You may commit, push, and create a draft PR.' : 'Do not commit, push, or create a PR.'} Never merge, deploy, manage work items, or send messages. Finish with a concise result and validation.`;
+    const prompt = copilotPrompt(task, area);
+    const mcpConfig = [path.join(task.worktree, '.github', 'mcp.json'), path.join(task.worktree, '.mcp.json')].find(existsSync);
     const args = [
       '-C', task.worktree,
       '--add-dir', task.worktree,
       '--log-dir', logDir,
       '--no-auto-update',
-      '--no-custom-instructions',
       '--disable-builtin-mcps',
       '--no-remote',
       '--no-remote-export',
@@ -54,8 +64,10 @@ export function createVSCodeBridge(dataDir, env = process.env) {
       '--reasoning-effort', env.COPILOT_REASONING || 'medium',
       '--context', task.context,
       '--session-id', task.sessionId,
-      '-p', prompt,
     ];
+    if (task.agent && task.agent !== 'agent') args.push('--agent', task.agent);
+    if (mcpConfig) args.push('--additional-mcp-config', `@${mcpConfig}`);
+    args.push('-p', prompt);
     const executable = env.COPILOT_CLI || (process.platform === 'win32' ? 'copilot.exe' : 'copilot');
     const child = spawn(executable, args, { cwd: task.worktree, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
     const output = createInterface({ input: child.stdout });
@@ -115,6 +127,6 @@ export function createVSCodeBridge(dataDir, env = process.env) {
       await launch;
       return { invoked: true, note, model, context, directory };
     },
-    open(worktree) { return code(worktree, ['--reuse-window', worktree]); },
+    open(worktree) { return code(worktree, worktreeWindowArgs(worktree)); },
   };
 }

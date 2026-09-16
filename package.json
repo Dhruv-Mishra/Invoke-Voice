@@ -16,7 +16,9 @@
     "models": "node --env-file-if-exists=.env scripts/models.mjs",
     "search": "zg query",
     "search:index": "zg index --embedding local/potion-code-16m-v2",
-    "search:status": "zg status"
+    "search:status": "zg status",
+    "search:server": "zg server on",
+    "search:setup": "zg index --embedding local/potion-code-16m-v2 && zg server on"
   },
   "dependencies": {
     "@google/genai": "^2.21.0",

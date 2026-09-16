@@ -19,11 +19,11 @@ Put secrets only in `.env`. The browser never receives provider keys.
 Build the local zvec-grep index once, then use hybrid code search:
 
 ```powershell
-npm run search:index
+npm run search:setup
 npm run search -- "where task status is rendered"
 ```
 
-The generated `.zvec-grep/` index and embedding model stay local.
+The generated `.zvec-grep/` index and embedding model stay local. The setup command also starts the search-only MCP endpoint at `http://127.0.0.1:7999/mcp`; workspace Copilot and VS Code sessions discover it through `.github/mcp.json`.
 
 ## Hosted Voice
 
@@ -76,9 +76,13 @@ After Kokoro is cached, set `HF_HUB_OFFLINE=1` for offline-only voice startup. C
 
 1. Run `npm run copilot:check` to verify Copilot CLI authentication and lifecycle.
 2. Register a Git repository root as a work area.
-3. Start work by voice, chat, or **New Task**, selecting a Copilot model and context.
+3. Start work by voice, chat, or **New Task**, selecting a Copilot model, context, and repository agent.
 
-The supervisor owns the Copilot CLI process, assigns an explicit session ID, persists JSONL progress, and records tool/build updates and the final result. Status reads are passive; missing active observations become stale/unknown.
+The supervisor owns the Copilot CLI process, assigns an explicit session ID, persists JSONL progress, and records tool/build updates and the final result. Status reads are passive; missing active observations become stale/unknown. Work-area instructions and `.github/agents/*.agent.md` choices are passed to Copilot. Worktrees open in a separate VS Code window.
+
+The **Settings** view controls the default work area, Copilot model and context, and completion/input/failure notification channels. Ordinary chat requests do not need a work area; coding dispatches may omit one only when a default is configured. Finished tasks and unused work areas can be deleted.
+
+Azure DevOps and Teams MCP connections are intentionally marked **planned**, not connected. Start Azure DevOps read-only, scoped to work items assigned to the authenticated user. Start Teams with read/list operations; sending a message should require an exact recipient/body preview and one-time confirmation. Add authenticated local access before attaching corporate credentials, and do not grant these business mutations to coding workers.
 
 The `invoke_vscode` tool currently opens a text note with the requested prompt, model, context, and directory. It intentionally does not claim to start a VS Code agent. `open_work` opens a real Copilot worktree in VS Code.
 

@@ -596,10 +596,10 @@
         <h2 class="settings-section-title"><i data-lucide="sparkles" aria-hidden="true"></i>Appearance</h2>
         <div class="setting-row"><span id="avatar-label">Assistant avatar</span><div class="appearance-options" role="group" aria-labelledby="avatar-label"></div></div>
         <div class="setting-row"><label for="motion-preference">Motion</label><select id="motion-preference"><option value="system">Use device setting</option><option value="reduce">Reduced motion</option><option value="full">Full motion</option></select></div>
-        <div class="form-row-checkbox setting-row">
+        <label class="form-row-checkbox toggle-control setting-row" for="theme-sounds">
           <input type="checkbox" id="theme-sounds" data-theme-sounds>
-          <label for="theme-sounds">Interaction sounds</label>
-        </div>
+          <span class="toggle-track" aria-hidden="true"></span><span>Interaction sounds</span>
+        </label>
       </section>
       <section class="settings-section">
       <h2 class="settings-section-title"><i data-lucide="sliders-horizontal" aria-hidden="true"></i>Voice &amp; tools</h2>
@@ -608,6 +608,18 @@
         <button class="btn" type="button" data-open-view="tool-lab"><i data-lucide="flask-conical"></i>Tool Lab</button>
       </div>
       </section>
+
+      <details class="settings-section config-section" id="config-section">
+        <summary class="settings-section-title"><i data-lucide="key-round" aria-hidden="true"></i>Config</summary>
+        <p class="field-hint">Keys and provider options are stored only on this device. Blank key fields keep the saved value.</p>
+        <form id="config-form">
+          <div id="config-fields" class="config-fields"></div>
+          <div class="settings-actions">
+            <span id="config-feedback" class="settings-feedback" role="status" aria-live="polite"></span>
+            <button type="submit" class="btn btn-accent" id="config-save-btn"><i data-lucide="save"></i><span>Save config</span></button>
+          </div>
+        </form>
+      </details>
 
       <section class="settings-section local-setup" id="local-setup" aria-labelledby="setup-title">
         <div class="setup-heading"><h2 class="settings-section-title" id="setup-title"><i data-lucide="hard-drive-download" aria-hidden="true"></i>Local voice</h2><span class="badge" id="setup-status">Not checked</span></div>
@@ -624,7 +636,9 @@
           <div><dt>Runtime location</dt><dd id="setup-runtime" class="mono">Not checked</dd></div>
         </dl>
         <ul id="setup-components" class="setup-components" aria-label="Local voice components and download sources"></ul>
-        <label class="setup-consent" id="setup-consent-label"><input type="checkbox" id="setup-consent">I agree to download and install local voice components and Python dependencies on this device.</label>
+        <label class="setup-consent toggle-control" id="setup-consent-label" for="setup-consent">
+          <input type="checkbox" id="setup-consent"><span class="toggle-track" aria-hidden="true"></span><span>I agree to download and install local voice components and Python dependencies on this device.</span>
+        </label>
         <div class="utility-toolbar">
           <button class="btn btn-accent" type="button" id="setup-install-btn" disabled><i data-lucide="hard-drive-download" aria-hidden="true"></i><span id="setup-install-label">Install local voice</span></button>
           <button class="btn" type="button" id="setup-refresh-btn"><i data-lucide="refresh-cw" aria-hidden="true"></i>Refresh status</button>
@@ -660,31 +674,31 @@
         <section class="settings-section">
           <h2 class="settings-section-title"><i data-lucide="message-square" aria-hidden="true"></i>Notifications</h2>
           <span class="field-hint">Select which task events trigger notifications.</span>
-          <div class="form-row-checkbox">
+          <label class="form-row-checkbox toggle-control" for="settings-notify-completed">
             <input type="checkbox" id="settings-notify-completed">
-            <label for="settings-notify-completed" style="cursor: pointer;">Task completed (result ready)</label>
-          </div>
-          <div class="form-row-checkbox">
+            <span class="toggle-track" aria-hidden="true"></span><span>Task completed (result ready)</span>
+          </label>
+          <label class="form-row-checkbox toggle-control" for="settings-notify-needs-input">
             <input type="checkbox" id="settings-notify-needs-input">
-            <label for="settings-notify-needs-input" style="cursor: pointer;">Task needs input</label>
-          </div>
-          <div class="form-row-checkbox">
+            <span class="toggle-track" aria-hidden="true"></span><span>Task needs input</span>
+          </label>
+          <label class="form-row-checkbox toggle-control" for="settings-notify-failed">
             <input type="checkbox" id="settings-notify-failed">
-            <label for="settings-notify-failed" style="cursor: pointer;">Task failed / error</label>
-          </div>
+            <span class="toggle-track" aria-hidden="true"></span><span>Task failed / error</span>
+          </label>
         </section>
 
         <section class="settings-section">
           <h2 class="settings-section-title"><i data-lucide="send" aria-hidden="true"></i>Delivery</h2>
           <span class="field-hint">Choose how notifications are delivered when triggered.</span>
-          <div class="form-row-checkbox">
+          <label class="form-row-checkbox toggle-control" for="settings-browser-notifications">
             <input type="checkbox" id="settings-browser-notifications">
-            <label for="settings-browser-notifications" style="cursor: pointer;">Browser notifications (desktop toasts)</label>
-          </div>
-          <div class="form-row-checkbox">
+            <span class="toggle-track" aria-hidden="true"></span><span>Browser notifications (desktop toasts)</span>
+          </label>
+          <label class="form-row-checkbox toggle-control" for="settings-voice-notifications">
             <input type="checkbox" id="settings-voice-notifications">
-            <label for="settings-voice-notifications" style="cursor: pointer;">Voice notifications (spoken when idle)</label>
-          </div>
+            <span class="toggle-track" aria-hidden="true"></span><span>Voice notifications (spoken when idle)</span>
+          </label>
         </section>
 
         <div class="settings-actions">
@@ -783,14 +797,14 @@
         <label class="control-label" for="area-base-ref-input">Base Git Ref (default: HEAD)</label>
         <input type="text" id="area-base-ref-input" value="HEAD" placeholder="HEAD">
       </div>
-      <div class="form-row-checkbox">
+      <label class="form-row-checkbox toggle-control" for="area-allow-publish-input">
         <input type="checkbox" id="area-allow-publish-input">
-        <label for="area-allow-publish-input" style="cursor: pointer;">Allow Publish (commits, pushes, draft PRs)</label>
-      </div>
-      <div class="form-row-checkbox">
+        <span class="toggle-track" aria-hidden="true"></span><span>Allow Publish (commits, pushes, draft PRs)</span>
+      </label>
+      <label class="form-row-checkbox toggle-control" for="area-default-input">
         <input type="checkbox" id="area-default-input">
-        <label for="area-default-input" style="cursor: pointer;">Set as default work area</label>
-      </div>
+        <span class="toggle-track" aria-hidden="true"></span><span>Set as default work area</span>
+      </label>
       <div class="dialog-actions">
         <button type="button" class="btn btn-danger" id="area-delete-btn" style="margin-right: auto; display: none;">
           <i data-lucide="trash-2"></i>
@@ -905,10 +919,10 @@
         <label class="control-label" for="voice-mode-select">Voice</label>
         <select id="voice-mode-select" aria-label="Voice runtime mode"></select>
       </div>
-      <div class="form-row-checkbox">
+      <label class="form-row-checkbox toggle-control" for="allow-cloud-opt">
         <input type="checkbox" id="allow-cloud-opt" aria-label="Allow Cloud Hybrid">
-        <label for="allow-cloud-opt">Allow Cloud Hybrid</label>
-      </div>
+        <span class="toggle-track" aria-hidden="true"></span><span>Allow Cloud Hybrid</span>
+      </label>
       <div class="dialog-actions">
         <button type="submit" class="btn btn-accent" id="route-config-done">Done</button>
       </div>

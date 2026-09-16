@@ -14,7 +14,7 @@ Files are kept under `%LOCALAPPDATA%\VoiceSupervisor`: `models`, `runtimes`, `hu
 
 After successful setup, local runtimes start automatically on desktop launch without downloading anything. Setup changes take effect in the running app. Each desktop instance uses private loopback ports, so a browser development server can remain open. Closing the app stops its managed runtimes. Microphone permission is still required, and setup startup checks do not prove microphone/speaker hardware works.
 
-Optional packaged provider configuration belongs in `%LOCALAPPDATA%\VoiceSupervisor\.env`; keep keys private. Logs are in `%LOCALAPPDATA%\VoiceSupervisor\logs\desktop.log` and are replaced on launch. Cached models and user data are retained on uninstall. Remove the cache folder yourself only when the app is closed and you no longer need that data.
+Configure provider keys, models, endpoints, defaults and local performance under **Settings > Config**. Values are stored in `%LOCALAPPDATA%\VoiceSupervisor\config.json`, excluded from the installer and never returned to the browser UI. The file contains secrets in plain text under the current Windows user profile, so do not share it or the app-data folder. Logs are in `%LOCALAPPDATA%\VoiceSupervisor\logs\desktop.log` and are replaced on launch. Cached models and user data are retained on uninstall. Remove the cache folder yourself only when the app is closed and you no longer need that data.
 
 Installation failures keep a bounded, sanitized diagnostic tail in `logs/local-setup.log` inside the cache directory. Completed downloads are retained for retry.
 
@@ -25,14 +25,11 @@ Builds are unsigned unless your distributor adds signing. Windows SmartScreen or
 - The source workflow needs Node.js 22+ and npm. Windows x64 app setup manages its own voice runtimes; initial setup needs network access to the listed model/release sources, PyPI and the PyTorch CPU index.
 - Coding sessions still need Git, an installed and authenticated GitHub Copilot CLI, and access to your repositories. Agency requires its own installation and authentication. VS Code is needed to open worktrees there. These tools, accounts and permissions are not provisioned by voice setup.
 
-From this directory, install dependencies and create `.env` only when it is absent:
+From this directory, install dependencies:
 ```powershell
 npm ci
-if (-not (Test-Path -LiteralPath .env)) {
-    Copy-Item -LiteralPath example.env -Destination .env
-}
 ```
-The copy never overwrites `.env`. Put provider keys and local paths there; do not commit them.
+Start the app and use **Settings > Config** for normal configuration. `.env` remains an optional source-development and automation override for settings not exposed in the UI; never commit it.
 
 ## Build And Run
 
@@ -99,7 +96,7 @@ After provisioning, `local:check` proves only that Ling returns text. `local` st
 
 ## Hosted Providers
 
-Set relevant keys in `.env` using [`example.env`](example.env), then choose a provider in the UI or with `DEFAULT_PROVIDER` and `DEFAULT_VOICE_MODE`. Hosted text and realtime voice adapters are configured there; Anthropic, Azure OpenAI, and custom OpenAI-compatible endpoints are text-only. Local transcripts reach hosted text only when **Allow Cloud Hybrid** is enabled.
+Add relevant keys under **Settings > Config**, then choose a provider and voice route in the UI. Hosted text and realtime voice adapters read saved changes for new sessions immediately; Anthropic, Azure OpenAI, and custom OpenAI-compatible endpoints are text-only. Local transcripts reach hosted text only when **Allow Cloud Hybrid** is enabled. `.env` remains available for source automation.
 
 ## Development And Desktop
 
@@ -119,6 +116,22 @@ Electron desktop:
 npm run desktop
 ```
 Electron builds first and starts its own loopback supervisor. After app setup, it also owns the local llama and speech runtimes. No external server or Node executable is needed for the installed app.
+
+### Test On Another Windows Machine
+
+You do not need to push the repository to GitHub to test the installed app. Build the installer on the development machine, transfer only `release\Voice Work Supervisor-Setup-0.1.0.exe` through a trusted channel, and run it on the test machine. Keep the repository remote private if you do publish it; never commit `.env`, `%LOCALAPPDATA%\VoiceSupervisor`, models, caches or generated installers.
+
+For a repeatable full end-to-end test:
+
+1. On the development machine, run `npm ci`, `npm test`, then `npm run dist:win`.
+2. Transfer the generated installer to a Windows x64 test machine and launch it. The current build is unsigned, so organizational policy may block it.
+3. Open **Settings > Config**, add hosted-provider keys if needed, and save. Runtime provider changes apply to new sessions immediately. Options marked **Restart required** are persisted but apply after closing and reopening the app; no rebuild is required.
+4. Under **Settings > Local voice**, consent to the 5-6 GB download and wait for every component to become ready. The machine needs HTTPS access to GitHub, Hugging Face, PyPI, `files.pythonhosted.org`, and the PyTorch CPU index.
+5. Allow microphone access and verify local voice, hosted voice, text chat, interruption and reconnect behavior.
+6. For coding tasks, separately install Git, VS Code and an authenticated GitHub Copilot CLI, then confirm `git --version`, `code --version` and `copilot --version` in PowerShell. Install and authenticate Agency only when testing that backend.
+7. Register a disposable repository as a work area, dispatch a task, continue it, open its worktree and verify notifications.
+
+A private GitHub remote is recommended once multiple machines or testers need the source because it gives you versioned branches and release artifacts. It is not required for running the installer.
 
 Build the unsigned per-user Windows x64 installer from source:
 ```powershell
@@ -143,6 +156,9 @@ The executable check uses a fresh temporary data directory, no voice downloads a
 - [`scripts/start-local.mjs`](scripts/start-local.mjs), [`desktop.cjs`](desktop.cjs): local and Electron launch.
 - [`public/main.js`](public/main.js), [`public/app.js`](public/app.js): UI plus app-scoped transport/audio state.
 - [`public/themes.js`](public/themes.js), [`public/VoiceSprite.js`](public/VoiceSprite.js): shared theme registry and presentation-only sprite.
+- [`src/runtime-config.mjs`](src/runtime-config.mjs): allowlisted persisted app configuration, secret redaction and runtime/restart behavior.
+
+See [`design_guide.md`](design_guide.md) before changing visual tokens or adding a theme.
 
 ## Add A Theme
 

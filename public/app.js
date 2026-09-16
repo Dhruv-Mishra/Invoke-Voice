@@ -135,6 +135,10 @@ const settingsBrowserNotifications = document.getElementById('settings-browser-n
 const settingsSaveBtn = document.getElementById('settings-save-btn');
 const settingsFeedback = document.getElementById('settings-feedback');
 const integrationsTableBody = document.getElementById('integrations-table-body');
+const configForm = document.getElementById('config-form');
+const configFields = document.getElementById('config-fields');
+const configSaveBtn = document.getElementById('config-save-btn');
+const configFeedback = document.getElementById('config-feedback');
 
 const chatMessages = document.getElementById('chat-messages');
 const partialTranscript = document.getElementById('partial-transcript');
@@ -1425,6 +1429,110 @@ function populateSettingsView() {
   populateIntegrationsTable();
 }
 
+function renderApplicationConfig() {
+  if (!configFields) return;
+  configFields.replaceChildren();
+  const fields = Array.isArray(appConfig?.configuration?.fields) ? appConfig.configuration.fields : [];
+  if (!fields.length) {
+    const unavailable = document.createElement('p');
+    unavailable.className = 'field-hint';
+    unavailable.textContent = 'Application configuration is unavailable.';
+    configFields.appendChild(unavailable);
+    return;
+  }
+  const groups = new Map();
+  for (const field of fields) {
+    if (!groups.has(field.group)) groups.set(field.group, []);
+    groups.get(field.group).push(field);
+  }
+  for (const [groupName, groupFields] of groups) {
+    const group = document.createElement('fieldset');
+    group.className = 'config-group';
+    const legend = document.createElement('legend');
+    legend.textContent = groupName;
+    const grid = document.createElement('div');
+    grid.className = 'config-grid';
+    for (const field of groupFields) {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'config-field';
+      const id = `config-${field.key.toLowerCase().replaceAll('_', '-')}`;
+      const label = document.createElement('label');
+      label.htmlFor = id;
+      label.textContent = field.label;
+      wrapper.appendChild(label);
+      if (field.restartRequired) {
+        const restart = document.createElement('span');
+        restart.className = 'config-restart';
+        restart.textContent = field.pendingRestart ? 'Restart required - change pending' : 'Restart required';
+        wrapper.appendChild(restart);
+      }
+      let control;
+      if (field.type === 'select') {
+        control = document.createElement('select');
+        for (const option of field.options || []) {
+          const element = document.createElement('option');
+          element.value = option.value;
+          element.textContent = option.label;
+          control.appendChild(element);
+        }
+      } else {
+        control = document.createElement('input');
+        control.type = field.type === 'password' ? 'password' : field.type === 'number' ? 'number' : field.type === 'url' ? 'url' : 'text';
+        if (field.min !== undefined) control.min = String(field.min);
+        if (field.max !== undefined) control.max = String(field.max);
+        if (field.type === 'password') {
+          control.autocomplete = 'new-password';
+          control.spellcheck = false;
+          control.placeholder = field.configured ? 'Saved - enter a replacement' : 'Enter API key';
+        }
+      }
+      control.id = id;
+      control.dataset.configKey = field.key;
+      control.dataset.configSecret = String(field.type === 'password');
+      if (field.type !== 'password') control.value = field.value || '';
+      wrapper.appendChild(control);
+      if (field.type === 'password' && field.configured) {
+        const saved = document.createElement('span');
+        saved.className = 'config-saved';
+        saved.textContent = 'Saved on this device';
+        wrapper.appendChild(saved);
+      }
+      grid.appendChild(wrapper);
+    }
+    group.append(legend, grid);
+    configFields.appendChild(group);
+  }
+}
+
+if (configForm) {
+  configForm.addEventListener('submit', async event => {
+    event.preventDefault();
+    configFeedback.textContent = '';
+    configFeedback.className = 'settings-feedback';
+    const values = {};
+    for (const control of configFields.querySelectorAll('[data-config-key]')) {
+      if (control.dataset.configSecret === 'true' && !control.value) continue;
+      values[control.dataset.configKey] = control.value;
+    }
+    configSaveBtn.disabled = true;
+    try {
+      const response = await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ values }) });
+      const result = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(result?.error || `HTTP ${response.status}`);
+      appConfig = result;
+      renderApplicationConfig();
+      await loadConfig(true);
+      const pending = appConfig?.configuration?.fields?.some(field => field.pendingRestart);
+      configFeedback.textContent = pending ? 'Config saved. Restart the app to apply pending local performance changes.' : 'Config saved and applied to new sessions.';
+    } catch (error) {
+      configFeedback.textContent = `Error: ${error.message}`;
+      configFeedback.className = 'settings-feedback error';
+    } finally {
+      configSaveBtn.disabled = false;
+    }
+  });
+}
+
 if (settingsForm) {
   settingsForm.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -1528,6 +1636,7 @@ async function loadConfig(preserveSelection = false) {
     populateSettingsOptions();
     populateTaskModalOptions();
     populateIntegrationsTable();
+    renderApplicationConfig();
     updateRouteReadiness();
     return true;
   } catch (err) {

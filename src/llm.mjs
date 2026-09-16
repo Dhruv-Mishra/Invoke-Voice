@@ -68,7 +68,7 @@ export function providerProfiles(env = process.env) {
 function resolveEndpoint(provider, model, env) {
   switch (provider) {
     case 'gemini': {
-      if (!env.GEMINI_API_KEY) throw new Error('Missing GEMINI_API_KEY for gemini provider');
+      if (!env.GEMINI_API_KEY) throw new Error('Add a Gemini API key in Settings > Config');
       return {
         url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${env.GEMINI_API_KEY}` },
@@ -76,7 +76,7 @@ function resolveEndpoint(provider, model, env) {
       };
     }
     case 'openai': {
-      if (!env.OPENAI_API_KEY) throw new Error('Missing OPENAI_API_KEY for openai provider');
+      if (!env.OPENAI_API_KEY) throw new Error('Add an OpenAI API key in Settings > Config');
       const base = (env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/+$/, '');
       return {
         url: `${base}/chat/completions`,
@@ -85,7 +85,7 @@ function resolveEndpoint(provider, model, env) {
       };
     }
     case 'anthropic': {
-      if (!env.ANTHROPIC_API_KEY) throw new Error('Missing ANTHROPIC_API_KEY for anthropic provider');
+      if (!env.ANTHROPIC_API_KEY) throw new Error('Add an Anthropic API key in Settings > Config');
       return {
         url: 'https://api.anthropic.com/v1/messages',
         headers: {
@@ -99,7 +99,7 @@ function resolveEndpoint(provider, model, env) {
     case 'azure': {
       const endpoint = env.AZURE_OPENAI_ENDPOINT;
       const key = env.AZURE_OPENAI_KEY || env.AZURE_OPENAI_API_KEY;
-      if (!endpoint || !key) throw new Error('Missing AZURE_OPENAI_ENDPOINT or AZURE_OPENAI_KEY for azure provider');
+      if (!endpoint || !key) throw new Error('Add an Azure OpenAI endpoint and key in Settings > Config');
       const deployment = model || env.AZURE_OPENAI_DEPLOYMENT || env.AZURE_OPENAI_MODEL || 'gpt-4o-mini';
       const clean = endpoint.trim().replace(/\/+$/, '');
       const url = clean.includes('/chat/completions')
@@ -125,7 +125,7 @@ function resolveEndpoint(provider, model, env) {
     }
     case 'custom': {
       const baseUrl = env.CUSTOM_BASE_URL;
-      if (!baseUrl) throw new Error('Missing CUSTOM_BASE_URL for custom provider');
+      if (!baseUrl) throw new Error('Add a custom endpoint URL in Settings > Config');
       const clean = baseUrl.trim().replace(/\/+$/, '');
       const url = clean.endsWith('/chat/completions') ? clean : `${clean}/chat/completions`;
       const headers = { 'Content-Type': 'application/json' };

@@ -22,7 +22,7 @@ export function isolatedEnvironment(env, paths) {
     HF_HOME: path.join(paths.home, 'huggingface'), HF_HUB_OFFLINE: '1', HF_HUB_DISABLE_TELEMETRY: '1',
     PIP_CACHE_DIR: path.join(paths.home, 'pip-cache'), PIP_CONFIG_FILE: 'NUL', PIP_DISABLE_PIP_VERSION_CHECK: '1',
     UV_CACHE_DIR: path.join(paths.home, 'uv-cache'), UV_PYTHON_INSTALL_DIR: path.join(paths.runtimeDir, 'python'),
-    UV_PYTHON_BIN_DIR: path.join(paths.runtimeDir, 'python-bin'), UV_PYTHON_DOWNLOADS: 'manual',
+    UV_PYTHON_BIN_DIR: path.join(paths.runtimeDir, 'python-bin'), UV_PYTHON_DOWNLOADS: 'manual', UV_NATIVE_TLS: '1',
   };
 }
 
@@ -91,7 +91,14 @@ export function runSetupCommand(executable, args, { env, cwd, signal, report = (
       } else resolve();
     }
     child.once('error', error => finish(setupError(`${message} Could not run the local process (${error.code || 'launch error'}). Check security software and the configured Python 3.12 path, then retry.`)));
-    child.once('close', (code, exitSignal) => finish(stoppingError || (code === 0 ? null : setupError(`${message} Process exited with ${exitSignal ? `signal ${exitSignal}` : `code ${code}`}. Check disk space, network/proxy access and runtime prerequisites, then retry.`))));
+    child.once('close', (code, exitSignal) => {
+      const diagnostic = `${tails.stdout.text}\n${tails.stderr.text}`;
+      const secureConnectionFailed = /HandshakeFailure|certificate verify failed|CERTIFICATE_VERIFY_FAILED|TLS handshake|SSL error/i.test(diagnostic);
+      const guidance = secureConnectionFailed
+        ? 'Could not establish a secure HTTPS connection to the package source. Check proxy or TLS inspection policy, trusted certificates, and access to files.pythonhosted.org, then retry.'
+        : 'Check disk space, network/proxy access and runtime prerequisites, then retry.';
+      finish(stoppingError || (code === 0 ? null : setupError(`${message} Process exited with ${exitSignal ? `signal ${exitSignal}` : `code ${code}`}. ${guidance}`)));
+    });
   });
 }
 

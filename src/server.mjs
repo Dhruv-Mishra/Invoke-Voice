@@ -11,6 +11,7 @@ import { providerProfiles, streamReply } from './llm.mjs';
 import { createRealtimeVoice, DEFAULT_GEMINI_LIVE_MODEL } from './realtime.mjs';
 import { createLocalVoice, localConfiguration, warmLocalVoice } from './local-voice.mjs';
 import { createLocalSetup } from './local-setup.mjs';
+import { createRuntimeConfig } from './runtime-config.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const publicDir = path.join(root, 'public');
@@ -73,6 +74,7 @@ export async function startSupervisor(options = {}) {
   const dataDir = path.resolve(options.dataDir || process.env.SUPERVISOR_DATA_DIR || path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), '.local', 'share'), 'VoiceSupervisor'));
   const inbox = path.join(dataDir, 'inbox');
   mkdirSync(inbox, { recursive: true });
+  const runtimeConfig = createRuntimeConfig({ dataDir });
   const supervisor = options.supervisor || new Supervisor({ dataDir, bridge: createVSCodeBridge(dataDir) });
   const setup = options.setup || createLocalSetup();
   const clients = new Set();
@@ -109,7 +111,7 @@ export async function startSupervisor(options = {}) {
       { id: 'gemini-live', label: 'Gemini Live', configured: Boolean(process.env.GEMINI_API_KEY), model: process.env.GEMINI_LIVE_MODEL || DEFAULT_GEMINI_LIVE_MODEL },
       { id: 'openai-realtime', label: 'OpenAI Realtime', configured: Boolean(process.env.OPENAI_API_KEY), model: process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime' },
       { id: 'local', label: 'Moonshine + Ling + Kokoro', configured: localConfiguration().configured },
-    ], local: localConfiguration(), dataDir };
+    ], local: localConfiguration(), configuration: runtimeConfig.snapshot(), dataDir };
   }
 
   const mode = options.mode || (options.debug ? 'debug' : (process.env.SUPERVISOR_MODE || 'release'));
@@ -131,6 +133,11 @@ export async function startSupervisor(options = {}) {
         return json(response, 202, setup.start(input));
       }
       if (request.method === 'GET' && url.pathname === '/api/config') return json(response, 200, config());
+      if (request.method === 'POST' && url.pathname === '/api/config') {
+        if (voiceOwner) return json(response, 409, { error: 'End the active voice call before changing application configuration.' });
+        const configuration = runtimeConfig.update(await body(request));
+        return json(response, 200, { ...config(), configuration });
+      }
       if (request.method === 'GET' && url.pathname === '/api/state') return json(response, 200, supervisor.snapshot());
       if (request.method === 'GET' && url.pathname === '/api/tools') return json(response, 200, tools);
       const areaAgents = url.pathname.match(/^\/api\/areas\/([^/]+)\/agents$/);

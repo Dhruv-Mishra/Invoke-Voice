@@ -33,7 +33,7 @@ export async function createRealtimeVoice({ mode, send, callTool, env = process.
     return compactToolResult(result, 8000);
   }
   if (mode === 'gemini-live') {
-    if (!env.GEMINI_API_KEY) throw new Error('Set GEMINI_API_KEY in .env to use Gemini Live');
+    if (!env.GEMINI_API_KEY) throw new Error('Add a Gemini API key in Settings > Config to use Gemini Live');
     const ai = new GoogleGenAI({ apiKey: env.GEMINI_API_KEY });
     let session;
     session = await ai.live.connect({
@@ -73,7 +73,7 @@ export async function createRealtimeVoice({ mode, send, callTool, env = process.
     };
   }
   if (mode !== 'openai-realtime') throw new Error('Unsupported realtime voice mode');
-  if (!env.OPENAI_API_KEY) throw new Error('Set OPENAI_API_KEY in .env to use OpenAI Realtime');
+  if (!env.OPENAI_API_KEY) throw new Error('Add an OpenAI API key in Settings > Config to use OpenAI Realtime');
   const socket = new WebSocket(`wss://api.openai.com/v1/realtime?model=${encodeURIComponent(env.OPENAI_REALTIME_MODEL || 'gpt-realtime')}`, { headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}` }, handshakeTimeout: 15000 });
   const write = event => { if (!closed && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(event)); };
   await new Promise((resolve, reject) => { socket.once('open', resolve); socket.once('error', () => reject(new Error('OpenAI Realtime connection failed'))); });

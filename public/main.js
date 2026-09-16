@@ -3,7 +3,7 @@ import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 import {
   BellOff, CalendarDays, CheckSquare, CircleDashed, createIcons, Edit2,
-  ExternalLink, File, FileText, FlaskConical, FolderKanban, HardDriveDownload, House, Keyboard,
+  ExternalLink, File, FileText, FlaskConical, FolderKanban, HardDriveDownload, House, KeyRound, Keyboard,
   LayoutDashboard, MessageSquare, MessageSquarePlus, Mic, Play, Plus,
   PlusCircle, Radio, RefreshCw, Save, ScanSearch, Send, Settings,
   SlidersHorizontal, Sparkles, Square, Trash2, X,
@@ -15,10 +15,11 @@ import './theme.css';
 window.DOMPurify = DOMPurify;
 window.marked = marked;
 const appIcons = { BellOff, CalendarDays, CheckSquare, CircleDashed, Edit2, ExternalLink,
-  File, FileText, FlaskConical, FolderKanban, HardDriveDownload, House, Keyboard, LayoutDashboard,
+  File, FileText, FlaskConical, FolderKanban, HardDriveDownload, House, KeyRound, Keyboard, LayoutDashboard,
   MessageSquare, MessageSquarePlus, Mic, Play, Plus, PlusCircle, Radio, RefreshCw,
   Save, ScanSearch, Send, Settings, SlidersHorizontal, Sparkles, Square, Trash2, X };
 window.lucide = { createIcons: () => createIcons({ icons: appIcons }) };
+for (const input of document.querySelectorAll('.toggle-control input[type="checkbox"]')) input.setAttribute('role', 'switch');
 
 const stateCopy = {
   idle: ['Ready when you are', 'A little less effort. A little more possibility.'],

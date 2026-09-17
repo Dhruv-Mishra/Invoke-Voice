@@ -8,7 +8,7 @@ import { EventEmitter } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { deflateRawSync } from 'node:zlib';
 import { createSetup } from '../src/setup.mjs';
-import { ASSETS, CRISPASR_AVX2_ASSET, assetReady, ensureAsset, stackPaths, trustedDownloadUrl, withSetupLock } from '../scripts/models.mjs';
+import { ASSETS, CRISPASR_AVX2_ASSET, TASK_SEARCH_ASSETS, assetReady, ensureAsset, stackPaths, trustedDownloadUrl, withSetupLock } from '../scripts/models.mjs';
 import { approvedPythonProbe, createLocalSetup, isolatedEnvironment, runSetupCommand } from '../src/local-setup.mjs';
 import { startSupervisor } from '../src/server.mjs';
 import { createRuntimeConfig } from '../src/runtime-config.mjs';
@@ -18,6 +18,26 @@ function fixture(context) {
   context.after(() => rmSync(directory, { recursive: true, force: true }));
   return { directory, paths: stackPaths({ LOCALAPPDATA: directory }, path.join(directory, 'app')) };
 }
+
+test('optional task embeddings use pinned verified assets and reuse them offline', async context => {
+  const { paths } = fixture(context);
+  for (const asset of TASK_SEARCH_ASSETS) {
+    assert.equal(ASSETS.includes(asset), false);
+    assert.ok(paths[asset.id].startsWith(path.join(paths.modelDir, 'task-search-minilm') + path.sep));
+    assert.match(asset.sourceUrl, /\/resolve\/[a-f0-9]{40}\//);
+    const content = Buffer.from(`synthetic-${asset.id}`);
+    let requests = 0;
+    await ensureAsset(paths, asset, { fetchImpl: async url => {
+      requests += 1;
+      return url.includes('/api/models/')
+        ? Response.json([{ path: asset.name, size: content.length, lfs: { oid: createHash('sha256').update(content).digest('hex') } }])
+        : new Response(content);
+    } });
+    assert.equal(requests, 2);
+    assert.equal(assetReady(paths, asset), true);
+    await ensureAsset(paths, asset, { fetchImpl: async () => { throw new Error('Cached assets must not use the network'); } });
+  }
+});
 
 function controller(options = {}) {
   return createSetup({ platform: 'win32', arch: 'x64', cacheDir: 'cache', runtimeDir: 'runtime', inspect: () => [{ id: 'fixture', label: 'Fixture', ready: false, sourceUrl: 'https://huggingface.co' }], install: async () => {}, activate: async () => {}, ...options });

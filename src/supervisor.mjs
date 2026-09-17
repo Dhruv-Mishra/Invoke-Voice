@@ -5,6 +5,7 @@ import path from 'node:path';
 import MiniSearch from 'minisearch';
 import { DEFAULT_WORK_AREA, defaultWorkspacePath } from './vscode-bridge.mjs';
 import { supervisorTools, tools, supervisorInstructions } from './supervisor/contract.mjs';
+import { createLocalTaskSearch } from './supervisor/semantic-search.mjs';
 
 export { supervisorTools, tools, supervisorInstructions };
 
@@ -20,12 +21,13 @@ function requiredText(value, label, limit = 12000) {
 }
 
 export class Supervisor extends EventEmitter {
-  constructor({ dataDir, bridge, now = () => Date.now(), env = process.env }) {
+  constructor({ dataDir, bridge, now = () => Date.now(), env = process.env, semanticSearch }) {
     super();
     this.dataDir = dataDir;
     this.bridge = bridge;
     this.now = now;
     this.env = env;
+    this.semanticSearch = semanticSearch ?? createLocalTaskSearch({ dataDir, env });
     this.activeTasks = new Set();
     mkdirSync(dataDir, { recursive: true });
     this.file = path.join(dataDir, 'state.json');
@@ -226,7 +228,7 @@ export class Supervisor extends EventEmitter {
     };
   }
 
-  searchWork(query) {
+  async searchWork(query) {
     const text = requiredText(query, 'task query', 200);
     const areas = new Map(this.state.areas.map(area => [area.id, [area.name, ...area.aliases].join(' ')]));
     const index = new MiniSearch({
@@ -244,7 +246,16 @@ export class Supervisor extends EventEmitter {
       messages: task.turns.map(turn => turn.message || '').join(' '),
       area: areas.get(task.areaId) || '',
     })));
-    const matches = index.search(text);
+    const keywords = MiniSearch.getDefault('tokenize')(text).map(term => term.toLowerCase()).filter(term => term && !SEARCH_STOP_WORDS.has(term)).join(' ');
+    if (!keywords) return { tasks: [], hasMore: false };
+    const lexical = index.search(text);
+    const documents = this.state.tasks.map(task => ({
+      id: task.id,
+      text: [task.title, String(task.objective || '').slice(0, 1200), ...task.turns.slice(-2).map(turn => String(turn.message || '').slice(0, 300))].filter(Boolean).join('\n'),
+    }));
+    let matches = lexical;
+    try { matches = await this.semanticSearch(keywords, documents, lexical); } catch {}
+    matches = matches.filter(match => this.state.tasks.some(task => task.id === match.id));
     return {
       tasks: matches.slice(0, 3).map(match => {
         const task = this.task(match.id);

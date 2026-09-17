@@ -4,6 +4,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import os from 'node:os';
 import path from 'node:path';
 import { Supervisor, tools, supervisorTools, supervisorInstructions } from '../src/supervisor.mjs';
+import { createLocalTaskSearch, SemanticTaskIndex } from '../src/supervisor/semantic-search.mjs';
+import { assetReady, stackPaths, TASK_SEARCH_ASSETS } from '../scripts/models.mjs';
 import { tools as contractTools, supervisorTools as contractSupervisorTools, supervisorInstructions as contractSupervisorInstructions } from '../src/supervisor/contract.mjs';
 
 test('exports the canonical LLM tool schemas', () => {
@@ -25,7 +27,7 @@ test('searches all saved work with bounded fresh status and no mutations', async
   const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-supervisor-search-'));
   const clock = Date.now();
   try {
-    const supervisor = new Supervisor({ dataDir, bridge: {}, now: () => clock });
+    const supervisor = new Supervisor({ dataDir, bridge: {}, now: () => clock, env: { SUPERVISOR_CACHE_DIR: dataDir } });
     const areaId = supervisor.resolveArea().id;
     const addTask = (id, title, extra = {}) => supervisor.state.tasks.push({
       id, title, objective: title, areaId, state: 'result_ready', createdAt: clock,
@@ -60,10 +62,113 @@ test('searches all saved work with bounded fresh status and no mutations', async
     assert.equal(limited.hasMore, true);
     for (const query of ['', ' ', null, 123, 'x'.repeat(201)]) await assert.rejects(supervisor.callTool('list_work', { query }), /Invalid task query/);
     supervisor.save();
-    const restored = new Supervisor({ dataDir, bridge: {} });
+    const restored = new Supervisor({ dataDir, bridge: {}, env: { SUPERVISOR_CACHE_DIR: dataDir } });
     assert.equal((await restored.callTool('list_work', { query: 'onboarding' })).tasks[0].taskId, 'document');
     supervisor.deleteTask('document');
     assert.deepEqual(await supervisor.callTool('list_work', { query: 'onboarding' }), { tasks: [], hasMore: false });
+  } finally { rmSync(dataDir, { recursive: true, force: true }); }
+});
+
+test('task search awaits semantic results, reads fresh state and survives unavailable embeddings', async () => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-semantic-tool-'));
+  let release;
+  const waiting = new Promise(resolve => { release = resolve; });
+  let entered;
+  const started = new Promise(resolve => { entered = resolve; });
+  try {
+    const supervisor = new Supervisor({ dataDir, bridge: {}, semanticSearch: async (query, documents, lexical) => {
+      entered({ query, documents, lexical });
+      await waiting;
+      return [{ id: 'guide' }, { id: 'removed' }];
+    } });
+    supervisor.state.tasks = ['guide', 'removed'].map(id => ({ id, title: 'Write onboarding handbook', state: 'running', createdAt: Date.now(), observations: [], turns: [] }));
+    const pending = supervisor.callTool('list_work', { query: "What's the status of the document work?" });
+    const request = await started;
+    assert.equal(request.query, 'document');
+    assert.equal(request.documents.length, 2);
+    assert.deepEqual(request.lexical, []);
+    supervisor.state.tasks.pop();
+    supervisor.state.tasks[0].state = 'result_ready';
+    supervisor.state.tasks[0].result = 'Handbook ready for review.';
+    release();
+    const result = await pending;
+    assert.equal(result.tasks.length, 1);
+    assert.equal(result.tasks[0].state, 'result_ready');
+    assert.equal(result.tasks[0].result, 'Handbook ready for review.');
+    supervisor.semanticSearch = async () => { throw new Error('Unavailable'); };
+    assert.equal((await supervisor.callTool('list_work', { query: 'handbook' })).tasks[0].taskId, 'guide');
+    assert.deepEqual(await supervisor.callTool('list_work', { query: 'the work' }), { tasks: [], hasMore: false });
+  } finally { release(); rmSync(dataDir, { recursive: true, force: true }); }
+});
+
+test('unprovisioned semantic search stays offline and preserves keyword results', async context => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-semantic-offline-'));
+  let requests = 0;
+  context.mock.method(globalThis, 'fetch', async () => { requests += 1; throw new Error('Unexpected network request'); });
+  try {
+    const search = createLocalTaskSearch({ dataDir, env: { SUPERVISOR_CACHE_DIR: dataDir } });
+    const lexical = [{ id: 'guide', score: 1 }];
+    assert.equal(await search('handbook', [{ id: 'guide', text: 'Write a guide' }], lexical), lexical);
+    assert.equal(requests, 0);
+    assert.equal(existsSync(path.join(dataDir, 'task-search-vectors.json')), false);
+  } finally { rmSync(dataDir, { recursive: true, force: true }); }
+});
+
+test('installed MiniLM matches paraphrases offline without loading the voice LLM', { skip: process.env.TEST_TASK_EMBEDDINGS !== '1' }, async context => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-semantic-live-'));
+  const paths = stackPaths();
+  assert.ok(TASK_SEARCH_ASSETS.every(asset => assetReady(paths, asset)), 'Provision with npm run models -- task-search first');
+  context.mock.method(globalThis, 'fetch', async () => { throw new Error('Embedding inference must stay offline'); });
+  try {
+    const supervisor = new Supervisor({ dataDir, bridge: {} });
+    supervisor.state.tasks = [
+      ['guide', 'Write the onboarding guide for new employees'],
+      ['login', 'Repair the sign-in page and password reset flow'],
+      ['theme', 'Fix the dark theme colors in the settings panel'],
+    ].map(([id, title]) => ({ id, title, objective: title, state: 'result_ready', createdAt: Date.now(), observations: [], turns: [] }));
+    const first = await supervisor.callTool('list_work', { query: 'new employee handbook' });
+    assert.equal(first.tasks[0]?.taskId, 'guide');
+    const start = performance.now();
+    const second = await supervisor.callTool('list_work', { query: 'authentication bug' });
+    context.diagnostic(`Warm synthetic semantic lookup: ${Math.round(performance.now() - start)}ms`);
+    assert.equal(second.tasks[0]?.taskId, 'login');
+    assert.deepEqual(await supervisor.callTool('list_work', { query: 'lunch reservation' }), { tasks: [], hasMore: false });
+    supervisor.state.tasks[0].result = 'Handbook ready for review.';
+    assert.equal((await supervisor.callTool('list_work', { query: 'new employee handbook' })).tasks[0].result, 'Handbook ready for review.');
+    assert.equal(JSON.parse(readFileSync(path.join(dataDir, 'task-search-vectors.json'), 'utf8')).vectors.length, 3);
+  } finally { rmSync(dataDir, { recursive: true, force: true }); }
+});
+
+test('semantic task ranking caches vectors, refreshes changes and removes deleted tasks', async () => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-semantic-search-'));
+  const cacheFile = path.join(dataDir, 'search.json');
+  const calls = [];
+  const vectors = { 'document work': [1, 0, 0], 'Write onboarding guide': [0.9, 0.1, 0], 'Fix sign-in': [0, 1, 0], 'Prepare policy handbook': [0.8, 0.2, 0], 'Buy equipment': [0, 0, 1] };
+  const embed = async texts => { calls.push(texts); return texts.map(text => vectors[text]); };
+  const documents = [{ id: 'guide', text: 'Write onboarding guide' }, { id: 'login', text: 'Fix sign-in' }];
+  try {
+    const index = new SemanticTaskIndex({ embed, cacheFile, modelKey: 'fixture-1', dimensions: 3 });
+    const results = await Promise.all([index.search('document work', documents, []), index.search('document work', documents, [])]);
+    assert.deepEqual(results.map(matches => matches.map(match => match.id)), [['guide'], ['guide']]);
+    assert.deepEqual(calls, [['Write onboarding guide', 'Fix sign-in'], ['document work']]);
+    assert.equal(readFileSync(cacheFile, 'utf8').includes('Write onboarding guide'), false);
+    documents[1].text = 'Prepare policy handbook';
+    assert.deepEqual((await index.search('document work', documents, [])).map(match => match.id), ['guide', 'login']);
+    assert.deepEqual(calls.at(-1), ['Prepare policy handbook']);
+    documents.shift();
+    assert.deepEqual((await index.search('document work', documents, [])).map(match => match.id), ['login']);
+    assert.equal(JSON.parse(readFileSync(cacheFile, 'utf8')).vectors.length, 1);
+    const restored = new SemanticTaskIndex({ embed, cacheFile, modelKey: 'fixture-1', dimensions: 3 });
+    const beforeRestore = calls.length;
+    await restored.search('document work', documents, []);
+    assert.deepEqual(calls.slice(beforeRestore), [['document work']]);
+    assert.deepEqual(await restored.search('Buy equipment', documents, []), []);
+    assert.equal((await restored.search('Buy equipment', documents, [{ id: 'login' }]))[0].id, 'login');
+    const changedModel = new SemanticTaskIndex({ embed, cacheFile, modelKey: 'fixture-2', dimensions: 3 });
+    await changedModel.search('document work', documents, []);
+    assert.deepEqual(calls.at(-2), ['Prepare policy handbook']);
+    const invalid = new SemanticTaskIndex({ embed: async () => [[NaN]], cacheFile, modelKey: 'invalid', dimensions: 3 });
+    await assert.rejects(invalid.search('document work', documents, []), /Invalid task embedding/);
   } finally { rmSync(dataDir, { recursive: true, force: true }); }
 });
 

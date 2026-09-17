@@ -140,7 +140,17 @@ After provisioning, `local:check` warms the real voice/tool prefix and checks re
 
 Local voice now uses one tool-capable conversation, shared with text chat. There is no separate tool-less acknowledgement model or playback-gated background planner. Status questions can read current work directly, and completed answers remain in conversation history. Tool access still does not authorize starting or resuming work without an explicit request. Kokoro synthesis and playback ownership are unchanged.
 
-For references such as "What's the status of the document work?", `list_work` accepts an optional `query`. This searches all saved task titles, objectives, user follow-ups and area names/aliases locally with MiniSearch, including tasks outside the recent list. It uses ranked keyword, prefix and typo matching, not embeddings or semantic synonym matching. All meaningful query terms must match; a missed match should prompt a more specific description, not a guessed task. The index is rebuilt from current state on each query, with no downloads, external service or persisted search cache.
+For references such as "What's the status of the document work?", `list_work` accepts an optional `query`. MiniSearch searches all saved titles, objectives, user follow-ups and area names/aliases, including older tasks. Optional semantic matching adds a quantized MiniLM embedding model, running locally on CPU with two inference threads. This can connect paraphrases such as "new employee handbook" to "write the onboarding guide" and "authentication bug" to sign-in repairs. Similarity is not certainty: broad labels such as "document" can still need a distinguishing detail. Low-similarity candidates are excluded rather than always returning the nearest task.
+
+Install the optional embedding files explicitly, without starting or changing the voice stack:
+
+```powershell
+npm run models -- task-search
+```
+
+This downloads approximately 23 MB of quantized weights plus tokenizer/config files from a pinned `Xenova/all-MiniLM-L6-v2` revision using the existing integrity-checked provisioning path. It is separate from normal voice setup. Chat never downloads embedding files or sends task text to a service. Missing or failed embeddings fall back to keyword search. The embedding runtime loads lazily on first use; cold initialization costs more than subsequent searches.
+
+Semantic search blends cosine similarity with keyword ranking. It embeds bounded titles, objectives and the latest two user follow-ups, not logs or tool output. Changed text is embedded on the next search in batches of eight; unchanged vectors are reused from `task-search-vectors.json` beside task state. The versioned cache stores hashes and vectors, not copied task text, and removes deleted-task vectors on the next search. Query vectors have a bounded in-memory cache. Treat embeddings as private derived task data. No vector database, server, background-job protocol or additional LLM prompt/tool definition is needed; the existing async tool call awaits search and then returns fresh status.
 
 Queried results contain at most three task titles, areas and bounded current status summaries, with `hasMore` when additional matches exist. They omit session records, worktree paths and backend metadata. The assistant can answer from that read, asks which title the user means for ambiguous matches, and uses `get_work_status` for known tasks or fuller outcomes. Calling `list_work` without a query keeps its existing recent-task/area response. Context trimming preserves all returned search identities and titles rather than silently resolving ambiguity. The shared prompt requests professional short answers without speaking IDs, paths, logs or tool internals; these are model instructions, not a guarantee of output compliance.
 
@@ -167,6 +177,8 @@ node scripts/bench-local.mjs llm
 These checks need intact, installed model files and runtimes and never repair assets. The LLM benchmark compares the old configuration, 4K/f16, q8 keys, and q8 keys/values, including template rendering, task reads, a denial follow-up, empty results and tool errors. Validate on the target device before enabling optional acceleration or KV quantization.
 
 The LLM benchmark also checks unique, ambiguous and missing document references, one-read status answers and obvious spoken-internal leaks using synthetic read-only results. To test just the normal compact configuration, run `node scripts/bench-local.mjs llm compact-f16`. Its automatic checks are smoke tests; inspect the recorded replies for correctness and natural clarification. Prompt/schema size tests bound payload growth but do not measure actual tokenizer counts or inference latency.
+
+An optional embedding-only regression check uses synthetic tasks and blocks network access during inference. After provisioning, set `TEST_TASK_EMBEDDINGS=1` and run `node --env-file-if-exists=.env --test test/supervisor.test.mjs`, then unset it. The regular suite skips this installed-model check and uses deterministic embedding fixtures; neither path loads the voice GGUF.
 
 ## Hosted Providers
 

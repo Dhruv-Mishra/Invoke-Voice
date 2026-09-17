@@ -24,6 +24,14 @@ export const ASSETS = Object.freeze([
 
 export const CRISPASR_AVX2_ASSET = { id: 'crispasr', label: 'CrispASR 0.8.32 CPU AVX2 (opt-in)', name: 'crispasr-windows-x86_64-cpu.zip', executable: 'crispasr.exe', runtimeDirectory: 'crispasr-avx2', size: 8261759, sha256: 'ac8b6caf4dd448d00c5050907275bce4d154747110c37943aa4f69ee7fac9541', sourceUrl: 'https://github.com/CrispStrobe/CrispASR/releases/download/v0.8.32/crispasr-windows-x86_64-cpu.zip' };
 
+export const TASK_SEARCH_MODEL_KEY = 'Xenova/all-MiniLM-L6-v2@751bff37182d3f1213fa05d7196b954e230abad9:q8:mean:256:v1';
+export const TASK_SEARCH_ASSETS = Object.freeze([
+  ['taskSearchConfig', 'config.json'],
+  ['taskSearchTokenizer', 'tokenizer.json'],
+  ['taskSearchTokenizerConfig', 'tokenizer_config.json'],
+  ['taskSearchWeights', 'onnx/model_quantized.onnx'],
+].map(([id, name]) => hf(id, `Task search MiniLM ${name}`, 'Xenova/all-MiniLM-L6-v2', '751bff37182d3f1213fa05d7196b954e230abad9', name)));
+
 export function setupError(message) {
   return Object.assign(new Error(message), { setupMessage: message });
 }
@@ -72,6 +80,7 @@ export function stackPaths(env = process.env, appRoot = root) {
   const moonshine = select(compatibleMoonshine, requestedMoonshine && path.join(path.dirname(requestedMoonshine), q4Name), path.join(localStack, 'STT_Models', q4Name), path.join(modelDir, q4Name)) || path.join(modelDir, q4Name);
   return {
     home, modelDir, runtimeDir, crispasrCpu, receiptDir: path.join(home, 'setup-receipts'),
+    ...Object.fromEntries(TASK_SEARCH_ASSETS.map(asset => [asset.id, path.join(modelDir, 'task-search-minilm', asset.name)])),
     ling: select(configured(env.LOCAL_LLM_PATH), path.join(localStack, 'LLMs', ASSETS[0].name), path.join(modelDir, ASSETS[0].name)) || path.join(modelDir, ASSETS[0].name),
     moonshine,
     tokenizer: select(path.join(path.dirname(moonshine), 'tokenizer.bin'), path.join(modelDir, 'tokenizer.bin')) || path.join(modelDir, 'tokenizer.bin'),
@@ -185,7 +194,7 @@ async function verify(file, meta, signal) {
 }
 
 export async function ensureAsset(paths, asset, { report = () => {}, signal, fetchImpl = fetch } = {}) {
-  if (!ASSETS.includes(asset)) throw setupError('Unknown setup component.');
+  if (!ASSETS.includes(asset) && !TASK_SEARCH_ASSETS.includes(asset)) throw setupError('Unknown setup component.');
   if (asset.id === 'crispasr' && paths.crispasrCpu === 'avx2') asset = CRISPASR_AVX2_ASSET;
   const destination = paths[asset.id];
   if (assetReady(paths, asset, destination)) return destination;
@@ -296,13 +305,13 @@ export async function ensureAsset(paths, asset, { report = () => {}, signal, fet
 
 async function main() {
   const target = process.argv[2];
-  if (!['all', 'ling', 'moonshine', 'runtimes'].includes(target)) {
-    console.log('Usage: npm run models -- all|ling|moonshine|runtimes\nFor complete opt-in local setup, use Settings in the app.');
+  if (!['all', 'ling', 'moonshine', 'runtimes', 'task-search'].includes(target)) {
+    console.log('Usage: npm run models -- all|ling|moonshine|runtimes|task-search\nTask search is optional; full voice setup remains in Settings.');
     return;
   }
   if (target === 'runtimes' && (process.platform !== 'win32' || process.arch !== 'x64')) throw setupError('Prebuilt runtimes support Windows x64 only.');
   const paths = stackPaths();
-  const selected = ASSETS.filter(asset => target === 'runtimes' ? Boolean(asset.executable) && !(asset.id === 'uv' && paths.pythonBase) : target === 'all' ? ['ling', 'moonshine', 'tokenizer', 'vad'].includes(asset.id) : target === 'ling' ? asset.id === 'ling' : ['moonshine', 'tokenizer', 'vad'].includes(asset.id));
+  const selected = target === 'task-search' ? TASK_SEARCH_ASSETS : ASSETS.filter(asset => target === 'runtimes' ? Boolean(asset.executable) && !(asset.id === 'uv' && paths.pythonBase) : target === 'all' ? ['ling', 'moonshine', 'tokenizer', 'vad'].includes(asset.id) : target === 'ling' ? asset.id === 'ling' : ['moonshine', 'tokenizer', 'vad'].includes(asset.id));
   await withSetupLock(paths, async () => {
     for (const asset of selected) await ensureAsset(paths, asset, { report: event => { if (!event.progress) console.log(event.message); } });
   });

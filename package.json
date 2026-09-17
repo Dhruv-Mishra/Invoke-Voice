@@ -31,6 +31,7 @@
   },
   "dependencies": {
     "@google/genai": "^2.21.0",
+    "@huggingface/transformers": "3.8.1",
     "dompurify": "^3.4.15",
     "lucide": "^1.42.0",
     "marked": "^18.0.12",

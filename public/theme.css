@@ -157,13 +157,14 @@ body:has(dialog:modal) .sidebar-brand { -webkit-app-region: no-drag; }
 .presence-copy { margin-top: 24px; text-align: center; padding: 0 14px; min-height: 40px; }
 .presence-copy h1 { font-size: var(--cp-type-2xl); line-height: 1.25; font-weight: 600; color: var(--cp-text); overflow-wrap: anywhere; animation: surface-enter var(--cp-duration-enter) var(--cp-ease) both; }
 .suggestions {
-  display: flex; flex-wrap: wrap; justify-content: center; gap: 8px;
-  width: 100%; min-width: 0; margin: 0; padding: 0;
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px;
+  width: min(520px, 100%); min-width: 0; margin: 0 auto; padding: 0;
 }
 .suggestion {
   min-height: 44px; padding: 10px 16px;
-  display: flex; align-items: center; gap: 8px; text-align: left;
-  background: var(--cp-panel-strong); border: 1px solid var(--cp-border); border-radius: var(--control-radius);
+  display: flex; align-items: center; justify-content: center; gap: 8px; text-align: center;
+  background: var(--cp-glass-surface); border: 1px solid var(--cp-sheen); border-radius: var(--control-radius);
+  backdrop-filter: blur(var(--cp-glass-blur)) saturate(118%);
   color: var(--cp-text); overflow-wrap: anywhere;
   font-size: 13px; font-weight: 400; line-height: 1.5; cursor: pointer;
 }
@@ -353,12 +354,13 @@ body:has(#view-dialog[open]) .voice-sprite *, body:has(#view-dialog[open]) .voic
 dialog { max-height: calc(100dvh - 32px); overflow-y: auto; overscroll-behavior: contain; border-radius: var(--surface-radius); background: var(--cp-bg-elevated); padding: var(--cp-space-6); }
 dialog::backdrop { backdrop-filter: blur(4px); }
 dialog[open] { animation: surface-enter var(--cp-duration-enter) var(--cp-ease) both; }
-dialog.view-dialog { position: fixed; inset: 0 32px; width: min(1240px, calc(100vw - 64px)); max-width: none; height: min(720px, calc(100dvh - 240px)); max-height: calc(100dvh - 240px); margin: auto; padding: 0; overflow: hidden; border: 1px solid var(--cp-sheen); background: var(--cp-bg-elevated); box-shadow: var(--cp-shadow); }
+dialog.view-dialog { position: fixed; inset: 0 32px; width: min(1240px, calc(100vw - 64px)); max-width: none; height: min(720px, calc(100dvh - 240px)); max-height: calc(100dvh - 240px); margin: auto; padding: 0; overflow: hidden; border: 1px solid var(--cp-sheen); background: transparent; box-shadow: var(--cp-shadow); }
 dialog.view-dialog[open] { display: flex; flex-direction: column; }
 .view-dialog::backdrop { background: var(--cp-highlight); }
 .view-dialog-header { display: flex; flex: none; align-items: center; justify-content: space-between; gap: var(--cp-space-4); padding: var(--cp-space-4) var(--cp-space-6); border-bottom: 1px solid var(--cp-border); }
 .view-dialog-header h2 { font-size: var(--cp-type-xl); font-weight: 600; }
 @media (min-width: 761px) {
+  .view-dialog-header, .view-dialog-content { background: var(--cp-glass-surface); backdrop-filter: blur(var(--cp-glass-blur)) saturate(118%); }
   .view-dialog-content .settings-header, .view-dialog-content .page-header h1, .view-dialog-content .section-header h1 { display: none; }
   .view-dialog-content .section-header { justify-content: flex-end; }
   .view-dialog-content .settings-view { padding-top: 0; }
@@ -497,7 +499,7 @@ html[data-appearance='baymax'] .voice-strip::before { top: auto; bottom: 7px; le
   .view-dialog-header { display: none; }
   .application-body, main.center-pane { height: 100%; min-height: 0; overflow: hidden; }
   .settings-view, .standalone-view { padding: var(--cp-space-4); }
-  .settings-view { background: var(--cp-panel-strong); }
+  .settings-view { background: var(--cp-glass-surface); backdrop-filter: blur(var(--cp-glass-blur)) saturate(118%); }
   .section-header { padding: var(--cp-space-4); }
   .section-title { font-size: 16px; }
   .task-table-wrapper { padding: var(--cp-space-4); overflow-y: auto; }
@@ -525,7 +527,10 @@ html[data-appearance='baymax'] .voice-strip::before { top: auto; bottom: 7px; le
 html[data-motion='reduce'] *, html[data-motion='reduce'] *::before, html[data-motion='reduce'] *::after, html[data-motion='reduce'] select::picker-icon {
   animation: none !important; transition: none !important; scroll-behavior: auto !important;
 }
-html[data-transparency='off'] :is(.suggestions, .closed-caption, .voice-strip, header.top-bar) { backdrop-filter: none; }
+@media (max-width: 420px) {
+  .suggestions { grid-template-columns: minmax(0, 1fr); width: min(280px, calc(100% - 32px)); }
+}
+html[data-transparency='off'] :is(.suggestion, .closed-caption, .voice-strip, header.top-bar, .view-dialog-header, .view-dialog-content, .settings-view) { backdrop-filter: none; }
 html[data-motion='reduce'] body[data-voice-active='true']::before { opacity: .85; transform: none; }
 html[data-motion='reduce'] body[data-voice-activity='tool']::after { opacity: .54; transform: none; }
 @media (prefers-reduced-motion: reduce) {

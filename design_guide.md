@@ -22,7 +22,7 @@ A quiet workspace, not a dashboard or a marketing page. Borrow Apple's restraint
 | Rhythm | 1.5 body leading, 1.25 heading leading, zero letter spacing. No viewport-based font sizing. |
 | Color | Neutral ink and pearl surfaces; `--cp-accent` for actions. Status colors only for actual success, warning or failure. |
 | Shape | 8px controls/repeated items, 16px dialogs, circular icon controls. The voice dock uses theme-specific radii without changing control positions. No cards inside cards. |
-| Depth | Hairlines and surface contrast. No decorative gradients or chrome shadows. Blur only on overlays and persistent chrome. |
+| Depth | Hairlines and surface contrast. No decorative gradients or chrome shadows. Use the shared glass surface for persistent chrome, quick actions and view surfaces; keep its solid Transparency-off fallback. |
 
 ## Spacing
 

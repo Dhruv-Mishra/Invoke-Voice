@@ -198,6 +198,8 @@ test('themes supply local bitmap assets and can replace sprite animations', asyn
     assert.ok(existsSync(new URL(theme.background)));
     assert.ok(existsSync(new URL(theme.sprite)));
     assert.ok(theme.tokens['--cp-panel']);
+    assert.ok(theme.tokens['--cp-glass-surface']);
+    assert.equal(theme.tokens['--cp-voice-glass'], 'var(--cp-glass-surface)');
     assert.ok(theme.tokens['--cp-font']);
     assert.notEqual(theme.tokens['--cp-caption-user-bg'], theme.tokens['--cp-caption-assistant-bg']);
     assert.equal(theme.tokens['--cp-caption-user-bg'].includes('gradient'), false);

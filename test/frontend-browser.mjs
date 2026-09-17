@@ -567,7 +567,7 @@ try {
   assert.equal(await evaluate(() => document.querySelector('#settings-view [data-theme-card="jarvis"]').dataset.wallpaper), 'skyline');
   assert.equal(await evaluate(() => document.documentElement.dataset.transparency), 'off');
   assert.equal(await evaluate(() => document.getElementById('transparency-preference').checked), false);
-  assert.equal(await evaluate(() => [...document.querySelectorAll('.voice-strip, .top-bar')].every(element => {
+  assert.equal(await evaluate(() => [...document.querySelectorAll('.voice-strip, .top-bar, .suggestion, .view-dialog-content')].every(element => {
     const style = getComputedStyle(element);
     return style.backdropFilter === 'none' && !style.backgroundColor.startsWith('rgba');
   })), true);
@@ -835,11 +835,21 @@ try {
       if (view === 'home') {
         assert.equal(await evaluate(() => {
           const surface = document.querySelector('.app-main').getBoundingClientRect();
-          return [...document.querySelectorAll('.suggestion')].every(button => {
-            const bounds = button.getBoundingClientRect();
-            return bounds.top >= surface.top && bounds.bottom <= surface.bottom;
-          });
-        }), true, 'quick actions must be fully visible above the dock');
+          const dock = document.querySelector('.voice-strip').getBoundingClientRect();
+          const group = document.querySelector('.suggestions').getBoundingClientRect();
+          const buttons = [...document.querySelectorAll('.suggestion')];
+          const widths = buttons.map(button => button.getBoundingClientRect().width);
+          const materialStyles = [document.querySelector('.voice-strip'), ...buttons].map(element => getComputedStyle(element));
+          const materialAlpha = Number(materialStyles[0].backgroundColor.match(/[\d.]+/g).at(-1));
+          return Math.max(...widths) - Math.min(...widths) < 1
+            && Math.abs((group.left + group.right - dock.left - dock.right) / 2) < 1
+            && materialAlpha > .5 && materialAlpha < .9
+            && materialStyles.every(style => style.backgroundColor === materialStyles[0].backgroundColor && style.backdropFilter !== 'none')
+            && buttons.every(button => {
+              const bounds = button.getBoundingClientRect();
+              return bounds.top >= surface.top && bounds.bottom <= surface.bottom;
+            });
+        }), true, 'quick actions must be equally sized, centered, and fully visible above the dock');
       }
       const contentBefore = await evaluate(() => document.querySelector('.page-views').getBoundingClientRect().toJSON());
       const longCaption = 'Supervisor a designated work area. '.repeat(24);
@@ -901,7 +911,12 @@ try {
           const settings = document.getElementById('settings-view');
           settings.scrollTop = settings.scrollHeight;
           const dialog = document.getElementById('view-dialog').getBoundingClientRect();
-          return settings.scrollHeight > settings.clientHeight && settings.getBoundingClientRect().bottom <= dialog.bottom && dialog.bottom <= document.querySelector('.voice-strip').getBoundingClientRect().top;
+          const materialStyle = getComputedStyle(innerWidth <= 760 ? settings : document.querySelector('.view-dialog-content'));
+          const alpha = Number(materialStyle.backgroundColor.match(/[\d.]+/g).at(-1));
+          return settings.scrollHeight > settings.clientHeight
+            && settings.getBoundingClientRect().bottom <= dialog.bottom
+            && dialog.bottom <= document.querySelector('.voice-strip').getBoundingClientRect().top
+            && alpha > .5 && alpha < .9 && materialStyle.backdropFilter !== 'none';
         }), true);
       }
       if ((width === 1440 || width === 390) && ['home', 'settings'].includes(view)) await screenshot(`${view}-${width}`);

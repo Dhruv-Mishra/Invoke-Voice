@@ -13,9 +13,26 @@ const bundledPython = fileURLToPath(new URL('../.venv/Scripts/python.exe', impor
 const defaultMoonshineModel = fileURLToPath(new URL('../../LocalVoiceStack/STT_Models/moonshine-streaming-small-q4_k.gguf', import.meta.url));
 let kokoroRuntimePromise;
 let crispRuntimePromise;
+let kokoroProcess;
+let crispProcess;
+const runtimeExitListeners = new Set();
 
-async function startKokoroRuntime(config, env) {
+export function isLocalVoiceWarm() {
+  return [kokoroProcess, crispProcess].every(process => process && process.exitCode === null && process.signalCode === null);
+}
+
+export function onLocalVoiceRuntimeExit(listener) {
+  runtimeExitListeners.add(listener);
+  return () => runtimeExitListeners.delete(listener);
+}
+
+function reportRuntimeExit(runtime) {
+  for (const listener of runtimeExitListeners) listener(runtime);
+}
+
+async function startKokoroRuntime(config, env, signal) {
   const process = spawn(config.pythonBin, ['-u', worker], { windowsHide: true, env: { ...env, LOCAL_THREADS: env.KOKORO_THREADS || env.LOCAL_THREADS || '8' }, stdio: ['pipe', 'pipe', 'pipe'] });
+  kokoroProcess = process;
   desktopLaunch.trackChild(process);
   let diagnostic = '';
   process.stderr.on('data', chunk => { diagnostic = (diagnostic + chunk.toString()).slice(-1000); });
@@ -24,7 +41,9 @@ async function startKokoroRuntime(config, env) {
   try {
     await new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('Kokoro startup exceeded 45s. Run its warm-up command first.')), 45000);
-      const finish = error => { clearTimeout(timer); error ? reject(error) : resolve(); };
+      const abort = () => { clearTimeout(timer); process.kill(); reject(new Error('Kokoro startup was cancelled')); };
+      const finish = error => { clearTimeout(timer); signal?.removeEventListener('abort', abort); error ? reject(error) : resolve(); };
+      signal?.addEventListener('abort', abort, { once: true });
       process.once('error', error => finish(new Error(`Kokoro failed to start: ${error.message}`)));
       process.once('exit', code => finish(new Error(`Kokoro exited (${code}). ${diagnostic}`)));
       const onLine = line => {
@@ -42,19 +61,24 @@ async function startKokoroRuntime(config, env) {
   return { process, reader };
 }
 
-function getKokoroRuntime(config, env) {
+function getKokoroRuntime(config, env, signal) {
   if (!kokoroRuntimePromise) {
-    const pending = startKokoroRuntime(config, env);
+    const pending = startKokoroRuntime(config, env, signal);
     kokoroRuntimePromise = pending;
     pending.then(runtime => {
-      runtime.process.once('exit', () => { if (kokoroRuntimePromise === pending) kokoroRuntimePromise = undefined; });
+      runtime.process.once('exit', () => {
+        if (kokoroRuntimePromise === pending) kokoroRuntimePromise = undefined;
+        if (kokoroProcess === runtime.process) kokoroProcess = undefined;
+        reportRuntimeExit('Kokoro');
+      });
     }).catch(() => { if (kokoroRuntimePromise === pending) kokoroRuntimePromise = undefined; });
   }
   return kokoroRuntimePromise;
 }
 
-async function startCrispRuntime(config, env) {
+async function startCrispRuntime(config, env, signal) {
   const process = spawn(config.crispasrBin, localSttArguments(config, env), { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+  crispProcess = process;
   desktopLaunch.trackChild(process);
   let diagnostic = '';
   process.stdin.on('error', () => {});
@@ -62,7 +86,9 @@ async function startCrispRuntime(config, env) {
   try {
     await new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('CrispASR did not become ready within 30s')), 30000);
-      const finish = error => { clearTimeout(timer); error ? reject(error) : resolve(); };
+      const abort = () => { clearTimeout(timer); process.kill(); reject(new Error('CrispASR startup was cancelled')); };
+      const finish = error => { clearTimeout(timer); signal?.removeEventListener('abort', abort); error ? reject(error) : resolve(); };
+      signal?.addEventListener('abort', abort, { once: true });
       process.stderr.on('data', chunk => {
         diagnostic = (diagnostic + chunk.toString()).slice(-1000);
         if (diagnostic.includes('reading raw s16le 16kHz mono PCM from stdin')) finish();
@@ -78,12 +104,16 @@ async function startCrispRuntime(config, env) {
   return { process, transcription, diagnostic: () => diagnostic };
 }
 
-function getCrispRuntime(config, env) {
+function getCrispRuntime(config, env, signal) {
   if (!crispRuntimePromise) {
-    const pending = startCrispRuntime(config, env);
+    const pending = startCrispRuntime(config, env, signal);
     crispRuntimePromise = pending;
     pending.then(runtime => {
-      runtime.process.once('exit', () => { if (crispRuntimePromise === pending) crispRuntimePromise = undefined; });
+      runtime.process.once('exit', () => {
+        if (crispRuntimePromise === pending) crispRuntimePromise = undefined;
+        if (crispProcess === runtime.process) crispProcess = undefined;
+        reportRuntimeExit('CrispASR');
+      });
     }).catch(() => { if (crispRuntimePromise === pending) crispRuntimePromise = undefined; });
   }
   return crispRuntimePromise;
@@ -97,12 +127,26 @@ async function claimCrispRuntime(config, env) {
   return runtime;
 }
 
-export async function warmLocalVoice(env = process.env) {
+export async function warmLocalVoice(env = process.env, signal) {
   const config = localConfiguration(env);
   const warmups = [];
-  if (config.ttsConfigured) warmups.push(getKokoroRuntime(config, env));
-  if (config.sttConfigured) warmups.push(getCrispRuntime(config, env));
-  await Promise.all(warmups);
+  const ownedProcesses = [];
+  if (config.ttsConfigured) {
+    const existing = kokoroRuntimePromise;
+    warmups.push(getKokoroRuntime(config, env, signal));
+    if (!existing && kokoroProcess) ownedProcesses.push(kokoroProcess);
+  }
+  if (config.sttConfigured) {
+    const existing = crispRuntimePromise;
+    warmups.push(getCrispRuntime(config, env, signal));
+    if (!existing && crispProcess) ownedProcesses.push(crispProcess);
+  }
+  try { await Promise.all(warmups); }
+  catch (error) {
+    for (const process of ownedProcesses) process.kill();
+    await Promise.allSettled(warmups);
+    throw error;
+  }
   return warmups.length > 0;
 }
 
@@ -110,6 +154,9 @@ export async function closeLocalVoice() {
   const pending = [kokoroRuntimePromise, crispRuntimePromise];
   kokoroRuntimePromise = undefined;
   crispRuntimePromise = undefined;
+  for (const process of new Set([kokoroProcess, crispProcess].filter(Boolean))) process.kill();
+  kokoroProcess = undefined;
+  crispProcess = undefined;
   for (const result of await Promise.allSettled(pending.filter(Boolean))) {
     if (result.status === 'fulfilled') {
       result.value.reader?.close();
@@ -206,6 +253,7 @@ export async function createLocalVoice({ send, callTool, provider = 'local', mod
   let ttsLineHandler;
   let ttsExitHandler;
   let activePhrase;
+  let activePhraseTimer;
   let lastSpeechAt = 0;
   let sttBackpressured = false;
   let reportedBackpressure = false;
@@ -230,6 +278,8 @@ export async function createLocalVoice({ send, callTool, provider = 'local', mod
     phrases.length = 0;
     actionQueue.length = 0;
     announcementQueue.length = 0;
+    clearTimeout(activePhraseTimer);
+    for (const response of responses.values()) clearTimeout(response.playbackTimer);
     responses.clear();
     pendingActions.clear();
     readers.forEach(reader => reader.close());
@@ -248,8 +298,9 @@ export async function createLocalVoice({ send, callTool, provider = 'local', mod
       if (phrases[index].token === interruptedToken) phrases.splice(index, 1);
     }
     for (const [responseId, response] of responses) {
-      if (response.token !== interruptedToken || response.ended) continue;
+      if (response.token !== interruptedToken) continue;
       if (response.announcement) announcementQueue.unshift({ ...response.announcement, transcript: false });
+      clearTimeout(response.playbackTimer);
       pendingActions.delete(responseId);
       responses.delete(responseId);
     }
@@ -260,6 +311,9 @@ export async function createLocalVoice({ send, callTool, provider = 'local', mod
     activePhrase = phrases.shift();
     if (!tts?.stdin.writable) return fail('Kokoro is not available');
     tts.stdin.write(`${JSON.stringify(activePhrase)}\n`);
+    clearTimeout(activePhraseTimer);
+    activePhraseTimer = setTimeout(() => fail('Kokoro did not finish speech synthesis. Reconnect voice to retry.'), 30000);
+    activePhraseTimer.unref();
   }
   function phrase(text, token, responseId) {
     if (!text.trim() || closed || token !== turn) return;
@@ -273,6 +327,15 @@ export async function createLocalVoice({ send, callTool, provider = 'local', mod
     if (activePhrase?.responseId === responseId || phrases.some(item => item.responseId === responseId)) return;
     response.ended = true;
     send({ type: 'response_end', responseId, playable: isVoiceResponsePlayable(response) });
+    response.playbackTimer = setTimeout(() => {
+      if (!responses.has(responseId)) return;
+      responses.delete(responseId);
+      pendingActions.delete(responseId);
+      send({ type: 'error', message: 'Audio playback did not finish. The pending action was not started.' });
+      send({ type: 'state', state: 'listening' });
+      pumpAnnouncements();
+    }, 30000);
+    response.playbackTimer.unref();
   }
   function queueAnnouncement(text, { transcript = false, notificationId, action } = {}) {
     if (closed) return;
@@ -413,6 +476,7 @@ export async function createLocalVoice({ send, callTool, provider = 'local', mod
       }
       if (event.type === 'done') {
         const responseId = activePhrase.responseId;
+        clearTimeout(activePhraseTimer);
         activePhrase = null;
         pump();
         finishResponse(responseId);
@@ -465,6 +529,7 @@ export async function createLocalVoice({ send, callTool, provider = 'local', mod
       playbackDone(responseId, outcome) {
         const response = responses.get(responseId);
         if (!response?.ended) return;
+        clearTimeout(response.playbackTimer);
         responses.delete(responseId);
         const action = pendingActions.get(responseId);
         pendingActions.delete(responseId);

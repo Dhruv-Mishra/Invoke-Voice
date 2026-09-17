@@ -72,6 +72,10 @@ export function createSetup({ platform = process.platform, arch = process.arch, 
     resume() { if (supported) return begin(false); return snapshot(); },
     invalidate(message) { state = { status: 'error', stage: 'runtime', message, error: message }; },
     async settled() { await job; return snapshot(); },
-    async close() { controller?.abort(); await job; },
+    async close() {
+      controller?.abort();
+      await job;
+      state = { status: 'idle', stage: 'consent', message: 'Local runtimes are stopped.' };
+    },
   };
 }

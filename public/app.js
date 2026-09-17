@@ -25,6 +25,7 @@ let isVoiceStarting = false;
 const pendingNotifications = [];
 const pendingPlaybackResponses = new Map();
 const responsePlaybackGenerations = new Map();
+const cancelledPlaybackResponses = new Set();
 const playbackFailures = new Set();
 let notificationInFlight = null;
 let toolActivityTimer = null;
@@ -46,6 +47,9 @@ const USER_SPEAKING_COOLDOWN_MS = 2000;
 // Chat abort & generation token
 let currentChatAbortController = null;
 let currentChatToken = 0;
+let stateLoadRevision = 0;
+let modelSelectionExplicit = false;
+let settingsDirty = false;
 
 // DOM Elements
 const providerSelect = document.getElementById('provider-select');
@@ -240,6 +244,7 @@ function renderSafeMarkdown(target, text) {
 }
 
 function applyState(state) {
+  stateLoadRevision++;
   appState = state && typeof state === 'object' ? state : { areas: [], tasks: [], settings: {} };
   if (!Array.isArray(appState.areas)) appState.areas = [];
   if (!Array.isArray(appState.tasks)) appState.tasks = [];
@@ -247,7 +252,7 @@ function applyState(state) {
   renderAreas();
   renderTasks();
   renderFiles();
-  populateSettingsView();
+  if (!settingsDirty) populateSettingsView();
   updateIcons();
 }
 
@@ -366,7 +371,7 @@ document.querySelectorAll('[data-open-view]').forEach(button => {
 document.getElementById('settings-route-btn').addEventListener('click', () => routeConfigBtn.click());
 document.getElementById('dock-route-btn').addEventListener('click', () => {
   closeVoiceOptions();
-  routeConfigBtn.click();
+  openRouteConfig(voiceOptionsButton);
 });
 document.getElementById('calendar-date').textContent = new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric' }).format(new Date());
 
@@ -708,7 +713,7 @@ function handleRouteSwitch(reason) {
   }
   currentChatToken++;
 
-  if (voiceSocket) {
+  if (isVoiceStarting || voiceSocket || isCapturing) {
     stopVoiceSession();
   }
   conversation = [];
@@ -725,10 +730,14 @@ function getPlaybackContext() {
   if (!playbackContext) {
     playbackContext = new (window.AudioContext || window.webkitAudioContext)();
   }
-  if (playbackContext.state === 'suspended') {
-    playbackContext.resume();
-  }
   return playbackContext;
+}
+
+async function getReadyPlaybackContext() {
+  const context = getPlaybackContext();
+  if (context.state === 'suspended') await context.resume();
+  if (context.state !== 'running') throw new Error('Audio playback is unavailable');
+  return context;
 }
 
 let playbackGeneration = 0;
@@ -736,6 +745,10 @@ let pendingCommit = false;
 
 function sendPlaybackOutcome(responseId, outcome) {
   if (!pendingPlaybackResponses.has(responseId)) return;
+  if (outcome === 'interrupted') {
+    cancelledPlaybackResponses.add(responseId);
+    if (cancelledPlaybackResponses.size > 100) cancelledPlaybackResponses.delete(cancelledPlaybackResponses.values().next().value);
+  }
   pendingPlaybackResponses.delete(responseId);
   responsePlaybackGenerations.delete(responseId);
   if (voiceSocket?.readyState === WebSocket.OPEN) {
@@ -754,7 +767,7 @@ function maybeCompletePlayback(responseId) {
 }
 
 function markResponseEnd(responseId, playable = true) {
-  if (!responseId || pendingPlaybackResponses.has(responseId)) return;
+  if (!responseId || cancelledPlaybackResponses.has(responseId) || pendingPlaybackResponses.has(responseId)) return;
   const generation = responsePlaybackGenerations.get(responseId)?.generation ?? playbackGeneration;
   pendingPlaybackResponses.set(responseId, { generation, failed: !playable });
   audioQueuePromise.then(() => {
@@ -786,7 +799,12 @@ function scheduleAudioBuffer(buffer, token, responseId) {
 }
 
 function clearPlayback() {
+  for (const responseId of responsePlaybackGenerations.keys()) {
+    cancelledPlaybackResponses.add(responseId);
+    if (cancelledPlaybackResponses.size > 100) cancelledPlaybackResponses.delete(cancelledPlaybackResponses.values().next().value);
+  }
   for (const responseId of [...pendingPlaybackResponses.keys()]) sendPlaybackOutcome(responseId, 'interrupted');
+  responsePlaybackGenerations.clear();
   playbackFailures.clear();
   playbackGeneration++;
   audioQueuePromise = Promise.resolve();
@@ -801,7 +819,7 @@ function clearPlayback() {
 
 async function playAudioChunk(base64Data, mimeType, sampleRate, token, responseId) {
   if (token !== playbackGeneration) return;
-  const ctx = getPlaybackContext();
+  const ctx = await getReadyPlaybackContext();
   const binary = atob(base64Data);
   const len = binary.length;
   if (len === 0) throw new Error('Received an empty audio chunk');
@@ -836,6 +854,7 @@ async function playAudioChunk(base64Data, mimeType, sampleRate, token, responseI
 }
 
 function queueAudioChunk(data, token) {
+  if (data.responseId && cancelledPlaybackResponses.has(data.responseId)) return;
   if (data.responseId && !responsePlaybackGenerations.has(data.responseId)) {
     responsePlaybackGenerations.set(data.responseId, { generation: token, seenAt: Date.now() });
     if (responsePlaybackGenerations.size > 100) responsePlaybackGenerations.delete(responsePlaybackGenerations.keys().next().value);
@@ -970,7 +989,7 @@ async function startVoiceSession() {
         }
       } else if (msg.type === 'audio') {
         // Forward PCM only when socket open, server is ready, and mute/PTT permits
-        if (voiceSocket && voiceSocket.readyState === WebSocket.OPEN && isServerReady && !isMuted && (shouldForwardAudio() || (msg.flushed && pendingCommit))) {
+        if (voiceSocket && voiceSocket.readyState === WebSocket.OPEN && isServerReady && ((!isMuted && shouldForwardAudio()) || (msg.flushed && pendingCommit))) {
           const b64 = arrayBufferToBase64(msg.audioData);
           voiceSocket.send(JSON.stringify({ type: 'audio', data: b64 }));
         }
@@ -1155,10 +1174,10 @@ function stopVoiceSession() {
 
 // Push to Talk, Mute & Interrupt
 muteMicOpt.addEventListener('change', () => {
-  isMuted = muteMicOpt.checked;
-  if (isMuted && isPttHeld) {
+  if (muteMicOpt.checked && isPttHeld) {
     endPttHold();
   }
+  isMuted = muteMicOpt.checked;
   for (const track of mediaStream?.getAudioTracks() || []) track.enabled = !isMuted;
   workletNode?.port.postMessage({ type: 'reset' });
 });
@@ -1243,6 +1262,7 @@ micToggleBtn.addEventListener('click', () => {
 // Quiet Mode
 quietModeBtn.addEventListener('click', () => {
   isQuietMode = !isQuietMode;
+  quietModeBtn.setAttribute('aria-pressed', String(isQuietMode));
   if (isQuietMode) {
     pendingNotifications.length = 0;
     quietBadge.style.display = 'inline-flex';
@@ -1446,6 +1466,11 @@ function populateSettingsView() {
 function renderApplicationConfig() {
   if (!configFields) return;
   configFields.replaceChildren();
+  const warnings = Array.isArray(appConfig?.configuration?.warnings) ? appConfig.configuration.warnings : [];
+  if (warnings.length && configFeedback && !configFeedback.textContent) {
+    configFeedback.textContent = warnings.join(' ');
+    configFeedback.className = 'settings-feedback error';
+  }
   const fields = Array.isArray(appConfig?.configuration?.fields) ? appConfig.configuration.fields : [];
   if (!fields.length) {
     const unavailable = document.createElement('p');
@@ -1549,6 +1574,8 @@ if (configForm) {
 }
 
 if (settingsForm) {
+  settingsForm.addEventListener('input', () => { settingsDirty = true; });
+  settingsForm.addEventListener('change', () => { settingsDirty = true; });
   settingsForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     if (settingsFeedback) {
@@ -1595,6 +1622,7 @@ if (settingsForm) {
       }
       const updated = await res.json();
       appState.settings = updated;
+      settingsDirty = false;
       if (settingsFeedback) {
         settingsFeedback.textContent = browserNotifications && !browserAllowed ? 'Settings saved; browser notifications were not permitted.' : 'Settings saved.';
       }
@@ -1610,7 +1638,7 @@ if (settingsForm) {
 
 // REST: Config and State Loading
 async function loadConfig(preserveSelection = false) {
-  const selection = preserveSelection ? { provider: providerSelect.value, voiceMode: voiceModeSelect.value, model: modelInput.value } : null;
+  const selection = preserveSelection ? { provider: providerSelect.value, voiceMode: voiceModeSelect.value, model: modelInput.value, modelExplicit: modelSelectionExplicit } : null;
   try {
     const res = await fetch('/api/config');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1642,11 +1670,12 @@ async function loadConfig(preserveSelection = false) {
     if (selection && appConfig.providers?.some(provider => provider.id === selection.provider)) providerSelect.value = selection.provider;
     if (selection && appConfig.voiceModes?.some(mode => mode.id === selection.voiceMode)) voiceModeSelect.value = selection.voiceMode;
     const currentProv = appConfig.providers?.find(p => p.id === providerSelect.value);
-    if (selection) {
+    if (selection?.modelExplicit) {
       modelInput.value = selection.model;
     } else if (currentProv?.model) {
       modelInput.value = currentProv.model;
     }
+    modelSelectionExplicit = selection?.modelExplicit === true;
 
     populateSettingsOptions();
     populateTaskModalOptions();
@@ -1662,11 +1691,15 @@ async function loadConfig(preserveSelection = false) {
 }
 
 async function loadState() {
+  const revision = ++stateLoadRevision;
   try {
     const res = await fetch('/api/state');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    applyState(await res.json());
+    const state = await res.json();
+    if (revision !== stateLoadRevision) return;
+    applyState(state);
   } catch (err) {
+    if (revision !== stateLoadRevision) return;
     tasksList.replaceChildren();
     const errDiv = document.createElement('div');
     errDiv.className = 'empty-state';
@@ -2923,6 +2956,7 @@ providerSelect.addEventListener('change', () => {
   if (currentProv?.model) {
     modelInput.value = currentProv.model;
   }
+  modelSelectionExplicit = false;
   handleRouteSwitch('provider change');
 });
 
@@ -2931,14 +2965,25 @@ voiceModeSelect.addEventListener('change', () => {
 });
 
 modelInput.addEventListener('change', () => {
+  modelSelectionExplicit = true;
   handleRouteSwitch('model change');
 });
 
+let routeConfigOpener = null;
+function openRouteConfig(opener) {
+  routeConfigOpener = opener;
+  routeConfigDialog.showModal();
+}
 if (routeConfigBtn && routeConfigDialog) {
-  routeConfigBtn.addEventListener('click', () => routeConfigDialog.showModal());
+  routeConfigBtn.addEventListener('click', () => openRouteConfig(routeConfigBtn));
 }
 if (routeConfigClose && routeConfigDialog) {
   routeConfigClose.addEventListener('click', () => routeConfigDialog.close());
+  routeConfigDialog.addEventListener('close', () => {
+    const opener = routeConfigOpener;
+    routeConfigOpener = null;
+    if (opener?.isConnected && opener.getClientRects().length) opener.focus({ preventScroll: true });
+  });
 }
 
 async function initialize() {

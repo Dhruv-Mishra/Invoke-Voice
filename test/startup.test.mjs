@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readdirSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import http from 'node:http';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocket } from 'ws';
@@ -137,6 +139,40 @@ test('release mode serves built frontend assets with accurate MIME types and own
     assert.equal(traversal.status, 404);
   } finally {
     await supervisor.close();
+  }
+});
+
+test('shutdown aborts active chat streams', { timeout: 5000 }, async () => {
+  let acceptProviderRequest;
+  const providerRequested = new Promise(resolve => { acceptProviderRequest = resolve; });
+  const provider = http.createServer((request, response) => {
+    acceptProviderRequest();
+    response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    response.write('data: {"choices":[{"delta":{"content":"partial"}}]}\n\n');
+  });
+  await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
+
+  const previousUrl = process.env.LOCAL_LLM_URL;
+  process.env.LOCAL_LLM_URL = `http://127.0.0.1:${provider.address().port}`;
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-supervisor-close-'));
+  const app = await startSupervisor({ dataDir, port: 0, mode: 'release', prewarm: false });
+  const chat = fetch(`${app.url}/api/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ provider: 'local', messages: [{ role: 'user', content: 'hello' }] }),
+  });
+
+  try {
+    await providerRequested;
+    const chatResponse = await chat;
+    await app.close();
+    await chatResponse.text();
+    assert.equal(app.server.listening, false);
+  } finally {
+    if (previousUrl === undefined) delete process.env.LOCAL_LLM_URL;
+    else process.env.LOCAL_LLM_URL = previousUrl;
+    await new Promise(resolve => provider.close(resolve));
+    rmSync(dataDir, { recursive: true, force: true });
   }
 });
 

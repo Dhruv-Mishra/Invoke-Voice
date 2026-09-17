@@ -93,8 +93,33 @@ function receiptPath(paths, asset, destination) {
 export function assetReady(paths, asset, destination = paths[asset.id]) {
   const receipt = readJson(receiptPath(paths, asset, destination));
   if (receipt?.sourceUrl !== asset.sourceUrl || !receipt.files?.length) return false;
+  const expected = path.resolve(destination);
+  let canonicalExpected;
+  let canonicalRoot;
+  try {
+    canonicalExpected = fs.realpathSync.native(expected);
+    canonicalRoot = asset.executable ? fs.realpathSync.native(path.dirname(expected)) : canonicalExpected;
+  } catch { return false; }
+  const normalize = value => process.platform === 'win32' ? value.toLowerCase() : value;
+  for (const managed of [paths.modelDir, paths.runtimeDir]) {
+    const lexicalRelative = path.relative(path.resolve(managed), expected);
+    if (lexicalRelative.startsWith('..') || path.isAbsolute(lexicalRelative)) continue;
+    let canonicalManaged;
+    try { canonicalManaged = fs.realpathSync.native(managed); } catch { return false; }
+    const canonicalRelative = path.relative(canonicalManaged, canonicalExpected);
+    if (canonicalRelative.startsWith('..') || path.isAbsolute(canonicalRelative)) return false;
+  }
+  if (!receipt.files.some(record => {
+    try { return normalize(fs.realpathSync.native(record.path)) === normalize(canonicalExpected); }
+    catch { return false; }
+  })) return false;
   return receipt.files.every(record => {
-    const stat = fileStat(record.path);
+    let recorded;
+    try { recorded = fs.realpathSync.native(record.path); } catch { return false; }
+    const relative = path.relative(canonicalRoot, recorded);
+    if (asset.executable && (relative.startsWith('..') || path.isAbsolute(relative))) return false;
+    if (!asset.executable && normalize(recorded) !== normalize(canonicalExpected)) return false;
+    const stat = fileStat(recorded);
     return stat && stat.size === record.size && stat.mtimeMs === record.mtimeMs;
   });
 }
@@ -238,8 +263,24 @@ export async function ensureAsset(paths, asset, { report = () => {}, signal, fet
     const executable = entries.find(entry => entry.isFile() && entry.name === asset.executable);
     if (!executable) throw setupError(`${asset.label}: the archive is missing its executable. Retry or check the release source.`);
     const sourceDir = executable.parentPath || executable.path;
-    fs.rmSync(targetDir, { recursive: true, force: true });
-    fs.renameSync(sourceDir, targetDir);
+    const backupDir = `${targetDir}.backup-${process.pid}`;
+    fs.rmSync(backupDir, { recursive: true, force: true });
+    const hadTarget = fs.existsSync(targetDir);
+    let movedTarget = false;
+    try {
+      if (hadTarget) {
+        fs.renameSync(targetDir, backupDir);
+        movedTarget = true;
+      }
+      fs.renameSync(sourceDir, targetDir);
+    } catch (error) {
+      if (movedTarget) {
+        fs.rmSync(targetDir, { recursive: true, force: true });
+        if (fs.existsSync(backupDir)) fs.renameSync(backupDir, targetDir);
+      }
+      throw error;
+    }
+    if (movedTarget) fs.rmSync(backupDir, { recursive: true, force: true });
     const files = fs.readdirSync(targetDir, { recursive: true, withFileTypes: true }).filter(entry => entry.isFile()).map(entry => path.join(entry.parentPath || entry.path, entry.name));
     paths[asset.id] = path.join(targetDir, asset.executable);
     recordAsset(paths, asset, paths[asset.id], files, meta.sha256);

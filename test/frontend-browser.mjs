@@ -459,6 +459,16 @@ try {
   await click('#detail-dialog-close');
   await visit('home');
 
+  await pointerClick('#voice-options-btn');
+  await pointerClick('#dock-route-btn');
+  await press('Escape');
+  assert.equal(await evaluate(() => document.activeElement.id), 'voice-options-btn');
+  await pointerClick('#voice-options-btn');
+  assert.equal(await evaluate(() => document.getElementById('quiet-mode-btn').getAttribute('aria-pressed')), 'false');
+  await pointerClick('#quiet-mode-btn');
+  assert.equal(await evaluate(() => document.getElementById('quiet-mode-btn').getAttribute('aria-pressed')), 'true');
+  await pointerClick('#quiet-mode-btn');
+
   await click('#mic-toggle-btn');
   console.log('Browser fixture: checking voice');
   await waitFor(() => document.getElementById('agent-sprite').dataset.state === 'listening');
@@ -487,6 +497,7 @@ try {
   assert.equal(await evaluate(() => document.querySelectorAll('.history-entry').length), 2);
   await voice({ type: 'transcript', role: 'user', text: 'Voice final', partial: false });
   assert.equal(await evaluate(() => document.querySelectorAll('.history-entry').length), 2);
+  assert.equal(await evaluate(() => document.getElementById('user-caption-text').getAttribute('aria-labelledby')), 'user-caption-speaker user-caption-content');
   await voice({ type: 'transcript', role: 'assistant', text: 'Agent reply', partial: true });
   assert.equal(await evaluate(() => document.querySelectorAll('.closed-caption:not([hidden])').length), 2);
   assert.equal(await evaluate(() => document.getElementById('user-caption-text').textContent), 'Voice final');

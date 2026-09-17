@@ -226,3 +226,41 @@ test('announces completed and failed work', async () => {
     });
   } finally { rmSync(dataDir, { recursive: true, force: true }); }
 });
+
+test('quarantines corrupt state and makes abandoned tasks recoverable after restart', async () => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-supervisor-recovery-'));
+  try {
+    writeFileSync(path.join(dataDir, 'state.json'), '{"tasks":');
+    const recovered = new Supervisor({ dataDir, bridge: {}, now: () => 12345 });
+    assert.match(recovered.snapshot().recoveryWarning, /preserved/);
+    assert.equal(existsSync(path.join(dataDir, 'state.json.corrupt-12345')), true);
+
+    const area = recovered.resolveArea();
+    recovered.state.tasks.push({ id: 'abandoned', areaId: area.id, state: 'running', createdAt: 1, observations: [], turns: [] });
+    recovered.save();
+    const restarted = new Supervisor({ dataDir, bridge: {} });
+    const status = restarted.toolStatus('abandoned');
+    assert.equal(status.state, 'agent_stopped');
+    assert.ok(status.actions.includes('send_work_message'));
+    assert.ok(status.actions.includes('delete_work'));
+    writeFileSync(path.join(dataDir, 'state.json'), JSON.stringify({ areas: [null, { id: 'bad' }], tasks: [], settings: {} }));
+    const sanitized = new Supervisor({ dataDir, bridge: {} });
+    assert.equal(sanitized.snapshot().areas.length, 1);
+    assert.doesNotThrow(() => sanitized.listAgents(sanitized.resolveArea().id));
+  } finally { rmSync(dataDir, { recursive: true, force: true }); }
+});
+
+test('follow-up status uses current-turn observations after retention', () => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-supervisor-progress-'));
+  try {
+    const supervisor = new Supervisor({ dataDir, bridge: {} });
+    const task = {
+      id: 'retained-progress', state: 'running', createdAt: 1, observations: [],
+      turns: [{ requestId: 'turn', message: 'Continue', createdAt: 200, state: 'running' }],
+      turnObservationStart: 150,
+    };
+    for (let index = 0; index < 100; index++) task.observations.push({ id: String(index), at: 201 + index, summary: `Update ${index}` });
+    supervisor.state.tasks.push(task);
+    assert.equal(supervisor.toolStatus(task.id).update, 'Update 99');
+  } finally { rmSync(dataDir, { recursive: true, force: true }); }
+});

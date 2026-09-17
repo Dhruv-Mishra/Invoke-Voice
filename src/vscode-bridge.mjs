@@ -166,10 +166,17 @@ export function createVSCodeBridge(dataDir, env = process.env) {
     },
     async prepare(task, area) {
       await ensureWorkspace(area.repoPath);
-      const worktree = path.join(dataDir, 'worktrees', task.id);
+      const managedRoot = realpathSync.native(dataDir);
+      const worktreeRoot = path.join(realpathSync(dataDir), 'worktrees');
+      mkdirSync(worktreeRoot, { recursive: true });
+      const normalize = value => process.platform === 'win32' ? value.toLowerCase() : value;
+      if (normalize(realpathSync.native(worktreeRoot)) !== normalize(path.join(managedRoot, 'worktrees'))) throw new Error('Managed worktrees must stay inside the application data directory');
+      const worktree = path.join(worktreeRoot, task.id);
       const branch = `voice/${task.id.slice(0, 8)}`;
-      mkdirSync(path.dirname(worktree), { recursive: true });
       await git(area.repoPath, ['worktree', 'add', '-b', branch, worktree, area.baseRef]);
+      const resolvedWorktree = realpathSync.native(worktree);
+      const relative = path.relative(managedRoot, resolvedWorktree);
+      if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) throw new Error('Managed worktree escaped the application data directory');
       return { worktree: realpathSync(worktree), branch };
     },
     dispatch(task, area, report) {

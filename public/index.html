@@ -751,13 +751,13 @@
   </div>
   <div class="caption-region">
     <div id="user-closed-caption" class="closed-caption" data-role="user" hidden>
-      <span class="caption-speaker sr-only">You</span>
-      <p id="user-caption-text" class="caption-text" tabindex="0" aria-label="Your caption"><span class="caption-content"></span></p>
+      <span id="user-caption-speaker" class="caption-speaker sr-only">You</span>
+      <p id="user-caption-text" class="caption-text" tabindex="0" aria-labelledby="user-caption-speaker user-caption-content"><span id="user-caption-content" class="caption-content"></span></p>
       <button type="button" class="btn btn-icon" aria-label="Dismiss your caption" title="Dismiss your caption"><i data-lucide="x"></i></button>
     </div>
     <div id="closed-caption" class="closed-caption" data-role="assistant" hidden>
       <span id="caption-speaker" class="caption-speaker sr-only">Supervisor</span>
-      <p id="caption-text" class="caption-text" tabindex="0" aria-label="Supervisor caption"><span class="caption-content"></span></p>
+      <p id="caption-text" class="caption-text" tabindex="0" aria-labelledby="caption-speaker caption-content"><span id="caption-content" class="caption-content"></span></p>
       <button type="button" id="dismiss-caption-btn" class="btn btn-icon" aria-label="Dismiss caption" title="Dismiss caption"><i data-lucide="x"></i></button>
     </div>
     <span id="caption-announcement" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></span>
@@ -970,7 +970,7 @@
     </div>
     <div class="voice-options-actions">
       <button class="btn btn-icon" id="dock-route-btn" type="button" title="Voice &amp; model" aria-label="Configure voice and model"><i data-lucide="settings"></i></button>
-      <button class="btn btn-icon" id="quiet-mode-btn" type="button" aria-label="Toggle Quiet Mode" title="Block proactive spoken notifications">
+      <button class="btn btn-icon" id="quiet-mode-btn" type="button" aria-label="Toggle Quiet Mode" aria-pressed="false" title="Block proactive spoken notifications">
         <i data-lucide="bell-off"></i><span class="badge" id="quiet-badge" style="display: none;">On</span>
       </button>
       <button class="btn" id="ptt-btn" type="button" disabled aria-label="Hold to talk or commit speech" title="Commit speech or hold to talk in PTT mode">

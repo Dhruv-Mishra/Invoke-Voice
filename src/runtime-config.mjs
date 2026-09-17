@@ -61,6 +61,7 @@ function normalize(field, raw) {
 export function createRuntimeConfig({ dataDir, env = process.env } = {}) {
   const file = path.join(dataDir, 'config.json');
   let values = {};
+  const warnings = [];
   let startupValues;
   const apply = (includeRestart) => {
     for (const field of fields) {
@@ -70,6 +71,7 @@ export function createRuntimeConfig({ dataDir, env = process.env } = {}) {
   };
   const snapshot = () => ({
     path: file,
+    warnings: [...warnings],
     fields: fields.map(field => ({
       key: field.key,
       label: field.label,
@@ -87,11 +89,29 @@ export function createRuntimeConfig({ dataDir, env = process.env } = {}) {
   try {
     const saved = JSON.parse(readFileSync(file, 'utf8'));
     if (saved?.version === 1 && saved.values && typeof saved.values === 'object' && !Array.isArray(saved.values)) {
-      values = Object.fromEntries(Object.entries(saved.values).filter(([key, value]) => byKey.has(key) && typeof value === 'string').map(([key, value]) => [key, normalize(byKey.get(key), value)]));
+      for (const [key, value] of Object.entries(saved.values)) {
+        if (!byKey.has(key)) continue;
+        if (typeof value !== 'string') {
+          const warning = `Saved ${key} configuration was ignored: value must be text.`;
+          warnings.push(warning);
+          console.warn(warning);
+          continue;
+        }
+        try { values[key] = normalize(byKey.get(key), value); }
+        catch (error) {
+          const warning = `Saved ${key} configuration was ignored: ${error.message}`;
+          warnings.push(warning);
+          console.warn(warning);
+        }
+      }
       apply(true);
     }
   } catch (error) {
-    if (error.code !== 'ENOENT') console.warn(`Saved application configuration was ignored: ${error.message}`);
+    if (error.code !== 'ENOENT') {
+      const warning = 'Saved application configuration was ignored because the file is invalid.';
+      warnings.push(warning);
+      console.warn(`${warning} ${error.message}`);
+    }
   }
   const startupEnvironment = { ...env, PYTHON_BIN: stackPaths(env).pythonBase || '' };
   startupValues = Object.fromEntries(fields.filter(field => field.restartRequired).map(field => [field.key, startupEnvironment[field.key]]));

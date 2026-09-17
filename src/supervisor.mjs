@@ -42,17 +42,44 @@ export class Supervisor extends EventEmitter {
     this.activeTasks = new Set();
     mkdirSync(dataDir, { recursive: true });
     this.file = path.join(dataDir, 'state.json');
-    try { this.state = JSON.parse(readFileSync(this.file, 'utf8')); }
+    this.recoveryWarning = null;
+    try {
+      this.state = JSON.parse(readFileSync(this.file, 'utf8'));
+      if (!this.state || typeof this.state !== 'object' || Array.isArray(this.state)) throw new Error('State root must be an object');
+    }
     catch (error) {
-      if (error.code !== 'ENOENT') throw error;
+      if (error.code !== 'ENOENT') {
+        const backup = `${this.file}.corrupt-${this.now()}`;
+        renameSync(this.file, backup);
+        this.recoveryWarning = `Invalid saved state was preserved at ${backup}.`;
+        console.warn(`${this.recoveryWarning} ${error.message}`);
+      }
       this.state = { areas: [], tasks: [], settings: {} };
     }
-    this.state.areas ||= [];
-    this.state.tasks ||= [];
+    if (!Array.isArray(this.state.areas)) this.state.areas = [];
+    this.state.areas = this.state.areas
+      .filter(area => area && typeof area === 'object' && typeof area.id === 'string' && area.id && typeof area.name === 'string' && area.name.trim() && typeof area.repoPath === 'string' && area.repoPath)
+      .map(area => ({
+        ...DEFAULT_WORK_AREA,
+        ...area,
+        aliases: Array.isArray(area.aliases) ? area.aliases.filter(alias => typeof alias === 'string') : [],
+        agent: typeof area.agent === 'string' && area.agent ? area.agent : DEFAULT_WORK_AREA.agent,
+        baseRef: typeof area.baseRef === 'string' && area.baseRef ? area.baseRef : DEFAULT_WORK_AREA.baseRef,
+        instructions: typeof area.instructions === 'string' ? area.instructions : '',
+        allowPublish: area.allowPublish === true,
+      }));
+    if (!Array.isArray(this.state.tasks)) this.state.tasks = [];
+    this.state.tasks = this.state.tasks.filter(task => task && typeof task === 'object' && typeof task.id === 'string');
     for (const task of this.state.tasks) {
       if (!task.backend || task.backend === 'copilot-cli') task.backend = 'copilot';
-      task.turns ||= [];
+      if (!Array.isArray(task.turns)) task.turns = [];
+      if (!Array.isArray(task.observations)) task.observations = [];
+      if (['dispatching', 'running'].includes(task.state)) {
+        task.state = 'agent_stopped';
+        task.error = 'The app restarted before this task reported completion. Check the worktree, then continue or delete it.';
+      }
     }
+    if (!this.state.settings || typeof this.state.settings !== 'object' || Array.isArray(this.state.settings)) this.state.settings = {};
     this.state.settings = {
       defaultAreaId: null,
       defaultBackend: 'copilot',
@@ -87,7 +114,7 @@ export class Supervisor extends EventEmitter {
   }
 
   snapshot() {
-    return { areas: this.state.areas, tasks: this.state.tasks.map(task => this.status(task.id)), settings: { ...this.state.settings } };
+    return { areas: this.state.areas, tasks: this.state.tasks.map(task => this.status(task.id)), settings: { ...this.state.settings }, ...(this.recoveryWarning ? { recoveryWarning: this.recoveryWarning } : {}) };
   }
 
   async registerArea(input) {
@@ -188,8 +215,12 @@ export class Supervisor extends EventEmitter {
   }
 
   toolStatus(id) {
+    const source = this.task(id);
     const task = this.status(id);
-    const latest = task.observations.length > (task.turnObservationStart || 0) ? task.observations.at(-1) : null;
+    const currentTurn = source.turns.at(-1);
+    const latest = currentTurn
+      ? source.observations.filter(observation => observation.at >= currentTurn.createdAt).at(-1)
+      : source.observations.at(-1);
     const actions = [];
     if (RESUMABLE_STATES.has(task.state)) actions.push('send_work_message');
     if (task.worktree) actions.push('open_work');

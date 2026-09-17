@@ -85,7 +85,7 @@ async function launch() {
     if (details.mediaTypes?.includes('video')) return callback(false);
     try {
       const requestingOrigin = new URL(details.requestingUrl || webContents.getURL()).origin;
-      if (serverOrigin && requestingOrigin === serverOrigin && (permission === 'media' || permission === 'microphone')) {
+      if (serverOrigin && requestingOrigin === serverOrigin && (permission === 'media' || permission === 'microphone' || permission === 'notifications')) {
         return callback(true);
       }
     } catch {}
@@ -93,7 +93,7 @@ async function launch() {
   });
 
   session.defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin) => {
-    if (serverOrigin && requestingOrigin === serverOrigin && (permission === 'media' || permission === 'microphone')) {
+    if (serverOrigin && requestingOrigin === serverOrigin && (permission === 'media' || permission === 'microphone' || permission === 'notifications')) {
       return true;
     }
     return false;

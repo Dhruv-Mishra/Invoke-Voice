@@ -255,6 +255,7 @@ export async function start(options = {}) {
   };
 
   let llamaProcess = null;
+  let llamaProcessOwned = false;
 
   if (config.isLocal) {
     const localResult = await ensureLocalLLM({ checkOnly: config.isCheck });
@@ -262,19 +263,26 @@ export async function start(options = {}) {
       return { checked: true, text: localResult.text };
     }
     llamaProcess = localResult.llama;
+    llamaProcessOwned = localResult.owned === true;
   }
 
-  if (config.mode === 'release') {
-    await ensureFrontendBuild({ forceBuild: config.forceBuild });
-  }
+  let supervisorInstance;
+  try {
+    if (config.mode === 'release') {
+      await ensureFrontendBuild({ forceBuild: config.forceBuild });
+    }
 
-  const { startSupervisor } = await import('../src/server.mjs');
-  const supervisorInstance = await startSupervisor({
-    mode: config.mode,
-    port: config.port,
-    dataDir: config.dataDir,
-    prewarm: config.prewarm,
-  });
+    const { startSupervisor } = await import('../src/server.mjs');
+    supervisorInstance = await startSupervisor({
+      mode: config.mode,
+      port: config.port,
+      dataDir: config.dataDir,
+      prewarm: config.prewarm,
+    });
+  } catch (error) {
+    if (llamaProcessOwned && llamaProcess && !llamaProcess.killed) llamaProcess.kill();
+    throw error;
+  }
 
   let shuttingDown = false;
   const shutdown = async () => {
@@ -286,7 +294,7 @@ export async function start(options = {}) {
     } catch (error) {
       console.error(`Error closing supervisor: ${error.message}`);
     }
-    if (llamaProcess && !llamaProcess.killed) {
+    if (llamaProcessOwned && llamaProcess && !llamaProcess.killed) {
       try {
         llamaProcess.kill();
       } catch {}

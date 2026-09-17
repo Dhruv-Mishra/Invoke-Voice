@@ -46,8 +46,9 @@ export async function createRealtimeVoice({ mode, send, callTool, env = process.
     if (closed) return { error: 'Voice session closed' };
     if (!results.has(call.id)) results.set(call.id, Promise.resolve().then(() => callTool(call.name, call.args || {}, { requestId: `${sessionId}:${call.id}` })).catch(error => ({ error: error.message })));
     const result = await results.get(call.id);
-    send({ type: 'tool', name: call.name, result });
-    return compactToolResult(result, 8000);
+    const compactResult = compactToolResult(result, 8000);
+    send({ type: 'tool', name: call.name, result: compactResult });
+    return compactResult;
   }
   if (mode === 'gemini-live') {
     if (!env.GEMINI_API_KEY) throw new Error('Add a Gemini API key in Settings > Config to use Gemini Live');
@@ -79,6 +80,7 @@ export async function createRealtimeVoice({ mode, send, callTool, env = process.
             }
           }
           if (content?.turnComplete) { mutedOutput = false; finishResponse(); }
+          if (content?.turnComplete) transcripts.clear();
           for (const id of message.toolCallCancellation?.ids || []) cancelledToolCalls.add(id);
           if (message.toolCall?.functionCalls) {
             for (const call of message.toolCall.functionCalls) {
@@ -110,6 +112,7 @@ export async function createRealtimeVoice({ mode, send, callTool, env = process.
   let bufferedSamples = 0;
   let fallbackResponse;
   const realtimeResponses = new Map();
+  const cancelledResponses = new Set();
   const responseFor = id => {
     const responseId = id || fallbackResponse?.id || randomUUID();
     if (!id && !fallbackResponse) fallbackResponse = { id: responseId };
@@ -117,6 +120,7 @@ export async function createRealtimeVoice({ mode, send, callTool, env = process.
     return realtimeResponses.get(responseId);
   };
   const finishRealtimeResponse = id => {
+    if (id && cancelledResponses.has(id)) return;
     const completed = responseFor(id);
     realtimeResponses.delete(completed.id);
     if (fallbackResponse?.id === completed.id) fallbackResponse = undefined;
@@ -127,6 +131,8 @@ export async function createRealtimeVoice({ mode, send, callTool, env = process.
     let event;
     try { event = JSON.parse(raw); } catch { return; }
     if (event.type === 'session.updated') send({ type: 'ready' });
+    const eventResponseId = event.response_id || event.response?.id;
+    if (eventResponseId && cancelledResponses.has(eventResponseId)) return;
     if (event.type === 'response.output_audio.delta' && !mutedOutput) {
       const current = responseFor(event.response_id);
       current.audioSent = true;
@@ -136,9 +142,9 @@ export async function createRealtimeVoice({ mode, send, callTool, env = process.
     if (event.type === 'input_audio_buffer.committed') bufferedSamples = 0;
     if (event.type === 'conversation.item.input_audio_transcription.delta') transcripts.push('user', event.delta, { id: event.item_id || 'user' });
     if (event.type === 'conversation.item.input_audio_transcription.completed') transcripts.push('user', event.transcript, { id: event.item_id || 'user', final: true, replacement: true });
-    if (event.type === 'response.output_audio_transcript.delta') transcripts.push('assistant', event.delta, { id: event.response_id || 'assistant' });
-    if (event.type === 'response.output_audio_transcript.done') transcripts.push('assistant', event.transcript, { id: event.response_id || 'assistant', final: true, replacement: true });
-    if (event.type === 'response.done') { mutedOutput = false; finishRealtimeResponse(event.response?.id || event.response_id); }
+    if (event.type === 'response.output_audio_transcript.delta' && !mutedOutput) transcripts.push('assistant', event.delta, { id: event.response_id || 'assistant' });
+    if (event.type === 'response.output_audio_transcript.done' && !mutedOutput) transcripts.push('assistant', event.transcript, { id: event.response_id || 'assistant', final: true, replacement: true });
+    if (event.type === 'response.done' && !mutedOutput) finishRealtimeResponse(event.response?.id || event.response_id);
     if (event.type === 'error') send({ type: 'error', message: `OpenAI Realtime: ${event.error?.code || 'request failed'}` });
     if (event.type === 'response.function_call_arguments.done') {
       let args;
@@ -167,8 +173,24 @@ export async function createRealtimeVoice({ mode, send, callTool, env = process.
       bufferedSamples += output.length / 2;
       write({ type: 'input_audio_buffer.append', audio: output.toString('base64') });
     },
-    commit() { if (bufferedSamples >= 2400) { write({ type: 'input_audio_buffer.commit' }); write({ type: 'response.create' }); bufferedSamples = 0; } },
-    interrupt() { mutedOutput = true; for (const response of [...realtimeResponses.values()]) finishRealtimeResponse(response.id); write({ type: 'response.cancel' }); send({ type: 'interrupted' }); },
+    commit() {
+      if (bufferedSamples >= 2400) { write({ type: 'input_audio_buffer.commit' }); write({ type: 'response.create' }); }
+      else if (bufferedSamples > 0) write({ type: 'input_audio_buffer.clear' });
+      bufferedSamples = 0;
+    },
+    interrupt() {
+      mutedOutput = true;
+      for (const response of [...realtimeResponses.values()]) {
+        cancelledResponses.add(response.id);
+        finishRealtimeResponse(response.id);
+      }
+      realtimeResponses.clear();
+      fallbackResponse = undefined;
+      if (cancelledResponses.size > 100) cancelledResponses.delete(cancelledResponses.values().next().value);
+      transcripts.clear();
+      write({ type: 'response.cancel' });
+      send({ type: 'interrupted' });
+    },
     playbackDone() { if (!closed) send({ type: 'state', state: 'listening' }); },
     notify(text) { if (closed || !text?.trim()) return false; write({ type: 'conversation.item.create', item: { type: 'message', role: 'user', content: [{ type: 'input_text', text: `Read this task notification, without taking actions: ${JSON.stringify(String(text).slice(0, 1800))}` }] } }); write({ type: 'response.create' }); return true; },
     close() { closed = true; socket.close(); },

@@ -29,7 +29,7 @@ export function providerProfiles(env = process.env) {
     {
       id: 'gemini',
       label: 'Gemini',
-      model: env.GEMINI_MODEL || 'gemini-2.5-flash',
+      model: env.GEMINI_MODEL || 'gemini-3.8-flash',
       configured: Boolean(env.GEMINI_API_KEY),
     },
     {
@@ -72,7 +72,7 @@ function resolveEndpoint(provider, model, env) {
       return {
         url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${env.GEMINI_API_KEY}` },
-        model: model || env.GEMINI_MODEL || 'gemini-2.5-flash',
+        model: model || env.GEMINI_MODEL || 'gemini-3.8-flash',
       };
     }
     case 'openai': {
@@ -316,6 +316,7 @@ export async function* streamReply({
   const isAnthropic = provider === 'anthropic';
   const voiceFast = profile === 'voice-fast';
   let workingMessages = prepareMessages(messages, voiceFast ? { maxMessages: 4, maxChars: 2400 } : undefined);
+  let completed = false;
 
   for (let round = 0; round < (voiceFast ? 1 : 4); round++) {
     if (signal?.aborted) return;
@@ -362,6 +363,7 @@ export async function* streamReply({
     let roundText = '';
     let stopReason = null;
     let finishReason = null;
+    let streamCompleted = false;
 
     if (isAnthropic) {
       let currentTool = null;
@@ -373,13 +375,14 @@ export async function* streamReply({
         let event;
         try { event = JSON.parse(dataStr); } catch { continue; }
         if (event.type === 'error' || event.error) {
-          throw new Error(`Anthropic error: ${event.error?.message || JSON.stringify(event.error || 'unknown')}`);
+          throw new Error('Anthropic stream failed. Check provider access and logs.');
         }
         if (event.type === 'message_delta') {
           if (event.delta?.stop_reason) {
             stopReason = event.delta.stop_reason;
           }
         }
+        if (event.type === 'message_stop') streamCompleted = true;
         if (event.type === 'content_block_start') {
           if (event.content_block?.type === 'tool_use') {
             currentTool = { id: event.content_block.id, name: event.content_block.name, arguments: '' };
@@ -402,11 +405,15 @@ export async function* streamReply({
         if (signal?.aborted) return;
         if (!line.startsWith('data:')) continue;
         const dataStr = line.slice(5).trim();
-        if (!dataStr || dataStr === '[DONE]') break;
+        if (!dataStr) continue;
+        if (dataStr === '[DONE]') {
+          streamCompleted = true;
+          break;
+        }
         let chunk;
         try { chunk = JSON.parse(dataStr); } catch { continue; }
         if (chunk.error) {
-          throw new Error(`Stream error: ${chunk.error?.message || JSON.stringify(chunk.error)}`);
+          throw new Error(`${provider} stream failed. Check provider access and logs.`);
         }
         const choice = chunk.choices?.[0];
         if (!choice) continue;
@@ -447,6 +454,12 @@ export async function* streamReply({
       throw new Error('Fast voice response attempted a tool call');
     }
     if (finishedCalls.length === 0) {
+      const completeReason = isAnthropic ? stopReason === 'end_turn' : finishReason === 'stop';
+      if (!streamCompleted || !completeReason) {
+        const reason = isAnthropic ? stopReason : finishReason;
+        throw new Error(`Response stream ended before completion (${reason || 'no finish reason'})`);
+      }
+      completed = true;
       break;
     }
 
@@ -507,6 +520,7 @@ export async function* streamReply({
       } else if (executedCalls.has(invocationKey)) {
         result = await executedCalls.get(invocationKey);
       } else {
+        if (signal?.aborted) return { call, i, result: { error: 'Request cancelled' } };
         const pending = Promise.resolve().then(() => callTool(call.name, parsedArgs, toolCallContext))
           .catch(err => ({ error: err.message || 'Tool execution error' }));
         executedCalls.set(invocationKey, pending);
@@ -520,20 +534,21 @@ export async function* streamReply({
 
     const anthropicToolResults = [];
     for (const { call, i, result } of completedCalls) {
-      yield { type: 'tool', name: call.name, result };
+      const compactResult = compactToolResult(result);
+      yield { type: 'tool', name: call.name, result: compactResult };
 
       if (isAnthropic) {
         anthropicToolResults.push({
           type: 'tool_result',
           tool_use_id: call.id,
-          content: boundToolResult(result),
+          content: boundToolResult(compactResult),
         });
       } else {
         workingMessages.push({
           role: 'tool',
           tool_call_id: call.id || `call_${round}_${i}`,
           name: call.name,
-          content: boundToolResult(result),
+          content: boundToolResult(compactResult),
         });
       }
     }
@@ -543,5 +558,6 @@ export async function* streamReply({
     }
   }
 
+  if (!completed) throw new Error('Response exceeded the tool round limit');
   yield { type: 'done' };
 }

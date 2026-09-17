@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import { stripVTControlCharacters } from 'node:util';
 import { ASSETS, assetReady, ensureAsset, readJson, setupError, stackPaths, withSetupLock, writeJson } from '../scripts/models.mjs';
 import { createSetup } from './setup.mjs';
-import { closeLocalVoice, localConfiguration, warmLocalVoice } from './local-voice.mjs';
+import { closeLocalVoice, isLocalVoiceWarm, localConfiguration, onLocalVoiceRuntimeExit, warmLocalVoice } from './local-voice.mjs';
 import desktopLaunch from '../scripts/desktop-launch.cjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -317,8 +317,9 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
           throw new Error('Local language runtime stopped');
         }
         runtime = 'Moonshine / Kokoro';
-        if (!localConfiguration(env).configured || !await warm(env)) throw new Error('Speech not configured');
+        if (!localConfiguration(env).configured || !await warm(env, signal)) throw new Error('Speech not configured');
         signal.throwIfAborted();
+        if (warm === warmLocalVoice && !isLocalVoiceWarm()) throw new Error('Local speech runtime stopped during startup');
         if (!isChatAlive()) {
           runtime = 'llama.cpp';
           throw new Error('Local language runtime stopped');
@@ -351,6 +352,13 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
       }
     },
   });
+  const stopWatchingVoice = onLocalVoiceRuntimeExit(runtime => {
+    if (closing || !active) return;
+    active = false;
+    voiceReady = false;
+    voiceMessage = `${runtime} stopped unexpectedly. Retry setup to restart local voice.`;
+    setup.invalidate(voiceMessage);
+  });
   return {
     ...setup,
     resume() { if (saved?.version === 1 && ASSETS.filter(asset => CHAT_ASSET_IDS.has(asset.id)).every(asset => assetReady(paths, asset))) setup.resume(); },
@@ -363,7 +371,11 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
     },
     async close() {
       closing = true;
+      stopWatchingVoice();
       await setup.close();
+      active = false;
+      chatReady = false;
+      voiceReady = false;
       if (ownedLlm) {
         llama?.kill?.();
         llama = null;

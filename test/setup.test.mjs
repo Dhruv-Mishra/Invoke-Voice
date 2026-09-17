@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync, statSync, utimesSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync, statSync, symlinkSync, utimesSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -514,6 +514,23 @@ test('completed verified assets are reused offline; partial and corrupted downlo
   assert.equal(assetReady(paths, asset), true);
 });
 
+test('managed asset receipts reject junctions outside cache roots', context => {
+  const { directory, paths } = fixture(context);
+  const asset = ASSETS.find(candidate => candidate.id === 'tokenizer');
+  const external = path.join(directory, 'external');
+  const junction = path.join(paths.modelDir, 'redirected');
+  mkdirSync(external, { recursive: true });
+  mkdirSync(paths.modelDir, { recursive: true });
+  symlinkSync(external, junction, process.platform === 'win32' ? 'junction' : 'dir');
+  const destination = path.join(junction, asset.name);
+  writeFileSync(destination, 'redirected asset');
+  const stat = statSync(destination);
+  const receipt = path.join(paths.receiptDir, `${asset.id}-${createHash('sha256').update(destination).digest('hex').slice(0, 20)}.json`);
+  mkdirSync(paths.receiptDir, { recursive: true });
+  writeFileSync(receipt, JSON.stringify({ sourceUrl: asset.sourceUrl, digest: '0'.repeat(64), files: [{ path: destination, size: stat.size, mtimeMs: stat.mtimeMs }] }));
+  assert.equal(assetReady(paths, asset, destination), false);
+});
+
 function runtimeArchive(context, entries) {
   const localRecords = [];
   const centralRecords = [];
@@ -852,4 +869,20 @@ test('cached chat resumes after restart when Kokoro installation was incomplete'
   assert.equal(activations, 1);
   assert.equal(resumed.capabilities.chat.ready, true);
   assert.equal(resumed.capabilities.voice.ready, false);
+});
+
+test('saved configuration retains valid fields beside malformed values', context => {
+  const { directory } = fixture(context);
+  writeFileSync(path.join(directory, 'config.json'), JSON.stringify({ version: 1, values: { LLAMA_THREADS: '0', OPENAI_MODEL: 0, GEMINI_MODEL: 'gemini-valid' } }));
+  const env = {};
+  const config = createRuntimeConfig({ dataDir: directory, env });
+  assert.equal(env.GEMINI_MODEL, 'gemini-valid');
+  assert.equal(env.LLAMA_THREADS, undefined);
+  assert.deepEqual(config.snapshot().warnings.map(warning => warning.match(/LLAMA_THREADS|OPENAI_MODEL/)?.[0]), ['LLAMA_THREADS', 'OPENAI_MODEL']);
+  assert.equal(config.snapshot().fields.find(field => field.key === 'GEMINI_MODEL').value, 'gemini-valid');
+
+  const malformedDirectory = mkdtempSync(path.join(os.tmpdir(), 'voice-config-malformed-'));
+  context.after(() => rmSync(malformedDirectory, { recursive: true, force: true }));
+  writeFileSync(path.join(malformedDirectory, 'config.json'), '{');
+  assert.match(createRuntimeConfig({ dataDir: malformedDirectory, env: {} }).snapshot().warnings[0], /file is invalid/);
 });

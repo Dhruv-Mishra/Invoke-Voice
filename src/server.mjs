@@ -78,17 +78,49 @@ export async function startSupervisor(options = {}) {
   const supervisor = options.supervisor || new Supervisor({ dataDir, bridge: createVSCodeBridge(dataDir) });
   const setup = options.setup || createLocalSetup();
   const clients = new Set();
+  const activeChatControllers = new Set();
+  let closing = false;
   const json = (response, status, payload) => { response.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); response.end(JSON.stringify(payload)); };
-  const sse = (response, payload) => { if (!response.destroyed) response.write(`data: ${JSON.stringify(payload)}\n\n`); };
+  const MAX_SSE_BUFFER = 64 * 1024;
+  const sse = (response, payload) => {
+    if (response.destroyed || !response.writable) {
+      clients.delete(response);
+      return false;
+    }
+    if (response.writableLength > MAX_SSE_BUFFER) {
+      clients.delete(response);
+      try { response.destroy(); } catch {}
+      return false;
+    }
+    const ok = response.write(`data: ${JSON.stringify(payload)}\n\n`);
+    if (!ok && response.writableLength > MAX_SSE_BUFFER) {
+      clients.delete(response);
+      try { response.destroy(); } catch {}
+      return false;
+    }
+    return ok;
+  };
   function allowed(request) {
     const host = request.headers.host;
     if (!host || !/^(127\.0\.0\.1|localhost):\d+$/.test(host)) return false;
     return !request.headers.origin || request.headers.origin === `http://${host}`;
   }
+  function isJsonContentType(contentType) {
+    if (typeof contentType !== 'string') return false;
+    const [mediaType] = contentType.split(';');
+    return mediaType.trim().toLowerCase() === 'application/json';
+  }
   async function body(request) {
-    if (!request.headers['content-type']?.startsWith('application/json')) throw new Error('Expected application/json');
-    let raw = '';
-    for await (const chunk of request) { raw += chunk; if (raw.length > 100000) throw new Error('Request too large'); }
+    if (!isJsonContentType(request.headers['content-type'])) throw new Error('Expected application/json');
+    const chunks = [];
+    let totalBytes = 0;
+    for await (const chunk of request) {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      totalBytes += buffer.length;
+      if (totalBytes > 100000) throw new Error('Request too large');
+      chunks.push(buffer);
+    }
+    const raw = Buffer.concat(chunks, totalBytes).toString('utf8');
     return JSON.parse(raw);
   }
   function config() {
@@ -120,6 +152,11 @@ export async function startSupervisor(options = {}) {
   let viteDevServer = null;
 
   const server = http.createServer(async (request, response) => {
+    if (closing) {
+      response.writeHead(503, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', Connection: 'close' });
+      response.end(JSON.stringify({ error: 'Server closing' }));
+      return;
+    }
     response.setHeader('X-Content-Type-Options', 'nosniff');
     response.setHeader('X-Frame-Options', 'DENY');
     response.setHeader('Referrer-Policy', 'no-referrer');
@@ -157,13 +194,22 @@ export async function startSupervisor(options = {}) {
       }
       if (request.method === 'POST' && url.pathname === '/api/chat') {
         const input = await body(request);
+        if (closing) return json(response, 503, { error: 'Server closing' });
         const controller = new AbortController();
-        response.on('close', () => controller.abort());
+        activeChatControllers.add(controller);
+        const cleanupChat = () => activeChatControllers.delete(controller);
+        response.on('close', () => {
+          cleanupChat();
+          controller.abort();
+        });
         response.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' });
         try {
           for await (const event of streamReply({ provider: input.provider, model: input.model, messages: input.messages, requestId: input.requestId || randomUUID(), signal: controller.signal, callTool: supervisor.callTool.bind(supervisor) })) sse(response, event);
         } catch (error) { if (!controller.signal.aborted) sse(response, { type: 'error', message: error.message }); }
-        response.end();
+        finally {
+          cleanupChat();
+          if (!response.writableEnded) response.end();
+        }
         return;
       }
       const taskDelete = url.pathname.match(/^\/api\/tasks\/([^/]+)$/);
@@ -192,14 +238,20 @@ export async function startSupervisor(options = {}) {
   const websocket = new WebSocketServer({ noServer: true, maxPayload: 100000 });
   let voiceOwner = null;
   server.on('upgrade', (request, socket, head) => {
-    if (request.url === '/voice') {
+    if (closing) return socket.destroy();
+    const pathname = new URL(request.url, 'http://127.0.0.1').pathname;
+    if (pathname === '/voice') {
       if (!allowed(request)) return socket.destroy();
       websocket.handleUpgrade(request, socket, head, client => websocket.emit('connection', client));
       return;
     }
-    if (!viteDevServer) {
-      socket.destroy();
+    if (viteDevServer) {
+      const protocols = (request.headers['sec-websocket-protocol'] || '').split(',').map(s => s.trim());
+      if (pathname === '/' && (protocols.includes('vite-hmr') || protocols.includes('vite-ping'))) {
+        return;
+      }
     }
+    socket.destroy();
   });
   websocket.on('connection', socket => {
     let session;
@@ -286,7 +338,10 @@ export async function startSupervisor(options = {}) {
   }
 
   const close = async () => {
+    closing = true;
     clearInterval(observer);
+    for (const controller of activeChatControllers) controller.abort();
+    activeChatControllers.clear();
     await setup.close();
     for (const client of websocket.clients) {
       try { client.close(); } catch {}

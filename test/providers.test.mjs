@@ -301,3 +301,56 @@ test('truncated tool call stream does NOT invoke callback', async () => {
     await new Promise(resolve => server.close(resolve));
   }
 });
+
+test('incomplete text streams preserve partial text but do not report success', async () => {
+  const server = http.createServer(async (req, res) => {
+    for await (const _ of req) {}
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    res.end('data: {"choices":[{"delta":{"content":"Partial answer"}}]}\n\n');
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const events = [];
+  try {
+    await assert.rejects(async () => {
+      for await (const event of streamReply({
+        provider: 'local',
+        messages: [{ role: 'user', content: 'Answer' }],
+        env: { LOCAL_LLM_URL: `http://127.0.0.1:${server.address().port}/v1` },
+      })) events.push(event);
+    }, /before completion/i);
+    assert.equal(events.map(event => event.text || '').join(''), 'Partial answer');
+    assert.equal(events.some(event => event.type === 'done'), false);
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+  }
+});
+
+test('client tool events use the bounded provider representation', async () => {
+  let requestCount = 0;
+  const server = http.createServer(async (req, res) => {
+    for await (const _ of req) {}
+    requestCount++;
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    if (requestCount === 1) {
+      res.end('data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"list_work","arguments":"{}"}}]}}]}\n\ndata: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\ndata: [DONE]\n\n');
+    } else {
+      res.end('data: {"choices":[{"delta":{"content":"Done"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
+    }
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const events = [];
+  try {
+    for await (const event of streamReply({
+      provider: 'local',
+      messages: [{ role: 'user', content: 'List work' }],
+      callTool: async () => ({ result: 'x'.repeat(10000) }),
+      env: { LOCAL_LLM_URL: `http://127.0.0.1:${server.address().port}/v1` },
+      requestId: 'bounded-tool',
+    })) events.push(event);
+    const tool = events.find(event => event.type === 'tool');
+    assert.equal(tool.result.truncated, true);
+    assert.ok(JSON.stringify(tool.result).length <= 6000);
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+  }
+});

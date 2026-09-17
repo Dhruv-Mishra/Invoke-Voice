@@ -47,6 +47,11 @@ test('managed workspace refuses redirected folders and Git metadata', async () =
     unlinkSync(gitDirectory);
     writeFileSync(gitDirectory, `gitdir: ${external}\n`);
     await assert.rejects(bridge.verifyRepo(area.repoPath), /Git directory must be a local directory/);
+    unlinkSync(gitDirectory);
+    const worktrees = path.join(dataDir, 'worktrees');
+    symlinkSync(external, worktrees, process.platform === 'win32' ? 'junction' : 'dir');
+    await assert.rejects(bridge.prepare({ id: 'redirected-worktree' }, area), /worktrees must stay inside/);
+    unlinkSync(worktrees);
     assert.deepEqual(readdirSync(external), ['sentinel.txt']);
     assert.equal(readFileSync(path.join(external, 'sentinel.txt'), 'utf8'), 'Unchanged.');
   } finally { rmSync(rootDir, { recursive: true, force: true }); }

@@ -43,6 +43,7 @@ const setup = {
 const errors = [];
 const settings = {};
 const config = {
+  local: { sttProvider: 'whisper' },
   providers: [{ id: 'local', label: 'Local', model: 'fixture', configured: true }],
   voiceModes: [{ id: 'local', label: 'Local voice', configured: true }],
   defaults: { provider: 'local', voiceMode: 'local' },
@@ -50,6 +51,7 @@ const config = {
     { key: 'CUSTOM_BASE_URL', label: 'Custom URL', group: 'Fixture', type: 'url', secret: false, value: 'https://example.test' },
     { key: 'LLAMA_THREADS', label: 'Threads', group: 'Fixture', type: 'number', secret: false, value: '8', min: 1, max: 128 },
     { key: 'CUSTOM_API_KEY', label: 'Custom key', group: 'Fixture', type: 'password', secret: true, configured: true },
+    { key: 'LOCAL_STT_PROVIDER', label: 'Local speech recognition', group: 'Local speech', type: 'select', value: 'whisper', options: [{ value: 'whisper', label: 'Whisper Small (INT8)' }, { value: 'moonshine', label: 'Moonshine Small (streaming)' }] },
   ] },
 };
 
@@ -211,7 +213,17 @@ try {
           response.end(JSON.stringify(settings));
           return;
         }
-        if (request.url === '/api/config') configReads++;
+        if (request.url === '/api/config') {
+          configReads++;
+          if (request.method === 'POST') {
+            let body = '';
+            for await (const chunk of request) body += chunk;
+            const values = JSON.parse(body).values;
+            config.local.sttProvider = values.LOCAL_STT_PROVIDER;
+            config.configuration.fields.find(field => field.key === 'LOCAL_STT_PROVIDER').value = values.LOCAL_STT_PROVIDER;
+            setup.message = `${values.LOCAL_STT_PROVIDER} selected`;
+          }
+        }
         const routes = {
           '/api/config': config,
           '/api/state': { areas: [{ id: 'fixture-area', name: 'Fixture repository', repoPath: 'C:\\fixture' }], tasks: fixtureTasks, settings },
@@ -324,6 +336,18 @@ try {
   }
   await pointerClick('#config-section > summary');
   assert.equal(await checkEditableInputs('#config-fields'), 3);
+  assert.equal(await evaluate(() => document.getElementById('config-local-stt-provider').value), 'whisper');
+  await click('#setup-consent');
+  await choose('#config-local-stt-provider', 'moonshine');
+  await click('#config-save-btn');
+  await waitFor(() => document.getElementById('config-feedback').textContent.includes('Config saved'));
+  assert.equal(config.local.sttProvider, 'moonshine');
+  assert.equal(await evaluate(() => document.getElementById('setup-consent').checked), false);
+  assert.equal(await evaluate(() => document.getElementById('setup-message').textContent.includes('moonshine selected')), true);
+  assert.equal(setupWrites, 0, 'saving speech selection must not download anything');
+  await evaluate(() => document.getElementById('config-local-stt-provider').scrollIntoView({ block: 'center' }));
+  await assertPainted('#config-local-stt-provider');
+  await screenshot('speech-selector-desktop');
   await pointerClick('#config-section > summary');
   assert.equal(await evaluate(() => document.getElementById('setup-install-btn').disabled), true);
   assert.equal(await evaluate(() => document.getElementById('setup-cache').textContent), setup.cacheDir);

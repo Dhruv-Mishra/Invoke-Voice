@@ -10,6 +10,8 @@ export function localThreadDefault(cap, parallelism = availableParallelism()) {
 const fields = Object.freeze([
   { key: 'DEFAULT_PROVIDER', label: 'Default text provider', group: 'Defaults', type: 'select', defaultValue: 'local', options: [['local', 'Local'], ['gemini', 'Gemini'], ['openai', 'OpenAI'], ['anthropic', 'Anthropic'], ['azure', 'Azure OpenAI'], ['custom', 'Custom']] },
   { key: 'DEFAULT_VOICE_MODE', label: 'Default voice mode', group: 'Defaults', type: 'select', defaultValue: 'local', options: [['local', 'Local'], ['gemini-live', 'Gemini Live'], ['openai-realtime', 'OpenAI Realtime']] },
+  { key: 'LOCAL_STT_PROVIDER', label: 'Local speech recognition', group: 'Local speech', type: 'select', defaultValue: 'whisper', options: [['whisper', 'Whisper Small (INT8)'], ['moonshine', 'Moonshine Small (streaming)']] },
+  { key: 'WHISPER_LANGUAGE', label: 'Whisper spoken language', group: 'Local speech', type: 'select', defaultValue: 'auto', options: [['auto', 'Automatic'], ['en', 'English'], ['hi', 'Hindi'], ['es', 'Spanish'], ['fr', 'French'], ['de', 'German'], ['ja', 'Japanese'], ['zh', 'Chinese']], restartRequired: true },
   { key: 'GEMINI_API_KEY', label: 'Gemini API key', group: 'Provider keys', type: 'password', secret: true },
   { key: 'OPENAI_API_KEY', label: 'OpenAI API key', group: 'Provider keys', type: 'password', secret: true },
   { key: 'ANTHROPIC_API_KEY', label: 'Anthropic API key', group: 'Provider keys', type: 'password', secret: true },
@@ -40,7 +42,8 @@ const fields = Object.freeze([
   { key: 'LLAMA_FLASH_ATTN', label: 'Ling flash attention', group: 'Local performance', type: 'select', defaultValue: 'auto', options: [['auto', 'Automatic'], ['on', 'On'], ['off', 'Off']], restartRequired: true },
   { key: 'LLAMA_CACHE_TYPE_K', label: 'Ling key cache type', group: 'Local performance', type: 'select', defaultValue: 'f16', options: [['f16', 'F16'], ['q8_0', 'Q8_0']], restartRequired: true },
   { key: 'LLAMA_CACHE_TYPE_V', label: 'Ling value cache type', group: 'Local performance', type: 'select', defaultValue: 'f16', options: [['f16', 'F16'], ['q8_0', 'Q8_0']], restartRequired: true },
-  { key: 'CRISPASR_THREADS', label: 'Speech recognition threads', group: 'Local performance', type: 'number', defaultValue: localThreadDefault(12), min: 1, max: 128, restartRequired: true },
+  { key: 'WHISPER_THREADS', label: 'Whisper recognition threads', group: 'Local performance', type: 'number', defaultValue: localThreadDefault(8), min: 1, max: 128, restartRequired: true },
+  { key: 'CRISPASR_THREADS', label: 'Moonshine recognition threads', group: 'Local performance', type: 'number', defaultValue: localThreadDefault(12), min: 1, max: 128, restartRequired: true },
   { key: 'KOKORO_THREADS', label: 'Speech synthesis threads', group: 'Local performance', type: 'number', defaultValue: '8', min: 1, max: 128, restartRequired: true },
 ]);
 
@@ -123,7 +126,7 @@ export function createRuntimeConfig({ dataDir, env = process.env } = {}) {
       console.warn(`${warning} ${error.message}`);
     }
   }
-  const startupEnvironment = { ...env, CRISPASR_THREADS: env.CRISPASR_THREADS || env.LOCAL_THREADS || localThreadDefault(12), PYTHON_BIN: stackPaths(env).pythonBase || '' };
+  const startupEnvironment = { ...env, WHISPER_LANGUAGE: env.WHISPER_LANGUAGE || 'auto', WHISPER_THREADS: env.WHISPER_THREADS || env.LOCAL_THREADS || localThreadDefault(8), CRISPASR_THREADS: env.CRISPASR_THREADS || env.LOCAL_THREADS || localThreadDefault(12), PYTHON_BIN: stackPaths(env).pythonBase || '' };
   startupValues = Object.fromEntries(fields.filter(field => field.restartRequired).map(field => [field.key, startupEnvironment[field.key]]));
   return {
     snapshot,

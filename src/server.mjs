@@ -77,6 +77,7 @@ export async function startSupervisor(options = {}) {
   const runtimeConfig = createRuntimeConfig({ dataDir });
   const supervisor = options.supervisor || new Supervisor({ dataDir, bridge: createVSCodeBridge(dataDir) });
   const setup = options.setup || createLocalSetup();
+  let changingRecognition = false;
   const clients = new Set();
   const activeChatControllers = new Set();
   let closing = false;
@@ -142,7 +143,7 @@ export async function startSupervisor(options = {}) {
     ], providers: providerProfiles(), voiceModes: [
       { id: 'gemini-live', label: 'Gemini Live', configured: Boolean(process.env.GEMINI_API_KEY), model: process.env.GEMINI_LIVE_MODEL || DEFAULT_GEMINI_LIVE_MODEL },
       { id: 'openai-realtime', label: 'OpenAI Realtime', configured: Boolean(process.env.OPENAI_API_KEY), model: process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime' },
-      { id: 'local', label: 'Moonshine + Ling + Kokoro', configured: localConfiguration().configured },
+      { id: 'local', label: `${localConfiguration().sttLabel} + Ling + Kokoro`, configured: localConfiguration().configured },
     ], local: localConfiguration(), configuration: runtimeConfig.snapshot(), dataDir };
   }
 
@@ -167,13 +168,23 @@ export async function startSupervisor(options = {}) {
       if (request.method === 'POST' && url.pathname === '/api/setup') {
         if (voiceOwner) return json(response, 409, { error: 'End the active voice call before running local setup.' });
         const input = await body(request);
+        if (changingRecognition) return json(response, 409, { error: 'Wait for the speech recognition change to finish.' });
         return json(response, 202, setup.start(input));
       }
       if (request.method === 'GET' && url.pathname === '/api/config') return json(response, 200, config());
       if (request.method === 'POST' && url.pathname === '/api/config') {
+        const input = await body(request);
         if (voiceOwner) return json(response, 409, { error: 'End the active voice call before changing application configuration.' });
-        const configuration = runtimeConfig.update(await body(request));
-        return json(response, 200, { ...config(), configuration });
+        if (changingRecognition) return json(response, 409, { error: 'Wait for the speech recognition change to finish.' });
+        const previous = localConfiguration().sttProvider;
+        const next = input?.values?.LOCAL_STT_PROVIDER ?? previous;
+        if (next !== previous && setup.snapshot().status === 'running') return json(response, 409, { error: 'Wait for local setup to finish before changing speech recognition.' });
+        const configuration = runtimeConfig.update(input);
+        changingRecognition = next !== previous;
+        try {
+          if (changingRecognition) await setup.recognitionChanged?.();
+          return json(response, 200, { ...config(), configuration });
+        } finally { changingRecognition = false; }
       }
       if (request.method === 'GET' && url.pathname === '/api/state') return json(response, 200, supervisor.snapshot());
       if (request.method === 'GET' && url.pathname === '/api/tools') return json(response, 200, tools);
@@ -263,6 +274,7 @@ export async function startSupervisor(options = {}) {
         const message = JSON.parse(raw);
         if (message.type === 'start') {
           if (session || starting) return;
+          if (changingRecognition) throw new Error('Wait for the speech recognition change to finish.');
           if (message.mode === 'local' && setup.snapshot().status === 'running') throw new Error('Local setup is still running. Wait for setup to finish before starting a local call.');
           if (voiceOwner && voiceOwner !== socket) throw new Error('A voice session is already active in another window');
           voiceOwner = socket;

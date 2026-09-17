@@ -14,6 +14,35 @@ test('formatSetupBytes formats byte sizes into MB and GB units with boundary rou
   assert.ok(SETUP_ELEMENT_NAMES.includes('install-btn'));
 });
 
+test('recognizer changes clear consent and ignore stale setup responses', async () => {
+  const consent = { checked: true };
+  const status = {};
+  let completeOld;
+  let reads = 0;
+  const snapshot = { supported: true, status: 'idle', components: [], message: 'Moonshine selected' };
+  const controller = createLocalSetupController({
+    document: { getElementById: () => null },
+    elements: { consent, status },
+    isSetupVisible: () => true,
+    fetch: async () => {
+      reads += 1;
+      if (reads === 1) return { ok: true, json: () => new Promise(resolve => { completeOld = resolve; }) };
+      return { ok: true, json: async () => snapshot };
+    },
+  });
+  try {
+    const pending = controller.requestSetup();
+    await new Promise(setImmediate);
+    await controller.recognitionChanged();
+    assert.equal(consent.checked, false);
+    assert.equal(status.textContent, 'idle');
+    completeOld({ ...snapshot, status: 'ready' });
+    await pending;
+    assert.equal(status.textContent, 'idle');
+    assert.equal(reads, 2);
+  } finally { controller.destroy(); }
+});
+
 test('createLocalSetupController manages rendering, installation requests, and prompt navigation', async () => {
   function makeMockElement(tagName = 'div') {
     const children = [];

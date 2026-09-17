@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { stripVTControlCharacters } from 'node:util';
-import { ASSETS, assetReady, ensureAsset, readJson, setupError, stackPaths, withSetupLock, writeJson } from '../scripts/models.mjs';
+import { ASSETS, assetReady, ensureAsset, localSetupAssets, localSttProvider, readJson, setupError, stackPaths, withSetupLock, writeJson } from '../scripts/models.mjs';
 import { createSetup } from './setup.mjs';
 import { closeLocalVoice, isLocalVoiceWarm, localConfiguration, onLocalVoiceRuntimeExit, warmLocalVoice } from './local-voice.mjs';
 import { verifyKokoroPack } from './kokoro-pack.mjs';
@@ -12,9 +12,11 @@ import desktopLaunch from '../scripts/desktop-launch.cjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const requirements = path.join(root, 'requirements-local.txt');
+const whisperRequirements = path.join(root, 'requirements-whisper.txt');
 const pythonVersion = '3.12.11';
 const englishModel = 'https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl';
 const receiptVersion = createHash('sha256').update(readFileSync(requirements)).update(`${pythonVersion}:torch2.8.0:spacy3.8.0:kokoro-local-v2:offline-pack-v1`).digest('hex');
+const whisperReceiptVersion = createHash('sha256').update(readFileSync(whisperRequirements)).update(receiptVersion).digest('hex');
 const CHAT_ASSET_IDS = new Set(['ling', 'llama']);
 const policyGuidance = 'If execution is blocked by IT policy, stop retrying and ask IT to approve the runtime and its virtual environment, or configure PYTHON_BIN with an IT-approved Python 3.12 x64 path and restart the app. Do not bypass Defender, AppLocker or WDAC. Local chat does not require Kokoro.';
 export const approvedPythonProbe = 'import ensurepip, platform, ssl, struct, sys, venv; assert sys.implementation.name == "cpython", "CPython required"; assert sys.version_info[:2] == (3, 12), "Python 3.12 required"; assert platform.machine().lower() in ("amd64", "x86_64") and struct.calcsize("P") == 8, "Windows AMD64 required"; assert ensurepip.version() and ssl.OPENSSL_VERSION and venv.EnvBuilder, "venv, ensurepip and SSL required"';
@@ -109,9 +111,9 @@ export function runSetupCommand(executable, args, { env, cwd, signal, report = (
   });
 }
 
-function pythonReady(paths) {
-  const receipt = readJson(path.join(paths.venv, 'complete.json'));
-  if (receipt?.version !== receiptVersion) return false;
+function pythonReady(paths, file = 'complete.json', version = receiptVersion) {
+  const receipt = readJson(path.join(paths.venv, file));
+  if (receipt?.version !== version) return false;
   try {
     const stat = statSync(paths.python);
     if (!stat.isFile() || stat.size !== receipt.size || stat.mtimeMs !== receipt.mtimeMs) return false;
@@ -119,6 +121,12 @@ function pythonReady(paths) {
     const base = statSync(paths.pythonBase);
     return base.isFile() && receipt.base?.path === paths.pythonBase && base.size === receipt.base.size && base.mtimeMs === receipt.base.mtimeMs;
   } catch { return false; }
+}
+
+function recordPython(paths, file, version) {
+  const stat = statSync(paths.python);
+  const base = paths.pythonBase && statSync(paths.pythonBase);
+  writeJson(path.join(paths.venv, file), { version, size: stat.size, mtimeMs: stat.mtimeMs, ...(base ? { base: { path: paths.pythonBase, size: base.size, mtimeMs: base.mtimeMs } } : {}) });
 }
 
 function packageIndex(value, fallback, label) {
@@ -131,10 +139,12 @@ function packageIndex(value, fallback, label) {
 
 export function createLocalSetup({ env = process.env, activateLLM, run = runSetupCommand, provision = ensureAsset, warm = warmLocalVoice, offlinePackDir = path.join(root, 'artifacts', 'kokoro-offline-pack') } = {}) {
   const paths = stackPaths(env);
-  const assets = ASSETS.filter(asset => asset.id !== 'uv' || !paths.pythonBase);
+  const selectedAssets = () => localSetupAssets(env).filter(asset => asset.id !== 'uv' || !paths.pythonBase);
+  const whisperReady = () => pythonReady(paths, 'whisper-complete.json', whisperReceiptVersion);
+  const sttLabel = () => localSttProvider(env) === 'whisper' ? 'Whisper Small INT8' : 'Moonshine Small streaming';
   const completionFile = path.join(paths.home, 'local-setup.json');
   const saved = readJson(completionFile);
-  const pathInputs = Object.fromEntries(['LOCAL_LLM_PATH', 'MOONSHINE_MODEL', 'LLAMA_SERVER_BIN', 'CRISPASR_BIN', 'VAD_MODEL', 'PYTHON_BIN'].map(key => [key, env[key] || '']));
+  const pathInputs = Object.fromEntries(['LOCAL_LLM_PATH', 'MOONSHINE_MODEL', 'WHISPER_MODEL_DIR', 'LLAMA_SERVER_BIN', 'CRISPASR_BIN', 'VAD_MODEL', 'PYTHON_BIN'].map(key => [key, env[key] || '']));
   if (saved?.version === 1 && saved.paths && JSON.stringify(saved.pathInputs) === JSON.stringify(pathInputs)) {
     for (const asset of ASSETS) {
       const candidate = saved.paths[asset.id];
@@ -151,8 +161,9 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
   let voiceReady = false;
   let voiceMessage = 'Local voice pipeline is not ready. Start setup to initialize it.';
 
-  const inspect = () => [...assets.map(asset => ({ id: asset.id, label: asset.label, sourceUrl: asset.repo ? `https://huggingface.co/${asset.repo}` : asset.sourceUrl.replace(/\/releases\/download\/([^/]+)\/.*$/, '/releases/tag/$1'), ready: assetReady(paths, asset) })),
-    { id: 'kokoro', label: paths.pythonBase ? 'Kokoro (approved Python; runtime download skipped)' : 'Kokoro Python environment', sourceUrl: 'https://pypi.org/project/kokoro/0.9.4/', ready: pythonReady(paths) }];
+  const inspect = () => [...selectedAssets().map(asset => ({ id: asset.id, label: asset.label, sourceUrl: asset.repo ? `https://huggingface.co/${asset.repo}` : asset.sourceUrl.replace(/\/releases\/download\/([^/]+)\/.*$/, '/releases/tag/$1'), ready: assetReady(paths, asset) })),
+    { id: 'kokoro', label: paths.pythonBase ? 'Kokoro (approved Python; runtime download skipped)' : 'Kokoro Python environment', sourceUrl: 'https://pypi.org/project/kokoro/0.9.4/', ready: pythonReady(paths) },
+    ...(localSttProvider(env) === 'whisper' ? [{ id: 'whisper', label: 'faster-whisper 1.2.1 (CPU INT8)', sourceUrl: 'https://pypi.org/project/faster-whisper/1.2.1/', ready: pythonReady(paths) && whisperReady() }] : [])];
 
   const applyChatPaths = () => {
     Object.assign(env, {
@@ -165,6 +176,8 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
     Object.assign(env, {
       MOONSHINE_EFFECTIVE_MODEL: paths.moonshine,
       MOONSHINE_TOKENIZER: paths.tokenizer,
+      WHISPER_MODEL_DIR: path.dirname(paths.whisperModel),
+      WHISPER_READY: whisperReady() ? '1' : '0',
       CRISPASR_BIN: paths.crispasr,
       VAD_MODEL: paths.vad,
       PYTHON_BIN: paths.python,
@@ -270,7 +283,7 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
       await activateChat({ report, signal });
       writeJson(completionFile, { version: 1, pathInputs, paths: Object.fromEntries(ASSETS.map(asset => [asset.id, paths[asset.id]])) });
 
-      for (const asset of assets.filter(asset => !CHAT_ASSET_IDS.has(asset.id))) {
+      for (const asset of selectedAssets().filter(asset => !CHAT_ASSET_IDS.has(asset.id))) {
         await provision(paths, asset, { report, signal });
       }
       if (!pythonReady(paths)) {
@@ -327,14 +340,31 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
             await install([...installArgs, '--index-url', pythonIndex, '--only-binary', ':all:', '--no-binary', 'docopt', 'docopt==0.6.2', '-r', requirements, modelUrl], 'Installing Kokoro and its English language model.');
           }
           await command(paths.python, ['-I', '-c', 'import kokoro, soundfile, en_core_web_sm, spacy, torch; assert kokoro.__version__ == "0.9.4"; assert soundfile.__version__ == "0.13.1"; assert spacy.__version__.startswith("3.8."); assert torch.__version__.startswith("2.8.0") and torch.version.cuda is None; assert en_core_web_sm.__version__ == "3.8.0"'], 'kokoro', 'Checking installed speech dependencies.');
-          const stat = statSync(paths.python);
-          const base = paths.pythonBase && statSync(paths.pythonBase);
-          writeJson(path.join(paths.venv, 'complete.json'), { version: receiptVersion, size: stat.size, mtimeMs: stat.mtimeMs, ...(base ? { base: { path: paths.pythonBase, size: base.size, mtimeMs: base.mtimeMs } } : {}) });
+          recordPython(paths, 'complete.json', receiptVersion);
         } catch (error) {
           voiceReady = false;
           voiceMessage = error.setupMessage || error.message || 'Kokoro speech dependencies failed to install. Retry setup to complete speech.';
           throw error;
         }
+      }
+      if (localSttProvider(env) === 'whisper' && !whisperReady()) {
+        const pythonIndex = packageIndex(env.LOCAL_PYPI_INDEX_URL, 'https://pypi.org/simple', 'Python package index');
+        const installer = paths.pythonBase ? paths.python : paths.uv;
+        const args = paths.pythonBase
+          ? ['-I', '-m', 'pip', '--isolated', '--disable-pip-version-check', '--no-input', '--cache-dir', commandEnv.PIP_CACHE_DIR, '--use-feature=truststore', 'install']
+          : ['--no-config', 'pip', 'install', '--python', paths.python];
+        const command = (executable, commandArgs, message) => run(executable, commandArgs, { env: commandEnv, redactEnv: env, cwd: paths.home, signal, report, stage: 'whisper', message });
+        const installArgs = [...args, '--index-url', pythonIndex, '--only-binary', ':all:', '-r', whisperRequirements];
+        try {
+          await command(installer, installArgs, 'Installing faster-whisper CPU INT8 dependencies.');
+        } catch (onlineError) {
+          if (paths.pythonBase || signal?.aborted) throw onlineError;
+          try {
+            await command(installer, [installArgs[0], '--offline', ...installArgs.slice(1)], 'Installing faster-whisper from the local package cache.');
+          } catch { throw onlineError; }
+        }
+        await command(paths.python, ['-I', '-c', 'import faster_whisper, ctranslate2, onnxruntime; from faster_whisper.vad import get_vad_model; assert faster_whisper.__version__ == "1.2.1"; assert ctranslate2.__version__ == "4.6.0"; assert onnxruntime.__version__ == "1.23.2"; assert "int8" in ctranslate2.get_supported_compute_types("cpu"); get_vad_model()'], 'Checking Whisper INT8 and bundled Silero VAD.');
+        recordPython(paths, 'whisper-complete.json', whisperReceiptVersion);
       }
       applyPaths();
       writeJson(completionFile, { version: 1, pathInputs, paths: Object.fromEntries(ASSETS.map(asset => [asset.id, paths[asset.id]])) });
@@ -344,13 +374,13 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
       await closeLocalVoice();
       await activateChat({ report: () => {}, signal });
       applyPaths();
-      let runtime = 'Moonshine / Kokoro';
+      let runtime = `${sttLabel()} / Kokoro`;
       try {
         if (!isChatAlive()) {
           runtime = 'llama.cpp';
           throw new Error('Local language runtime stopped');
         }
-        runtime = 'Moonshine / Kokoro';
+        runtime = `${sttLabel()} / Kokoro`;
         if (!localConfiguration(env).configured || !await warm(env, signal)) throw new Error('Speech not configured');
         signal.throwIfAborted();
         if (warm === warmLocalVoice && !isLocalVoiceWarm()) throw new Error('Local speech runtime stopped during startup');
@@ -364,6 +394,7 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
       } catch (error) {
         if (error.message.includes('Kokoro')) runtime = 'Kokoro';
         else if (error.message.includes('CrispASR')) runtime = 'CrispASR';
+        else if (error.message.includes('Whisper')) runtime = 'Whisper';
         else if (error.message.includes('language runtime') || error.message.includes('llama')) runtime = 'llama.cpp';
         active = false;
         voiceReady = false;
@@ -395,6 +426,15 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
   });
   return {
     ...setup,
+    async recognitionChanged() {
+      active = false;
+      voiceReady = false;
+      voiceMessage = `${sttLabel()} selected. Run local voice setup to install missing components.`;
+      await closeLocalVoice();
+      applyVoicePaths();
+      setup.invalidate(voiceMessage);
+      if (inspect().every(component => component.ready)) setup.resume();
+    },
     resume() { if (saved?.version === 1 && ASSETS.filter(asset => CHAT_ASSET_IDS.has(asset.id)).every(asset => assetReady(paths, asset))) setup.resume(); },
     invalidate(message) {
       chatReady = false;

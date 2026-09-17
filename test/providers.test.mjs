@@ -3,11 +3,14 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import { EventEmitter } from 'node:events';
 import childProcess from 'node:child_process';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { syncBuiltinESMExports } from 'node:module';
 import { PassThrough, Writable } from 'node:stream';
 import { compactToolResult, streamReply, voiceInstructions } from '../src/llm.mjs';
 import { supervisorInstructions } from '../src/supervisor.mjs';
-import { closeLocalVoice, createLocalVoice, createPcmWriter, drainVoiceText, isVoiceResponsePlayable, localSttArguments } from '../src/local-voice.mjs';
+import { closeLocalVoice, createLocalVoice, createPcmWriter, createSttWriter, drainVoiceText, isVoiceResponsePlayable, localSttArguments } from '../src/local-voice.mjs';
 import { createTranscriptStream, DEFAULT_GEMINI_LIVE_MODEL, geminiLiveConfig, geminiLiveFunctionResponse } from '../src/realtime.mjs';
 
 test('PCM preserves accepted false writes, queued audio and commit order across drains', () => {
@@ -36,6 +39,26 @@ test('PCM preserves accepted false writes, queued audio and commit order across 
   assert.equal(writes.length, 3);
   assert.deepEqual(errors, []);
   for (const event of ['drain', 'error', 'close']) assert.equal(stream.listenerCount(event), 0);
+});
+
+test('Whisper writes bounded JSON audio and explicit commits while Moonshine retains PCM streaming', () => {
+  for (const provider of ['whisper', 'moonshine']) {
+    const chunks = [];
+    const stream = new Writable({ write(chunk, encoding, done) { chunks.push(Buffer.from(chunk)); done(); } });
+    const errors = [];
+    const writer = createSttWriter(stream, provider, error => errors.push(error));
+    const audio = Buffer.from([1, 2, 3, 4]);
+    writer.write(audio);
+    writer.commit();
+    if (provider === 'whisper') {
+      assert.deepEqual(Buffer.concat(chunks).toString().trim().split('\n').map(line => JSON.parse(line)), [
+        { type: 'audio', data: audio.toString('base64') }, { type: 'commit' },
+      ]);
+    } else assert.deepEqual(Buffer.concat(chunks), Buffer.concat([audio, Buffer.alloc(64000)]));
+    assert.deepEqual(errors, []);
+    writer.dispose();
+    stream.destroy();
+  }
 });
 
 test('PCM bounds queued plus writable bytes and cleans up on overflow or stalled input', context => {
@@ -433,7 +456,11 @@ test('voice requests include supervisor capabilities and spoken output instructi
 });
 
 test('local and hybrid voice execute tools before playback and retain real answers across turns', { timeout: 10000 }, async context => {
-  for (const provider of ['local', 'custom']) await context.test(provider, async context => {
+  for (const [provider, recognizer] of [['local', 'moonshine'], ['custom', 'moonshine'], ['local', 'whisper'], ['custom', 'whisper']]) await context.test(`${provider}/${recognizer}`, async context => {
+    const whisper = recognizer === 'whisper';
+    const modelDir = mkdtempSync(path.join(os.tmpdir(), 'voice-whisper-session-'));
+    for (const name of ['config.json', 'model.bin', 'tokenizer.json', 'vocabulary.txt']) writeFileSync(path.join(modelDir, name), 'fixture');
+    context.after(() => rmSync(modelDir, { recursive: true, force: true }));
     const requests = [];
     const events = [];
     const spoken = [];
@@ -464,7 +491,7 @@ test('local and hybrid voice execute tools before playback and retain real answe
     });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const spawn = context.mock.method(childProcess, 'spawn', (binary, args, options) => {
-      const isTts = args.includes('-u');
+      const isTts = args.some(argument => argument.endsWith('kokoro_worker.py'));
       const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough(), exitCode: null, signalCode: null });
       child.stdin = new Writable({
         highWaterMark: isTts ? 16384 : 4,
@@ -490,6 +517,7 @@ test('local and hybrid voice execute tools before playback and retain real answe
       if (!isTts) stt = child;
       queueMicrotask(() => {
         if (isTts) child.stdout.write('{"type":"ready"}\n');
+        else if (whisper) child.stdout.write('{"type":"ready","compute_type":"int8"}\n');
         else child.stderr.write('reading raw s16le 16kHz mono PCM from stdin');
       });
       return child;
@@ -507,6 +535,7 @@ test('local and hybrid voice execute tools before playback and retain real answe
     const url = `http://127.0.0.1:${server.address().port}/v1`;
     const env = {
       LOCAL_LLM_URL: url, CUSTOM_BASE_URL: url,
+      LOCAL_STT_PROVIDER: recognizer, WHISPER_MODEL_DIR: modelDir, WHISPER_READY: '1',
       CRISPASR_BIN: process.execPath, PYTHON_BIN: process.execPath,
       MOONSHINE_MODEL: process.execPath, MOONSHINE_TOKENIZER: process.execPath, VAD_MODEL: process.execPath,
       VOICE_TEST_ENV: 'passed-to-crisp',
@@ -530,20 +559,38 @@ test('local and hybrid voice execute tools before playback and retain real answe
     session.audio(firstAudio.toString('base64'));
     session.audio(secondAudio.toString('base64'));
     session.commit();
-    assert.deepEqual(pcm, [firstAudio]);
+    const encode = audio => whisper ? Buffer.from(`${JSON.stringify({ type: 'audio', data: audio.toString('base64') })}\n`) : audio;
+    assert.deepEqual(pcm, [encode(firstAudio)]);
     pcmCallbacks.shift()();
     await new Promise(setImmediate);
-    assert.deepEqual(pcm, [firstAudio, secondAudio]);
+    assert.deepEqual(pcm, [encode(firstAudio), encode(secondAudio)]);
     pcmCallbacks.shift()();
     await new Promise(setImmediate);
-    assert.deepEqual(Buffer.concat(pcm), Buffer.concat([firstAudio, secondAudio, Buffer.alloc(64000)]));
+    assert.deepEqual(Buffer.concat(pcm), Buffer.concat([encode(firstAudio), encode(secondAudio), whisper ? Buffer.from('{"type":"commit"}\n') : Buffer.alloc(64000)]));
     pcmCallbacks.shift()();
     await new Promise(setImmediate);
     const utterance = (text, id) => stt.stdout.write(`${JSON.stringify({ type: 'final', text, utterance_id: id, t0: 0, t1: 2 })}\n`);
+    const speechEvent = (type, id) => stt.stdout.write(`${JSON.stringify({ type, utterance_id: id })}\n`);
+    if (whisper) {
+      context.mock.timers.enable({ apis: ['Date'] });
+      speechEvent('speech_start', -1);
+      context.mock.timers.tick(1000);
+      session.notify('Speech boundary test.', 'boundary-test');
+      assert.equal(spoken.length, 0, 'notifications must not speak during an utterance without partials');
+      speechEvent('decoding', -1);
+      assert.equal(spoken.length, 0, 'notifications must not speak during transcription');
+      const ending = waitFor(event => event.type === 'response_end');
+      speechEvent('no_speech', -1);
+      const ended = await ending;
+      session.playbackDone(ended.responseId, 'played');
+      context.mock.timers.reset();
+    }
     const answers = ['I cannot access tasks.', 'The newest task passed its tests.', 'The newest task is still complete.'];
     for (const [index, text] of ['What ran most recently?', 'You can access tasks. Check the latest one.', 'What is its status now?'].entries()) {
       const ending = waitFor(event => event.type === 'response_end');
+      if (whisper) speechEvent('speech_start', index);
       utterance(text, index);
+      if (whisper) utterance(text, index);
       const ended = await ending;
       assert.equal(ended.playable, true);
       const final = events.findLast(event => event.type === 'transcript' && event.role === 'assistant' && event.partial === false);
@@ -564,6 +611,7 @@ test('local and hybrid voice execute tools before playback and retain real answe
     assert.deepEqual(calls.map(call => call.name), ['list_work', 'get_work_status', 'list_work', 'get_work_status']);
     assert.equal(events.filter(event => event.type === 'tool').length, 4);
     const toolEventCount = events.filter(event => event.type === 'tool').length;
+    if (whisper) speechEvent('speech_start', 4);
     utterance('Check again.', 4);
     await toolStarted;
     session.interrupt();
@@ -579,13 +627,31 @@ test('local and hybrid voice execute tools before playback and retain real answe
     assert.equal(spoken.filter(phrase => phrase.responseId === announced.responseId).length, 1);
     session.playbackDone(announced.responseId, 'played');
     assert.equal(events.some(event => event.type === 'error'), false);
-    session.audio(Buffer.alloc(32000 * 8 + 2).toString('base64'));
+    if (whisper) {
+      speechEvent('speech_start', 5);
+      speechEvent('decoding', 5);
+      speechEvent('speech_start', 6);
+      utterance('Superseded command.', 5);
+      assert.match(events.at(-1).message, /superseded/);
+      session.interrupt();
+      utterance('Cancelled command.', 6);
+      assert.equal(requests.length, 8, 'superseded or explicitly interrupted transcripts must not execute');
+      context.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+      context.mock.timers.tick(1000);
+      const ending = waitFor(event => event.type === 'response_end');
+      session.notify('Cancellation settled.', 'cancel-test');
+      const ended = await ending;
+      session.playbackDone(ended.responseId, 'played');
+      context.mock.timers.reset();
+    }
+    const previousErrors = events.filter(event => event.type === 'error').length;
+    session.audio(Buffer.alloc(32000 * 8 * 2 + 2).toString('base64'));
     assert.equal(events.at(-1).type, 'error');
     assert.equal(events.at(-1).fatal, true);
     assert.match(events.at(-1).message, /exceeded its buffer/);
     session.audio(firstAudio.toString('base64'));
     session.commit();
-    assert.equal(events.filter(event => event.type === 'error').length, 1);
+    assert.equal(events.filter(event => event.type === 'error').length, previousErrors + 1);
     assert.equal(stt.exitCode, 0);
     assert.equal(stt.stdin.listenerCount('drain'), 0);
     assert.equal(session.notify('Closed.', 'notification-2'), false);

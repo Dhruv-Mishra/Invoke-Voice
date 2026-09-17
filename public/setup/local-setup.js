@@ -229,6 +229,7 @@ export function createLocalSetupController({
         ...(start ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ consent: true }) } : {}),
       });
       const snapshot = await response.json().catch(() => null);
+      if (setupRequest !== controller) return;
       if (!response.ok) throw new Error(typeof snapshot?.error === 'string' ? snapshot.error : `Setup request failed (HTTP ${response.status}).`);
       if (!snapshot || typeof snapshot.supported !== 'boolean' || !['idle', 'running', 'ready', 'error'].includes(snapshot.status)) {
         throw new Error('The setup service returned an invalid status. Refresh to try again.');
@@ -240,9 +241,10 @@ export function createLocalSetupController({
         if (!await refreshConfig(true)) throw new Error('Local AI is installed, but its configuration could not be refreshed.');
       }
     } catch (error) {
-      setupHttpError = `${error.name === 'AbortError' ? 'Setup status request timed out.' : error.message} Refresh status before retrying installation.`;
+      if (setupRequest === controller) setupHttpError = `${error.name === 'AbortError' ? 'Setup status request timed out.' : error.message} Refresh status before retrying installation.`;
     } finally {
       clearTimeoutFn(timeout);
+      if (setupRequest !== controller) return;
       setupRequest = null;
       renderSetup();
       if (setupConsentFocusPending && isVisible() && !setupElements.consent?.disabled) {
@@ -383,6 +385,16 @@ export function createLocalSetupController({
 
   return {
     initialize,
+    recognitionChanged() {
+      setupRequest?.abort();
+      setupRequest = null;
+      setupSnapshot = null;
+      setupHttpError = '';
+      if (setupElements.consent) setupElements.consent.checked = false;
+      if (localSetupSection) localSetupSection.open = true;
+      renderSetup();
+      return requestSetup();
+    },
     render: renderSetup,
     requestSetup,
     syncVisibility,

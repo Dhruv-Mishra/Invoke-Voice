@@ -12,12 +12,14 @@ function serverLaunch({ executable, appRoot, resourcesPath, packaged, dataDir, e
 const externalSources = new Set([
   'https://huggingface.co/SC117/Ling-3.0-tiny-abliterated-APEX-GGUF',
   'https://huggingface.co/cstr/moonshine-streaming-small-GGUF',
+  'https://huggingface.co/Systran/faster-whisper-small',
   'https://huggingface.co/ggml-org/whisper-vad',
   'https://huggingface.co/hexgrad/Kokoro-82M',
   'https://github.com/CrispStrobe/CrispASR/releases/tag/v0.8.32',
   'https://github.com/ggml-org/llama.cpp/releases/tag/b10970',
   'https://github.com/astral-sh/uv/releases/tag/0.8.17',
   'https://pypi.org/project/kokoro/0.9.4/',
+  'https://pypi.org/project/faster-whisper/1.2.1/',
   'https://docs.github.com/en/copilot',
 ]);
 

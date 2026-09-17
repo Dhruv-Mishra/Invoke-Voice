@@ -20,6 +20,12 @@ export const ASSETS = Object.freeze([
   { id: 'llama', label: 'llama.cpp b10970 CPU', name: 'llama-b10970-bin-win-cpu-x64.zip', executable: 'llama-server.exe', size: 18428751, sha256: '2c6d6516c04e95caa080d8eb917743e71858c73985acbb6739ad61b14e68b298', sourceUrl: 'https://github.com/ggml-org/llama.cpp/releases/download/b10970/llama-b10970-bin-win-cpu-x64.zip' },
   { id: 'crispasr', label: 'CrispASR 0.8.32 CPU', name: 'crispasr-windows-x86_64-cpu-legacy.zip', executable: 'crispasr.exe', size: 7713869, sha256: 'ba4e23fb8dfcc99b8a76af034954576a75f88193e3dbf62fc774287bcbd1114b', sourceUrl: 'https://github.com/CrispStrobe/CrispASR/releases/download/v0.8.32/crispasr-windows-x86_64-cpu-legacy.zip' },
   { id: 'uv', label: 'uv 0.8.17 / isolated Python', name: 'uv-x86_64-pc-windows-msvc.zip', executable: 'uv.exe', size: 20489375, sha256: '0d051779fbcb173b183efeae1c3e96148764fd82709bbbf0966df3efe48b67c5', sourceUrl: 'https://github.com/astral-sh/uv/releases/download/0.8.17/uv-x86_64-pc-windows-msvc.zip' },
+  ...[
+    ['whisperConfig', 'config.json'],
+    ['whisperModel', 'model.bin'],
+    ['whisperTokenizer', 'tokenizer.json'],
+    ['whisperVocabulary', 'vocabulary.txt'],
+  ].map(([id, name]) => hf(id, `Whisper Small ${name}`, 'Systran/faster-whisper-small', '536b0662742c02347bc0e980a01041f333bce120', name)),
 ]);
 
 export const CRISPASR_AVX2_ASSET = { id: 'crispasr', label: 'CrispASR 0.8.32 CPU AVX2 (opt-in)', name: 'crispasr-windows-x86_64-cpu.zip', executable: 'crispasr.exe', runtimeDirectory: 'crispasr-avx2', size: 8261759, sha256: 'ac8b6caf4dd448d00c5050907275bce4d154747110c37943aa4f69ee7fac9541', sourceUrl: 'https://github.com/CrispStrobe/CrispASR/releases/download/v0.8.32/crispasr-windows-x86_64-cpu.zip' };
@@ -34,6 +40,19 @@ export const TASK_SEARCH_ASSETS = Object.freeze([
 
 export function setupError(message) {
   return Object.assign(new Error(message), { setupMessage: message });
+}
+
+export function localSttProvider(env = process.env) {
+  const provider = env.LOCAL_STT_PROVIDER || 'whisper';
+  if (!['whisper', 'moonshine'].includes(provider)) throw setupError('LOCAL_STT_PROVIDER must be whisper or moonshine.');
+  return provider;
+}
+
+export function localSetupAssets(env = process.env) {
+  const whisper = localSttProvider(env) === 'whisper';
+  return ASSETS.filter(asset => whisper
+    ? !['moonshine', 'tokenizer', 'vad', 'crispasr'].includes(asset.id)
+    : !asset.id.startsWith('whisper'));
 }
 
 export function readJson(file) {
@@ -68,6 +87,7 @@ export function stackPaths(env = process.env, appRoot = root) {
   const runtimeDir = path.resolve(env.RUNTIME_DIR || path.join(home, 'runtimes'));
   const base = env.SUPERVISOR_CONFIG_DIR || appRoot;
   const configured = value => value ? path.resolve(base, value) : null;
+  const whisperDir = configured(env.WHISPER_MODEL_DIR) || path.join(modelDir, 'whisper-small');
   const pythonBase = env.PYTHON_BIN && env.PYTHON_BIN !== 'python' ? configured(env.PYTHON_BIN) : null;
   const venv = path.join(runtimeDir, pythonBase ? `kokoro-approved-${createHash('sha256').update(pythonBase).digest('hex').slice(0, 20)}` : 'kokoro-venv');
   const select = (...candidates) => candidates.find(candidate => candidate && fileStat(candidate));
@@ -80,6 +100,8 @@ export function stackPaths(env = process.env, appRoot = root) {
   const moonshine = select(compatibleMoonshine, requestedMoonshine && path.join(path.dirname(requestedMoonshine), q4Name), path.join(localStack, 'STT_Models', q4Name), path.join(modelDir, q4Name)) || path.join(modelDir, q4Name);
   return {
     home, modelDir, runtimeDir, crispasrCpu, receiptDir: path.join(home, 'setup-receipts'),
+    whisperDir,
+    ...Object.fromEntries(ASSETS.filter(asset => asset.id.startsWith('whisper')).map(asset => [asset.id, path.join(whisperDir, asset.name)])),
     ...Object.fromEntries(TASK_SEARCH_ASSETS.map(asset => [asset.id, path.join(modelDir, 'task-search-minilm', asset.name)])),
     ling: select(configured(env.LOCAL_LLM_PATH), path.join(localStack, 'LLMs', ASSETS[0].name), path.join(modelDir, ASSETS[0].name)) || path.join(modelDir, ASSETS[0].name),
     moonshine,
@@ -305,13 +327,14 @@ export async function ensureAsset(paths, asset, { report = () => {}, signal, fet
 
 async function main() {
   const target = process.argv[2];
-  if (!['all', 'ling', 'moonshine', 'runtimes', 'task-search'].includes(target)) {
-    console.log('Usage: npm run models -- all|ling|moonshine|runtimes|task-search\nTask search is optional; full voice setup remains in Settings.');
+  if (!['all', 'ling', 'whisper', 'moonshine', 'runtimes', 'task-search'].includes(target)) {
+    console.log('Usage: npm run models -- all|ling|whisper|moonshine|runtimes|task-search\nAll installs the selected local recognizer (Whisper by default). Full voice setup remains in Settings.');
     return;
   }
   if (target === 'runtimes' && (process.platform !== 'win32' || process.arch !== 'x64')) throw setupError('Prebuilt runtimes support Windows x64 only.');
   const paths = stackPaths();
-  const selected = target === 'task-search' ? TASK_SEARCH_ASSETS : ASSETS.filter(asset => target === 'runtimes' ? Boolean(asset.executable) && !(asset.id === 'uv' && paths.pythonBase) : target === 'all' ? ['ling', 'moonshine', 'tokenizer', 'vad'].includes(asset.id) : target === 'ling' ? asset.id === 'ling' : ['moonshine', 'tokenizer', 'vad'].includes(asset.id));
+  const candidates = ['all', 'runtimes'].includes(target) ? localSetupAssets() : ASSETS;
+  const selected = target === 'task-search' ? TASK_SEARCH_ASSETS : candidates.filter(asset => target === 'runtimes' ? Boolean(asset.executable) && !(asset.id === 'uv' && paths.pythonBase) : target === 'all' ? ['ling', 'moonshine', 'tokenizer', 'vad'].includes(asset.id) || asset.id.startsWith('whisper') : target === 'ling' ? asset.id === 'ling' : target === 'whisper' ? asset.id.startsWith('whisper') : ['moonshine', 'tokenizer', 'vad', 'crispasr'].includes(asset.id));
   await withSetupLock(paths, async () => {
     for (const asset of selected) await ensureAsset(paths, asset, { report: event => { if (!event.progress) console.log(event.message); } });
   });

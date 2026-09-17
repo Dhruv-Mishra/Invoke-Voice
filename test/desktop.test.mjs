@@ -38,6 +38,9 @@ test('installer includes physical runtime dependencies, excludes private data an
   assert.ok(config.scripts['dist:win'].startsWith('npm run kokoro-pack &&'));
   assert.ok(config.scripts['dist:win'].includes('electron-builder --win nsis --x64'));
   assert.equal(config.build.asar, true);
+  assert.ok(config.build.files.includes('scripts/whisper_worker.py'));
+  assert.ok(config.build.files.includes('requirements-whisper.txt'));
+  assert.ok(config.build.asarUnpack.includes('requirements-whisper.txt'));
   for (const included of ['src/**', 'scripts/**', 'dist/**', 'artifacts/kokoro-offline-pack/**', 'package.json', 'requirements-local.txt', 'node_modules/**']) assert.ok(config.build.asarUnpack.includes(included));
   for (const included of ['desktop-preload.cjs', 'desktop-update.cjs', 'scripts/models.mjs', 'scripts/start.mjs', 'scripts/desktop-launch.cjs', 'scripts/kokoro_worker.py', 'artifacts/kokoro-offline-pack/**/*', 'requirements-local.txt']) assert.ok(config.build.files.includes(included));
   assert.ok(config.build.files.includes('!**/.env*'));
@@ -95,8 +98,11 @@ test('beta publisher builds before atomically pushing its version tag and prerel
 test('desktop allows setup documentation sources but rejects arbitrary URLs and protocols', context => {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'voice-desktop-links-'));
   context.after(() => rmSync(directory, { recursive: true, force: true }));
-  const setup = createLocalSetup({ env: { LOCALAPPDATA: directory } });
-  for (const component of setup.snapshot().components) assert.equal(desktopLaunch.allowedExternal(component.sourceUrl), true, component.sourceUrl);
+  for (const provider of ['whisper', 'moonshine']) {
+    const setup = createLocalSetup({ env: { LOCALAPPDATA: directory, LOCAL_STT_PROVIDER: provider } });
+    for (const component of setup.snapshot().components) assert.equal(desktopLaunch.allowedExternal(component.sourceUrl), true, component.sourceUrl);
+    context.after(() => setup.close());
+  }
   for (const url of ['javascript:alert(1)', 'file:///C:/Windows/System32/cmd.exe', 'https://github.com/evil/project', 'https://github.com@evil.test/', 'https://docs.github.com/en/copilot?redirect=https://evil.test', 'http://huggingface.co/hexgrad/Kokoro-82M']) assert.equal(desktopLaunch.allowedExternal(url), false);
 });
 

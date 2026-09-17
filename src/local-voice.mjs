@@ -6,20 +6,21 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { streamReply } from './llm.mjs';
 import { localThreadDefault } from './runtime-config.mjs';
-import { stackPaths } from '../scripts/models.mjs';
+import { localSttProvider, stackPaths } from '../scripts/models.mjs';
 import desktopLaunch from '../scripts/desktop-launch.cjs';
 
 const worker = fileURLToPath(new URL('../scripts/kokoro_worker.py', import.meta.url));
+const whisperWorker = fileURLToPath(new URL('../scripts/whisper_worker.py', import.meta.url));
 const bundledPython = fileURLToPath(new URL('../.venv/Scripts/python.exe', import.meta.url));
 const defaultMoonshineModel = fileURLToPath(new URL('../../LocalVoiceStack/STT_Models/moonshine-streaming-small-q4_k.gguf', import.meta.url));
 let kokoroRuntimePromise;
-let crispRuntimePromise;
+let sttRuntimePromise;
 let kokoroProcess;
-let crispProcess;
+let sttProcess;
 const runtimeExitListeners = new Set();
 
 export function isLocalVoiceWarm() {
-  return [kokoroProcess, crispProcess].every(process => process && process.exitCode === null && process.signalCode === null);
+  return [kokoroProcess, sttProcess].every(process => process && process.exitCode === null && process.signalCode === null);
 }
 
 export function onLocalVoiceRuntimeExit(listener) {
@@ -77,54 +78,67 @@ function getKokoroRuntime(config, env, signal) {
   return kokoroRuntimePromise;
 }
 
-async function startCrispRuntime(config, env, signal) {
-  const process = spawn(config.crispasrBin, localSttArguments(config, env), { windowsHide: true, env, stdio: ['pipe', 'pipe', 'pipe'] });
-  crispProcess = process;
+async function startSttRuntime(config, env, signal) {
+  const whisper = config.sttProvider === 'whisper';
+  const name = whisper ? 'Whisper' : 'CrispASR';
+  const executable = whisper ? config.pythonBin : config.crispasrBin;
+  const args = whisper ? ['-I', '-u', whisperWorker, '--model', config.whisperModelDir, '--threads', env.WHISPER_THREADS || env.LOCAL_THREADS || localThreadDefault(8), '--language', env.WHISPER_LANGUAGE || 'auto', '--silence-ms', env.WHISPER_END_SILENCE_MS || '650'] : localSttArguments(config, env);
+  const process = spawn(executable, args, { windowsHide: true, env: { ...env, HF_HUB_OFFLINE: '1', HF_HUB_DISABLE_TELEMETRY: '1' }, stdio: ['pipe', 'pipe', 'pipe'] });
+  sttProcess = process;
   desktopLaunch.trackChild(process);
   let diagnostic = '';
   process.stdin.on('error', () => {});
   const transcription = createInterface({ input: process.stdout });
   try {
     await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('CrispASR did not become ready within 30s')), 30000);
-      const abort = () => { clearTimeout(timer); process.kill(); reject(new Error('CrispASR startup was cancelled')); };
+      const timer = setTimeout(() => reject(new Error(`${name} did not become ready within 60s. Run local setup and retry.`)), 60000);
+      const abort = () => { clearTimeout(timer); process.kill(); reject(new Error(`${name} startup was cancelled`)); };
       const finish = error => { clearTimeout(timer); signal?.removeEventListener('abort', abort); error ? reject(error) : resolve(); };
       signal?.addEventListener('abort', abort, { once: true });
+      const onLine = line => {
+        let event;
+        try { event = JSON.parse(line); } catch { return; }
+        if (event.type === 'ready') {
+          transcription.off('line', onLine);
+          finish(event.compute_type === 'int8' ? null : new Error('Whisper did not initialize INT8 inference.'));
+        } else if (event.type === 'error') finish(new Error(event.message || 'Whisper startup failed'));
+      };
+      if (whisper) transcription.on('line', onLine);
       process.stderr.on('data', chunk => {
         diagnostic = (diagnostic + chunk.toString()).slice(-1000);
-        if (diagnostic.includes('reading raw s16le 16kHz mono PCM from stdin')) finish();
+        if (!whisper && diagnostic.includes('reading raw s16le 16kHz mono PCM from stdin')) finish();
       });
-      process.once('error', error => finish(new Error(`CrispASR failed: ${error.message}`)));
-      process.once('exit', code => finish(new Error(`CrispASR stopped during startup (${code}): ${diagnostic}`)));
+      process.once('error', error => finish(new Error(`${name} failed: ${error.message}`)));
+      process.once('exit', code => finish(new Error(`${name} stopped during startup (${code}): ${diagnostic}`)));
     });
   } catch (error) {
     transcription.close();
     process.kill();
     throw error;
   }
-  return { process, transcription, diagnostic: () => diagnostic };
+  return { process, transcription, name, diagnostic: () => diagnostic };
 }
 
-function getCrispRuntime(config, env, signal) {
-  if (!crispRuntimePromise) {
-    const pending = startCrispRuntime(config, env, signal);
-    crispRuntimePromise = pending;
+function getSttRuntime(config, env, signal) {
+  if (!sttRuntimePromise) {
+    const pending = startSttRuntime(config, env, signal);
+    sttRuntimePromise = pending;
     pending.then(runtime => {
       runtime.process.once('exit', () => {
-        if (crispRuntimePromise === pending) crispRuntimePromise = undefined;
-        if (crispProcess === runtime.process) crispProcess = undefined;
-        reportRuntimeExit('CrispASR');
+        if (sttRuntimePromise === pending) sttRuntimePromise = undefined;
+        if (sttProcess === runtime.process) sttProcess = undefined;
+        reportRuntimeExit(runtime.name);
       });
-    }).catch(() => { if (crispRuntimePromise === pending) crispRuntimePromise = undefined; });
+    }).catch(() => { if (sttRuntimePromise === pending) sttRuntimePromise = undefined; });
   }
-  return crispRuntimePromise;
+  return sttRuntimePromise;
 }
 
-async function claimCrispRuntime(config, env) {
-  const pending = getCrispRuntime(config, env);
-  if (crispRuntimePromise === pending) crispRuntimePromise = undefined;
+async function claimSttRuntime(config, env) {
+  const pending = getSttRuntime(config, env);
+  if (sttRuntimePromise === pending) sttRuntimePromise = undefined;
   const runtime = await pending;
-  if (runtime.process.exitCode !== null) throw new Error(`CrispASR stopped before the voice session started (${runtime.process.exitCode})`);
+  if (runtime.process.exitCode !== null) throw new Error(`${runtime.name} stopped before the voice session started (${runtime.process.exitCode})`);
   return runtime;
 }
 
@@ -138,9 +152,9 @@ export async function warmLocalVoice(env = process.env, signal) {
     if (!existing && kokoroProcess) ownedProcesses.push(kokoroProcess);
   }
   if (config.sttConfigured) {
-    const existing = crispRuntimePromise;
-    warmups.push(getCrispRuntime(config, env, signal));
-    if (!existing && crispProcess) ownedProcesses.push(crispProcess);
+    const existing = sttRuntimePromise;
+    warmups.push(getSttRuntime(config, env, signal));
+    if (!existing && sttProcess) ownedProcesses.push(sttProcess);
   }
   try { await Promise.all(warmups); }
   catch (error) {
@@ -152,12 +166,12 @@ export async function warmLocalVoice(env = process.env, signal) {
 }
 
 export async function closeLocalVoice() {
-  const pending = [kokoroRuntimePromise, crispRuntimePromise];
+  const pending = [kokoroRuntimePromise, sttRuntimePromise];
   kokoroRuntimePromise = undefined;
-  crispRuntimePromise = undefined;
-  for (const process of new Set([kokoroProcess, crispProcess].filter(Boolean))) process.kill();
+  sttRuntimePromise = undefined;
+  for (const process of new Set([kokoroProcess, sttProcess].filter(Boolean))) process.kill();
   kokoroProcess = undefined;
-  crispProcess = undefined;
+  sttProcess = undefined;
   for (const result of await Promise.allSettled(pending.filter(Boolean))) {
     if (result.status === 'fulfilled') {
       result.value.reader?.close();
@@ -169,19 +183,24 @@ export async function closeLocalVoice() {
 
 export function localConfiguration(env = process.env) {
   const paths = stackPaths(env);
+  const sttProvider = localSttProvider(env);
+  const sttLabel = sttProvider === 'whisper' ? 'Whisper Small INT8' : 'Moonshine Small streaming';
+  const whisperModelDir = paths.whisperDir;
   const crispasrBin = paths.crispasr;
   const requestedMoonshineModel = env.MOONSHINE_MODEL ? path.resolve(env.MOONSHINE_MODEL) : defaultMoonshineModel;
   const unsupportedQ8 = path.basename(requestedMoonshineModel).toLowerCase() === 'moonshine-streaming-small-q8_0.gguf';
   const moonshineModel = env.MOONSHINE_EFFECTIVE_MODEL || (existsSync(paths.moonshine) ? paths.moonshine : requestedMoonshineModel);
-  const sttWarning = unsupportedQ8 && moonshineModel !== requestedMoonshineModel ? 'Small Q8_0 crashes CrispASR 0.8.32; using canonical Small Q4_K.' : null;
+  const sttWarning = sttProvider === 'moonshine' && unsupportedQ8 && moonshineModel !== requestedMoonshineModel ? 'Small Q8_0 crashes CrispASR 0.8.32; using canonical Small Q4_K.' : null;
   const siblingTokenizer = path.join(path.dirname(moonshineModel), 'tokenizer.bin');
   const moonshineTokenizer = env.MOONSHINE_TOKENIZER || (existsSync(siblingTokenizer) ? siblingTokenizer : paths.tokenizer);
   const vadModel = paths.vad;
-  const sttConfigured = [crispasrBin, moonshineModel, moonshineTokenizer, vadModel].every(existsSync);
+  const sttConfigured = sttProvider === 'whisper'
+    ? [paths.whisperModel, paths.whisperConfig, paths.whisperTokenizer, paths.whisperVocabulary].every(existsSync) && env.WHISPER_READY === '1'
+    : [crispasrBin, moonshineModel, moonshineTokenizer, vadModel].every(existsSync);
   const managedPython = existsSync(path.join(paths.venv, 'complete.json')) && existsSync(paths.python) ? paths.python : null;
   const pythonBin = env.PYTHON_BIN && env.PYTHON_BIN !== 'python' ? path.resolve(env.SUPERVISOR_CONFIG_DIR || fileURLToPath(new URL('../', import.meta.url)), env.PYTHON_BIN) : managedPython || (existsSync(bundledPython) ? bundledPython : 'python');
   const ttsConfigured = existsSync(pythonBin) || env.KOKORO_READY === '1';
-  return { configured: sttConfigured && ttsConfigured, sttConfigured, ttsConfigured, pythonBin, crispasrBin, requestedMoonshineModel, moonshineModel, moonshineTokenizer, sttWarning, vadModel, model: env.LOCAL_LLM_MODEL || 'ling-local', ttsModel: env.KOKORO_REPO || 'hexgrad/Kokoro-82M', ttsVoice: env.KOKORO_VOICE || 'af_heart', sttStreamingArchitecture: 'CrispASR rolling-window streaming' };
+  return { configured: sttConfigured && ttsConfigured, sttConfigured, ttsConfigured, sttProvider, sttLabel, whisperModelDir, pythonBin, crispasrBin, requestedMoonshineModel, moonshineModel, moonshineTokenizer, sttWarning, vadModel, model: env.LOCAL_LLM_MODEL || 'ling-local', ttsModel: env.KOKORO_REPO || 'hexgrad/Kokoro-82M', ttsVoice: env.KOKORO_VOICE || 'af_heart', sttStreamingArchitecture: sttProvider === 'whisper' ? 'faster-whisper Small INT8 utterance transcription' : 'CrispASR rolling-window streaming' };
 }
 
 export function localSttArguments(config, env = process.env) {
@@ -208,7 +227,7 @@ export function createPcmWriter(stream, onError, { maxBytes = 32000 * 8, stallMs
     dispose();
     onError(message);
   }
-  function pipeError() { fail('CrispASR input pipe closed'); }
+  function pipeError() { fail('Speech recognition input pipe closed'); }
   function pump() {
     if (disposed) return;
     try {
@@ -244,6 +263,17 @@ export function createPcmWriter(stream, onError, { maxBytes = 32000 * 8, stallMs
       pump();
     },
     dispose,
+  };
+}
+
+export function createSttWriter(stream, provider, onError) {
+  const whisper = provider === 'whisper';
+  const writer = createPcmWriter(stream, onError, whisper ? { maxBytes: 32000 * 8 * 2 } : undefined);
+  const packet = event => writer.write(Buffer.from(`${JSON.stringify(event)}\n`));
+  return {
+    write(pcm) { if (whisper) packet({ type: 'audio', data: pcm.toString('base64') }); else writer.write(pcm); },
+    commit() { if (whisper) packet({ type: 'commit' }); else writer.write(Buffer.alloc(32000 * 2)); },
+    dispose: writer.dispose,
   };
 }
 
@@ -289,7 +319,7 @@ function spokenSummary(value) {
 export async function createLocalVoice({ send, callTool, provider = 'local', model, allowCloud = false, env = process.env }) {
   if (provider !== 'local' && !allowCloud) throw new Error('Enable hybrid consent to send local speech transcripts to a cloud LLM');
   const config = localConfiguration(env);
-  if (!config.sttConfigured) throw new Error('Install CrispASR, Moonshine Q4_K, tokenizer and Silero VAD with npm run models');
+  if (!config.sttConfigured) throw new Error(`Install ${config.sttLabel} and its runtime from Settings > Local voice.`);
   const sessionId = randomUUID();
   let closed = false;
   let turn = 0;
@@ -303,6 +333,8 @@ export async function createLocalVoice({ send, callTool, provider = 'local', mod
   let activePhrase;
   let activePhraseTimer;
   let lastSpeechAt = 0;
+  let latestSpeechId;
+  let recognizing = false;
   let pcmWriter;
   const phrases = [];
   const messages = [];
@@ -382,7 +414,7 @@ export async function createLocalVoice({ send, callTool, provider = 'local', mod
     pumpAnnouncements();
   }
   function pumpAnnouncements() {
-    if (closed || generating || activePhrase || phrases.length || announcementQueue.length === 0) return;
+    if (closed || recognizing || generating || activePhrase || phrases.length || announcementQueue.length === 0) return;
     if ([...responses.values()].some(response => response.ended) || Date.now() - lastSpeechAt < 600) return;
     const announcement = announcementQueue.shift();
     const responseId = randomUUID();
@@ -475,18 +507,43 @@ export async function createLocalVoice({ send, callTool, provider = 'local', mod
     ttsReader.on('line', ttsLineHandler);
     ttsExitHandler = () => { if (!closed) fail('Kokoro stopped unexpectedly'); };
     tts.once('exit', ttsExitHandler);
-    const sttRuntime = await claimCrispRuntime(config, env);
+    const sttRuntime = await claimSttRuntime(config, env);
     stt = sttRuntime.process;
-    stt.on('error', error => fail(`CrispASR failed: ${error.message}`));
-    stt.on('exit', code => { if (!closed) fail(`CrispASR exited (${code}): ${sttRuntime.diagnostic()}`); });
-    pcmWriter = createPcmWriter(stt.stdin, fail);
+    stt.on('error', error => fail(`${sttRuntime.name} failed: ${error.message}`));
+    stt.on('exit', code => { if (!closed) fail(`${sttRuntime.name} exited (${code}): ${sttRuntime.diagnostic()}`); });
+    pcmWriter = createSttWriter(stt.stdin, config.sttProvider, fail);
     const transcription = sttRuntime.transcription;
     readers.push(transcription);
     transcription.on('line', line => {
       if (closed) return;
       let event;
       try { event = JSON.parse(line); } catch { return; }
+      if (event.type === 'error') {
+        if (event.fatal !== false) return fail(event.message || 'Speech recognition failed');
+        send({ type: 'error', message: event.message });
+        send({ type: 'state', state: 'listening' });
+        return;
+      }
+      if (event.type === 'speech_start') {
+        latestSpeechId = event.utterance_id;
+        recognizing = true;
+        lastSpeechAt = Date.now();
+        interrupt();
+        send({ type: 'state', state: 'listening' });
+      }
+      if (event.utterance_id === latestSpeechId && ['decoding', 'no_speech'].includes(event.type)) {
+        recognizing = event.type === 'decoding';
+        send({ type: 'state', state: event.type === 'decoding' ? 'thinking' : 'listening' });
+        if (!recognizing) pumpAnnouncements();
+      }
       const text = String(event.text || '').trim();
+      if (event.type === 'final' && event.utterance_id === latestSpeechId) {
+        recognizing = false;
+        if (finalized.has(event.utterance_id)) {
+          send({ type: 'state', state: 'listening' });
+          pumpAnnouncements();
+        }
+      }
       if (event.type === 'partial' && text) {
         lastSpeechAt = Date.now();
         if (generating || phrases.length || activePhrase?.token === turn) interrupt();
@@ -495,6 +552,11 @@ export async function createLocalVoice({ send, callTool, provider = 'local', mod
       if (event.type === 'final' && text && event.utterance_id !== undefined && !finalized.has(event.utterance_id)) {
         finalized.add(event.utterance_id);
         if (finalized.size > 1000) finalized.delete(finalized.values().next().value);
+        if (latestSpeechId !== undefined && latestSpeechId !== event.utterance_id) {
+          send({ type: 'error', message: 'Earlier speech was superseded by a new utterance before recognition finished. Repeat it if still needed.' });
+          return;
+        }
+        recognizing = false;
         send({ type: 'transcript', role: 'user', text, partial: false });
         if (event.t1 - event.t0 > 55) { send({ type: 'error', message: 'Long utterance reached the STT cap. Please repeat a shorter complete request.' }); return; }
         void reply(text);
@@ -507,8 +569,11 @@ export async function createLocalVoice({ send, callTool, provider = 'local', mod
         if (closed) return;
         pcmWriter.write(Buffer.from(base64, 'base64'));
       },
-      commit() { if (!closed) pcmWriter.write(Buffer.alloc(32000 * 2)); },
-      interrupt,
+      commit() { if (!closed) pcmWriter.commit(); },
+      interrupt() {
+        if (recognizing && latestSpeechId !== undefined) finalized.add(latestSpeechId);
+        interrupt();
+      },
       playbackDone(responseId) {
         const response = responses.get(responseId);
         if (!response?.ended) return;

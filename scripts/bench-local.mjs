@@ -5,11 +5,12 @@ import { createHash } from 'node:crypto';
 import { createInterface } from 'node:readline';
 import { availableParallelism, cpus, totalmem } from 'node:os';
 import net from 'node:net';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { stackPaths } from './models.mjs';
 import { localLlmArguments } from './start.mjs';
-import { createPcmWriter, localConfiguration, localSttArguments } from '../src/local-voice.mjs';
+import { createPcmWriter, createSttWriter, localConfiguration, localSttArguments } from '../src/local-voice.mjs';
 import { streamReply, voiceInstructions } from '../src/llm.mjs';
 import { tools } from '../src/supervisor/contract.mjs';
 
@@ -26,6 +27,7 @@ const llmCases = [
   { name: 'compact-q8-kv', threads: '8', context: '4096', parallel: '1', key: 'q8_0', value: 'q8_0' },
 ];
 const sttCases = [
+  { name: 'whisper' },
   { name: 'configured' },
   { name: 'baseline', threads: '12', partial: '1000', step: '500' },
   { name: 'candidate', threads: '4', partial: '2000', step: '500' },
@@ -232,8 +234,77 @@ async function speech(env, text) {
   } finally { clearTimeout(timer); await stop(child); }
 }
 
+async function benchWhisper(env, selectedSample) {
+  const config = localConfiguration({ ...env, LOCAL_STT_PROVIDER: 'whisper' });
+  if (!existsSync(path.join(config.whisperModelDir, 'model.bin'))) throw new Error('Whisper model is missing. Install it in Settings before benchmarking.');
+  const args = ['-I', '-u', fileURLToPath(new URL('./whisper_worker.py', import.meta.url)), '--model', config.whisperModelDir, '--language', env.WHISPER_LANGUAGE || 'auto', '--threads', env.WHISPER_THREADS || '8', '--silence-ms', env.WHISPER_END_SILENCE_MS || '650'];
+  const child = childProcess(config.pythonBin, args, { ...env, HF_HUB_OFFLINE: '1', HF_HUB_DISABLE_TELEMETRY: '1' });
+  const reader = createInterface({ input: child.stdout });
+  let diagnostic = '';
+  let workerError;
+  child.stderr.on('data', chunk => { diagnostic = (diagnostic + chunk).slice(-1500); });
+  reader.on('line', line => {
+    try { const event = JSON.parse(line); if (event.type === 'error') workerError = event.message; } catch {}
+  });
+  function waitEvent(type) {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => finish(new Error(`Whisper ${type} timed out: ${workerError || diagnostic}`)), 60000);
+      const onClose = () => finish(new Error(`Whisper stopped: ${workerError || diagnostic || child.failure?.message}`));
+      const onLine = line => {
+        let event;
+        try { event = JSON.parse(line); } catch { return; }
+        if (event.type === 'error') finish(new Error(event.message));
+        else if (event.type === type) finish(null, { ...event, wallMs: performance.now() });
+      };
+      function finish(error, event) {
+        clearTimeout(timer);
+        reader.off('line', onLine);
+        child.off('close', onClose);
+        error ? reject(error) : resolve(event);
+      }
+      reader.on('line', onLine);
+      child.once('close', onClose);
+    });
+  }
+  const writer = createSttWriter(child.stdin, 'whisper', message => { workerError = message; child.kill(); });
+  const samples = [
+    { name: 'brief', text: 'Please check my work.' },
+    { name: 'short', text: 'Please check the current work and tell me whether the tests have passed.' },
+    { name: 'long', text: 'Please check the current work and tell me whether the tests have passed before you summarize the latest result without starting any new work because I need to review the changes and decide what to do next.' },
+  ];
+  try {
+    const loading = performance.now();
+    const ready = await waitEvent('ready');
+    if (ready.compute_type !== 'int8') throw new Error('Whisper did not initialize INT8 inference.');
+    output({ kind: 'stt-runtime', provider: 'whisper', loadMs: rounded(ready.wallMs - loading), computeType: ready.compute_type, args });
+    for (const sample of samples.filter(item => !selectedSample || item.name === selectedSample)) {
+      const pcm = await speech(env, sample.text);
+      for (const mode of ['commit', 'hands-free']) {
+        const final = waitEvent('final');
+        final.catch(() => {});
+        const started = performance.now();
+        const audio = mode === 'commit' ? pcm : Buffer.concat([pcm, Buffer.alloc(32000)]);
+        for (let offset = 0; offset < audio.length; offset += 640) {
+          deadline.throwIfAborted();
+          if (workerError) throw new Error(workerError);
+          writer.write(audio.subarray(offset, offset + 640));
+          const remaining = started + Math.min(offset + 640, audio.length) / 32 - performance.now();
+          if (remaining > 0) await delay(remaining, undefined, { signal: deadline });
+        }
+        if (mode === 'commit') writer.commit();
+        const event = await final;
+        const normalize = text => text.toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+        const transcriptMatches = normalize(event.text) === normalize(sample.text);
+        output({ kind: 'stt', case: 'whisper', mode, sample: sample.name, expected: sample.text, transcript: event.text, transcriptMatches, audioMs: rounded(pcm.length / 32), endSilenceMs: rounded(event.wallMs - started - pcm.length / 32) });
+        if (!transcriptMatches) process.exitCode = 1;
+      }
+    }
+  } finally { writer.dispose(); await stop(child); reader.close(); }
+}
+
 async function benchStt(env, selected, selectedSample) {
-  const config = localConfiguration({ ...env });
+  if (selected === 'whisper') return benchWhisper(env, selectedSample);
+  const config = localConfiguration({ ...env, LOCAL_STT_PROVIDER: 'moonshine' });
   const idleMs = Number(env.BENCH_STT_IDLE_MS || 0);
   if (!Number.isInteger(idleMs) || idleMs < 0 || idleMs > 60000) throw new Error('BENCH_STT_IDLE_MS must be an integer from 0 to 60000.');
   if (!config.sttConfigured) throw new Error('Installed Crisp, Moonshine, tokenizer or VAD missing; provision speech before benchmarking.');
@@ -342,6 +413,7 @@ async function benchStt(env, selected, selectedSample) {
 async function main() {
   const [mode = 'all', selected, sample] = process.argv.slice(2);
   if (mode === '--help') {
+    console.log('STT case whisper tests the installed INT8 worker with push-to-talk and hands-free synthetic audio. Other STT cases explicitly use Moonshine/CrispASR.');
     console.log('node scripts/bench-local.mjs [all|llm|stt] [case] [brief|short|long]\nLLM cases: baseline, compact-f16, compact-q8-k, compact-q8-kv\nSTT cases: configured (actual app arguments), baseline, candidate, step1000, redecode, bounded, bounded2 (rejected: loses brief-command words), sparse\nBENCH_STT_IDLE_MS=0..60000 adds paced silence before and after each STT clip (at least 2000 ms after). BENCH_STT_WRITER=app exercises the production bounded PCM writer without slowing input for drain. CRISPASR_BIN selects an already-installed runtime for comparison.\nSynthetic inputs only; JSON lines on stdout. Uses installed assets, private ports and owned processes; no downloads or configuration writes. Baselines and experimental cases are comparison values, not recommended laptop settings.');
     return;
   }

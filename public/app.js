@@ -1401,12 +1401,14 @@ if (configForm) {
     }
     configSaveBtn.disabled = true;
     try {
+      const previousRecognizer = appConfig?.local?.sttProvider;
       const response = await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ values }) });
       const result = await response.json().catch(() => null);
       if (!response.ok) throw new Error(result?.error || `HTTP ${response.status}`);
       appConfig = result;
       renderApplicationConfig();
       await loadConfig(true);
+      if (appConfig?.local?.sttProvider !== previousRecognizer) await localSetup.recognitionChanged();
       const pending = appConfig?.configuration?.fields?.some(field => field.pendingRestart);
       configFeedback.textContent = pending ? 'Config saved. Restart the app to apply pending local performance changes.' : 'Config saved and applied to new sessions.';
     } catch (error) {

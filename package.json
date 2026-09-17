@@ -1,6 +1,6 @@
 {
   "name": "voice-work-supervisor",
-  "version": "0.1.0",
+  "version": "0.1.1-beta.0",
   "private": true,
   "type": "module",
   "main": "desktop.cjs",
@@ -47,16 +47,50 @@
   "build": {
     "appId": "local.voice-supervisor.desktop",
     "productName": "Voice Work Supervisor",
-    "directories": { "output": "release" },
+    "directories": {
+      "output": "release"
+    },
     "asar": true,
     "files": [
-      "desktop.cjs", "package.json", "src/**/*.mjs", "dist/**/*",
-      "scripts/models.mjs", "scripts/start.mjs", "scripts/desktop-launch.cjs", "scripts/kokoro_worker.py", "requirements-local.txt",
-      "!**/.env*", "!**/*.{gguf,pth,pt}", "!**/{test,tests,artifacts,state,.git,.venv,__pycache__}/**"
+      "desktop.cjs",
+      "package.json",
+      "src/**/*.mjs",
+      "dist/**/*",
+      "scripts/models.mjs",
+      "scripts/start.mjs",
+      "scripts/desktop-launch.cjs",
+      "scripts/kokoro_worker.py",
+      "requirements-local.txt",
+      "!**/.env*",
+      "!**/*.{gguf,pth,pt}",
+      "!**/{test,tests,artifacts,state,.git,.venv,__pycache__}/**"
     ],
-    "asarUnpack": ["src/**", "scripts/**", "dist/**", "requirements-local.txt", "package.json", "node_modules/**"],
-    "win": { "target": [{ "target": "nsis", "arch": ["x64"] }], "signAndEditExecutable": false, "artifactName": "${productName}-Setup-${version}.${ext}" },
-    "nsis": { "oneClick": true, "perMachine": false, "allowElevation": false, "deleteAppDataOnUninstall": false },
+    "asarUnpack": [
+      "src/**",
+      "scripts/**",
+      "dist/**",
+      "requirements-local.txt",
+      "package.json",
+      "node_modules/**"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "signAndEditExecutable": false,
+      "artifactName": "${productName}-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowElevation": false,
+      "deleteAppDataOnUninstall": false
+    },
     "publish": null
   }
 }

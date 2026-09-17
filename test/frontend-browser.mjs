@@ -482,13 +482,15 @@ try {
   const shortCaption = await evaluate(() => {
     const bounds = document.getElementById('user-closed-caption').getBoundingClientRect();
     window.fixtureShortCaptionWidth = bounds.width;
+    window.fixtureShortCaptionHeight = bounds.height;
     return bounds.toJSON();
   });
   assert.ok(shortCaption.height <= 40, `Expected a compact single-line caption, received ${shortCaption.height}px`);
   await voice({ type: 'transcript', role: 'user', text: 'Voice partial grows smoothly as each recognized word arrives', partial: true });
-  await waitFor(() => document.getElementById('user-closed-caption').getBoundingClientRect().width > window.fixtureShortCaptionWidth);
+  await waitFor(() => document.getElementById('user-closed-caption').getBoundingClientRect().height > window.fixtureShortCaptionHeight);
   const growingCaption = await evaluate(() => document.getElementById('user-closed-caption').getBoundingClientRect().toJSON());
-  assert.ok(growingCaption.width > shortCaption.width);
+  assert.equal(growingCaption.width, shortCaption.width);
+  assert.ok(growingCaption.height > shortCaption.height);
   assert.equal(await evaluate(() => {
     const user = getComputedStyle(document.getElementById('user-closed-caption')).backgroundImage;
     const assistant = getComputedStyle(document.getElementById('closed-caption')).backgroundImage;
@@ -566,8 +568,9 @@ try {
       assert.equal(await evaluate(() => document.getElementById('caption-text').textContent), longCaption.trim());
       assert.equal(await evaluate(() => [...document.querySelectorAll('.caption-text')].every(text =>
         getComputedStyle(text).textAlign === 'left'
-        && Number.parseFloat(text.style.height) > 0)), true,
-      'Caption text must be left aligned and retain measured heights for smooth growth');
+        && text.style.height === ''
+        && text.closest('.closed-caption').style.width === '')), true,
+      'Caption text must be left aligned and use CSS-driven dimensions');
       const layout = await evaluate(() => {
         const surface = document.querySelector('.app-main').getBoundingClientRect();
         const dock = document.querySelector('.voice-strip').getBoundingClientRect();

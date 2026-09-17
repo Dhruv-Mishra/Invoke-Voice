@@ -1,7 +1,7 @@
 import { Behavior, FunctionResponseScheduling, GoogleGenAI, Modality } from '@google/genai';
 import WebSocket from 'ws';
 import { randomUUID } from 'node:crypto';
-import { tools, supervisorInstructions } from './supervisor.mjs';
+import { tools, supervisorInstructions } from './supervisor/contract.mjs';
 import { compactToolResult } from './llm.mjs';
 
 export const DEFAULT_GEMINI_LIVE_MODEL = 'gemini-3.8-live';

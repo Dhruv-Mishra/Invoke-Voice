@@ -3,9 +3,14 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { Supervisor, tools } from '../src/supervisor.mjs';
+import { Supervisor, tools, supervisorTools, supervisorInstructions } from '../src/supervisor.mjs';
+import { tools as contractTools, supervisorTools as contractSupervisorTools, supervisorInstructions as contractSupervisorInstructions } from '../src/supervisor/contract.mjs';
 
 test('exports the canonical LLM tool schemas', () => {
+  assert.equal(tools, supervisorTools);
+  assert.equal(tools, contractTools);
+  assert.equal(supervisorTools, contractSupervisorTools);
+  assert.equal(supervisorInstructions, contractSupervisorInstructions);
   assert.deepEqual(tools.map(tool => tool.function.name), ['list_work', 'start_work', 'send_work_message', 'get_work_status', 'open_work', 'delete_work', 'invoke_vscode']);
   assert.equal(Object.hasOwn(tools[0].function.parameters, 'required'), false);
   assert.deepEqual(tools.find(tool => tool.function.name === 'start_work').function.parameters.properties.backend.enum, ['copilot', 'agency']);

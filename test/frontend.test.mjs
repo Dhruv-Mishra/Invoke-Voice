@@ -8,8 +8,9 @@ import { createSSRApp, h } from 'vue';
 import { renderToString } from 'vue/server-renderer';
 import VoiceSprite, { defaultAnimations } from '../public/VoiceSprite.js';
 import { captionTiming, motionPreference, themes } from '../public/themes.js';
-import { createCaptionController } from '../public/conversation-ui.js';
+import { createCaptionController } from '../public/captions/controller.js';
 import { shouldForwardCapturedAudio } from '../public/voice-session.js';
+import { createVoiceCaptionBridge } from '../public/captions/voice-bridge.js';
 
 test('frontend browser preserves conversation contracts and responsive preferences', { timeout: 90000 }, async context => {
   const electronDirectory = path.dirname(fileURLToPath(import.meta.resolve('electron')));
@@ -162,7 +163,7 @@ test('themes supply local bitmap assets and can replace sprite animations', asyn
     assert.ok(theme.tokens['--cp-font']);
     assert.match(theme.tokens['--cp-caption-user-bg'], /linear-gradient.*0\.72/);
     assert.match(theme.tokens['--cp-caption-assistant-bg'], /linear-gradient.*0\.72/);
-    for (const token of ['--cp-caption-padding', '--cp-caption-radius', '--cp-caption-blur', '--cp-caption-stack-gap', '--cp-caption-speaker-offset', '--cp-caption-control-size', '--cp-caption-font-size', '--cp-caption-font-weight']) assert.ok(theme.tokens[token]);
+    for (const token of ['--cp-caption-width', '--cp-caption-padding', '--cp-caption-radius', '--cp-caption-blur', '--cp-caption-stack-gap', '--cp-caption-control-size', '--cp-caption-font-size', '--cp-caption-font-weight']) assert.ok(theme.tokens[token]);
     for (const state of Object.keys(defaultAnimations)) assert.ok(theme.animations[state]);
   }
   const output = await renderToString(createSSRApp({
@@ -179,4 +180,33 @@ test('hands-free capture pauses for playback while push to talk remains explicit
   assert.equal(shouldForwardCapturedAudio({ muted: false, pttMode: false, pttHeld: false, assistantSpeaking: true }), false);
   assert.equal(shouldForwardCapturedAudio({ muted: false, pttMode: true, pttHeld: true, assistantSpeaking: true }), true);
   assert.equal(shouldForwardCapturedAudio({ muted: true, pttMode: true, pttHeld: true, assistantSpeaking: false }), false);
+});
+
+test('voice caption bridge presents partials and commits final transcripts', () => {
+  const events = [];
+  const partialTranscript = { hidden: true, textContent: '' };
+  const bridge = createVoiceCaptionBridge({
+    partialTranscript,
+    conversationUI: {
+      preview: (role, text) => events.push(['preview', role, text]),
+      clearCaption: () => events.push(['clear']),
+      clear: () => events.push(['reset']),
+    },
+    appendMessage: (role, text) => events.push(['message', role, text]),
+  });
+
+  bridge.transcript({ role: 'user', text: 'Working', partial: true });
+  assert.equal(partialTranscript.hidden, false);
+  assert.equal(partialTranscript.textContent, 'user: Working...');
+  bridge.transcript({ role: 'user', text: 'Working now' });
+  assert.equal(partialTranscript.hidden, true);
+  assert.equal(partialTranscript.textContent, '');
+  bridge.clear();
+  bridge.reset();
+  assert.deepEqual(events, [
+    ['preview', 'user', 'Working'],
+    ['message', 'user', 'Working now'],
+    ['clear'],
+    ['reset'],
+  ]);
 });

@@ -1,4 +1,4 @@
-import { captionTiming } from './themes.js';
+import { captionTiming } from '../themes.js';
 
 export function createCaptionController(render, timers = globalThis) {
   let current = null;
@@ -60,27 +60,6 @@ export function createConversationUI(document) {
   const home = region.parentElement;
   const announcement = document.getElementById('caption-announcement');
   const captions = new Map();
-  const fit = content => {
-    const text = content.parentElement;
-    const caption = text.closest('.closed-caption');
-    const captionStyle = document.defaultView.getComputedStyle(caption);
-    const textStyle = document.defaultView.getComputedStyle(text);
-    const chromeWidth = parseFloat(captionStyle.paddingLeft) + parseFloat(captionStyle.paddingRight)
-      + parseFloat(captionStyle.borderLeftWidth) + parseFloat(captionStyle.borderRightWidth)
-      + parseFloat(textStyle.paddingLeft) + parseFloat(textStyle.paddingRight);
-    const minimumWidth = parseFloat(captionStyle.minWidth);
-    const maximumWidth = region.getBoundingClientRect().width - parseFloat(captionStyle.getPropertyValue('--cp-caption-speaker-offset'));
-    content.style.whiteSpace = 'nowrap';
-    const intrinsicWidth = content.scrollWidth;
-    content.style.whiteSpace = '';
-    caption.style.width = `${Math.min(maximumWidth, Math.max(minimumWidth, Math.ceil(intrinsicWidth + chromeWidth)))}px`;
-    text.style.height = 'auto';
-    const maximumHeight = parseFloat(document.defaultView.getComputedStyle(text).maxHeight);
-    text.style.height = `${Math.min(content.getBoundingClientRect().height, maximumHeight)}px`;
-  };
-  document.defaultView.addEventListener('resize', () => {
-    for (const content of region.querySelectorAll('.caption-content')) fit(content);
-  });
   for (const caption of region.querySelectorAll('.closed-caption')) {
     const role = caption.dataset.role;
     const content = caption.querySelector('.caption-content');
@@ -90,7 +69,6 @@ export function createConversationUI(document) {
       caption.dataset.fading = String(Boolean(value?.fading));
       if (content.textContent !== (value?.text || '')) {
         content.textContent = value?.text || '';
-        if (value) fit(content);
       }
       if (value && !value.partial && !value.fading && !document.getElementById('conversation-dialog').open) {
         announcement.textContent = `${speaker.textContent}: ${value.text}`;
@@ -115,17 +93,13 @@ export function createConversationUI(document) {
     for (const controller of captions.values()) controller.clear();
     announcement.textContent = '';
   };
-  document.defaultView.addEventListener('pagehide', () => {
-    clear();
-  });
+  document.defaultView.addEventListener('pagehide', clear);
 
   return {
     preview: (role, content) => captions.get(role)?.update(role, content, true),
     clearCaption: clear,
     finishCaption: role => captions.get(role)?.finish(),
-    message(role, content) {
-      captions.get(role)?.update(role, content);
-    },
+    message: (role, content) => captions.get(role)?.update(role, content),
     clear,
   };
 }

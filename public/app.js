@@ -1,9 +1,12 @@
 // Voice Work Supervisor Frontend Application
 // Follows Clawpilot theme and local-only zero-build plain JS architecture
 
-import { createConversationUI } from './conversation-ui.js';
+import { createConversationUI } from './captions/controller.js';
 import captureWorkletUrl from './capture-worklet.js?url';
 import { shouldForwardCapturedAudio } from './voice-session.js';
+import { createVoiceCaptionBridge } from './captions/voice-bridge.js';
+import { createToolCatalog } from './tools/tool-catalog.js';
+import { createLocalSetupController } from './setup/local-setup.js';
 
 let appConfig = null;
 let appState = { areas: [], tasks: [] };
@@ -158,16 +161,6 @@ const btnClearChat = document.getElementById('btn-clear-chat');
 const viewTabs = [...document.querySelectorAll('.view-tab')];
 const workspaceView = document.getElementById('workspace-view');
 const toolLabView = document.getElementById('tool-lab-view');
-const toolCount = document.getElementById('tool-count');
-const toolList = document.getElementById('tool-list');
-const toolName = document.getElementById('tool-name');
-const toolDescription = document.getElementById('tool-description');
-const toolKindBadge = document.getElementById('tool-kind-badge');
-const toolForm = document.getElementById('tool-form');
-const toolRunStatus = document.getElementById('tool-run-status');
-const toolResult = document.getElementById('tool-result');
-let availableTools = [];
-let selectedTool = null;
 
 function getCodingBackends() {
   if (Array.isArray(appConfig?.codingBackends) && appConfig.codingBackends.length > 0) {
@@ -324,7 +317,7 @@ function activateView(viewName) {
       panel.focus({ preventScroll: true });
     }
   }
-  syncSetupVisibility();
+  localSetup?.syncVisibility();
   if (viewName === 'home' && previous !== 'home') {
     const restore = viewOpener?.isConnected && viewOpener.getClientRects().length ? viewOpener : document.getElementById('home-tab');
     restore.focus({ preventScroll: true });
@@ -386,6 +379,7 @@ function openConversation(text) {
   chatInput.focus();
 }
 const conversationUI = createConversationUI(document);
+const voiceCaptions = createVoiceCaptionBridge({ conversationUI, partialTranscript, appendMessage });
 document.getElementById('history-compose-btn').addEventListener('click', () => btnNewTask.click());
 document.getElementById('open-chat-btn').addEventListener('click', () => openConversation());
 document.getElementById('close-chat-btn').addEventListener('click', () => conversationDialog.close());
@@ -442,171 +436,17 @@ documentInput.addEventListener('change', async () => {
   documentInput.value = '';
 });
 
-const setupElements = Object.fromEntries(['status', 'message', 'error', 'chat-status', 'voice-status', 'progress-region', 'progress', 'progress-label', 'platform', 'cache', 'runtime', 'components', 'consent', 'consent-label', 'install-btn', 'install-label', 'refresh-btn', 'log-details', 'log']
-  .map(name => [name, document.getElementById(`setup-${name}`)]));
-const localSetupPrompt = document.getElementById('local-setup-prompt');
-let setupSnapshot = null;
-let setupRequest = null;
-let setupPoll;
-let setupHttpError = '';
-let setupConsentFocusPending = false;
-
-function setupVisible() {
-  return !document.hidden && document.body.dataset.view === 'settings' && viewDialog.open;
-}
-
-function setupBytes(value) {
-  const bytes = Math.max(0, Number(value) || 0);
-  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
-  return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
-}
-
-function renderSetup() {
-  const snapshot = setupSnapshot;
-  const running = snapshot?.status === 'running';
-  const ready = snapshot?.status === 'ready';
-  const chatReady = snapshot?.capabilities?.chat?.ready === true;
-  const voiceReady = snapshot?.capabilities?.voice?.ready === true;
-  const supported = snapshot?.supported === true;
-  const busy = Boolean(setupRequest);
-  setupElements.status.textContent = setupHttpError ? 'Status unavailable' : snapshot ? (supported ? chatReady && !voiceReady ? 'Chat ready' : snapshot.status : 'Unsupported platform') : busy ? 'Checking' : 'Not checked';
-  setupElements.status.className = `badge${setupHttpError || snapshot?.status === 'error' && !chatReady ? ' badge-danger' : ready ? ' badge-success' : chatReady ? ' badge-warning' : running ? ' badge-accent' : ''}`;
-  setupElements.message.textContent = snapshot
-    ? [snapshot.stage, snapshot.message].filter(Boolean).join(': ') || (ready ? 'Local voice is installed.' : 'Local voice is not installed.')
-    : busy ? 'Checking local voice setup...' : 'Local voice setup status is unavailable.';
-  setupElements.error.textContent = setupHttpError || (snapshot?.error ? `${chatReady ? 'Local chat is ready. Voice setup needs attention: ' : ''}${snapshot.error}` : '');
-  setupElements.error.hidden = !setupElements.error.textContent;
-  for (const [name, capability] of [['chat-status', snapshot?.capabilities?.chat], ['voice-status', snapshot?.capabilities?.voice]]) {
-    setupElements[name].textContent = capability?.message || 'Not ready';
-    setupElements[name].dataset.ready = String(capability?.ready === true);
-  }
-  setupElements.platform.textContent = snapshot?.platform || 'Not available';
-  setupElements.cache.textContent = snapshot?.cacheDir || 'Not available';
-  setupElements.runtime.textContent = snapshot?.runtimeDir || 'Not available';
-  setupElements['progress-region'].hidden = !running;
-  const received = Math.max(0, Number(snapshot?.progress?.received) || 0);
-  const total = Math.max(0, Number(snapshot?.progress?.total) || 0);
-  if (total > 0) {
-    setupElements.progress.max = total;
-    setupElements.progress.value = Math.min(received, total);
-  } else setupElements.progress.removeAttribute('value');
-  setupElements['progress-label'].textContent = total > 0 ? `${setupBytes(received)} of ${setupBytes(total)}` : received > 0 ? `${setupBytes(received)} downloaded` : 'Preparing local components';
-  setupElements.consent.disabled = busy || running || ready || !supported;
-  setupElements['consent-label'].hidden = running || ready;
-  setupElements['install-btn'].disabled = busy || running || ready || !supported || Boolean(setupHttpError) || !setupElements.consent.checked;
-  setupElements['install-label'].textContent = ready ? 'Installed' : running ? 'Installing local AI' : snapshot?.status === 'error' && chatReady ? 'Retry voice setup' : snapshot?.status === 'error' ? 'Retry installation' : 'Install local AI';
-  setupElements['refresh-btn'].disabled = busy;
-  const components = Array.isArray(snapshot?.components) ? snapshot.components : [];
-  const existing = new Map([...setupElements.components.children].map(item => [item.dataset.componentId, item]));
-  const focused = setupElements.components.contains(document.activeElement) ? document.activeElement : null;
-  const items = components.map(component => {
-    const item = existing.get(String(component.id)) || document.createElement('li');
-    item.dataset.componentId = component.id;
-    if (!item.children.length) item.append(document.createElement('span'), document.createElement('span'), document.createElement('a'));
-    const [label, status, link] = item.children;
-    label.textContent = component.label || component.id;
-    status.className = component.ready ? 'setup-ready' : 'setup-pending';
-    status.textContent = component.ready ? 'Installed' : 'Required';
-    link.textContent = component.id === 'kokoro' ? 'Release info' : 'Source';
-    link.setAttribute('aria-label', `Download source for ${component.label || component.id} (opens in a new tab)`);
-    link.target = '_blank';
-    link.rel = 'noopener noreferrer';
-    link.removeAttribute('href');
-    try {
-      const source = new URL(component.sourceUrl);
-      if (source.protocol === 'https:') link.href = source.href;
-    } catch {}
-    link.hidden = !link.hasAttribute('href');
-    return item;
-  });
-  setupElements.components.replaceChildren(...items);
-  if (focused?.isConnected) focused.focus({ preventScroll: true });
-  const log = Array.isArray(snapshot?.log) ? snapshot.log.slice(-60) : [];
-  setupElements['log-details'].hidden = !log.length;
-  setupElements.log.textContent = log.join('\n');
-}
-
-async function requestSetup(start = false) {
-  if (setupRequest || !setupVisible()) return;
-  if (start && (setupElements['install-btn'].disabled || !setupElements.consent.checked)) return;
-  clearTimeout(setupPoll);
-  const controller = new AbortController();
-  setupRequest = controller;
-  setupHttpError = '';
-  const timeout = window.setTimeout(() => controller.abort(), 20000);
-  renderSetup();
-  try {
-    const response = await fetch('/api/setup', {
-      method: start ? 'POST' : 'GET',
-      cache: 'no-store',
-      signal: controller.signal,
-      ...(start ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ consent: true }) } : {}),
-    });
-    const snapshot = await response.json().catch(() => null);
-    if (!response.ok) throw new Error(typeof snapshot?.error === 'string' ? snapshot.error : `Setup request failed (HTTP ${response.status}).`);
-    if (!snapshot || typeof snapshot.supported !== 'boolean' || !['idle', 'running', 'ready', 'error'].includes(snapshot.status)) {
-      throw new Error('The setup service returned an invalid status. Refresh to try again.');
-    }
-    setupSnapshot = snapshot;
-    if (snapshot.status === 'ready' || snapshot.capabilities?.chat?.ready && !appConfig?.providers?.find(provider => provider.id === 'local')?.configured) {
-      setupElements.consent.checked = false;
-      if (!await loadConfig(true)) throw new Error('Local AI is installed, but its configuration could not be refreshed.');
-    }
-  } catch (error) {
-    setupHttpError = `${error.name === 'AbortError' ? 'Setup status request timed out.' : error.message} Refresh status before retrying installation.`;
-  } finally {
-    clearTimeout(timeout);
-    setupRequest = null;
-    renderSetup();
-    if (setupConsentFocusPending && setupVisible() && !setupElements.consent.disabled) {
-      setupConsentFocusPending = false;
-      setupElements.consent.focus({ preventScroll: true });
-    }
-    if (setupVisible() && setupSnapshot?.status === 'running' && !setupHttpError) {
-      setupPoll = window.setTimeout(() => requestSetup(), 2000);
-    }
-  }
-}
-
-function syncSetupVisibility() {
-  clearTimeout(setupPoll);
-  if (setupVisible()) void requestSetup();
-}
-
-setupElements.consent.addEventListener('change', renderSetup);
-setupElements['install-btn'].addEventListener('click', () => requestSetup(true));
-setupElements['refresh-btn'].addEventListener('click', () => requestSetup());
-document.addEventListener('visibilitychange', syncSetupVisibility);
-
-async function acknowledgeLocalSetupPrompt() {
-  try {
-    const response = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ localSetupPrompted: true }) });
-    if (response.ok) appState.settings = await response.json();
-  } catch {}
-}
-
-function closeLocalSetupPrompt(destination) {
-  void acknowledgeLocalSetupPrompt();
-  localSetupPrompt.close();
-  if (!destination) return;
-  if (destination === 'local') setupConsentFocusPending = true;
-  activateView('settings');
-  requestAnimationFrame(() => {
-    const target = destination === 'local' ? document.getElementById('local-setup') : document.getElementById('config-section');
-    if (target instanceof HTMLDetailsElement) target.open = true;
-    target?.scrollIntoView({ block: 'start' });
-    if (destination !== 'local') target?.querySelector('input, select')?.focus({ preventScroll: true });
-  });
-}
-
-document.getElementById('local-setup-start').addEventListener('click', () => closeLocalSetupPrompt('local'));
-document.getElementById('local-setup-provider').addEventListener('click', () => closeLocalSetupPrompt('provider'));
-document.getElementById('local-setup-prompt-close').addEventListener('click', () => closeLocalSetupPrompt());
-localSetupPrompt.addEventListener('cancel', event => { event.preventDefault(); void closeLocalSetupPrompt(); });
-window.addEventListener('pagehide', () => {
-  clearTimeout(setupPoll);
-  setupRequest?.abort();
+const localSetup = createLocalSetupController({
+  viewDialog,
+  getAppState: () => appState,
+  onSettingsUpdate: settings => {
+    appState.settings = settings;
+  },
+  getAppConfig: () => appConfig,
+  refreshConfig: force => loadConfig(force),
+  activateView,
 });
+
 activateView('home');
 
 // Base64 helper for PCM16 audio chunks
@@ -722,9 +562,7 @@ function handleRouteSwitch(reason) {
   }
   conversation = [];
   chatMessages.replaceChildren();
-  conversationUI.clear();
-  partialTranscript.style.display = 'none';
-  partialTranscript.textContent = '';
+  voiceCaptions.reset();
   notifyReset(reason);
   updateRouteReadiness();
 }
@@ -1065,21 +903,12 @@ async function startVoiceSession() {
         } else if (data.type === 'transcript') {
           if (data.role === 'user' && !data.partial) { isVoiceThinking = true; setAgentState('thinking'); }
           else if (data.role === 'user') setAgentState('listening');
-          if (data.partial) {
-            partialTranscript.style.display = 'block';
-            partialTranscript.textContent = `${data.role}: ${data.text}...`;
-            conversationUI.preview(data.role || 'assistant', data.text);
-          } else {
-            partialTranscript.style.display = 'none';
-            partialTranscript.textContent = '';
-            appendMessage(data.role || 'assistant', data.text);
-          }
+          voiceCaptions.transcript(data);
         } else if (data.type === 'interrupted') {
-          conversationUI.clearCaption();
+          voiceCaptions.clear();
           isVoiceThinking = false;
           setAgentState('listening');
           clearPlayback();
-          partialTranscript.style.display = 'none';
           appendMessage('system', '[Speech interrupted]');
         } else if (data.type === 'tool') {
           console.debug('Voice tool completed', data.name);
@@ -1089,7 +918,7 @@ async function startVoiceSession() {
           setAgentState(['thinking', 'speaking', 'listening'].includes(data.state) ? data.state : 'listening');
           routeStatusBadge.textContent = `Voice: ${data.state}`;
         } else if (data.type === 'error') {
-          conversationUI.clearCaption();
+          voiceCaptions.clear();
           appendMessage('system', `Voice Error: ${data.message || 'Unknown error'}`);
           if (data.fatal) {
             stopVoiceSession();
@@ -1124,7 +953,7 @@ async function startVoiceSession() {
 }
 
 function stopVoiceSession() {
-  conversationUI.clearCaption();
+  voiceCaptions.clear();
   currentSessionToken++;
   isVoiceStarting = false;
   pendingCommit = false;
@@ -1248,7 +1077,7 @@ window.addEventListener('blur', endPttHold);
 document.addEventListener('visibilitychange', () => { if (document.hidden) endPttHold(); });
 
 interruptBtn.addEventListener('click', () => {
-  conversationUI.clearCaption();
+  voiceCaptions.clear();
   clearPlayback();
   if (voiceSocket && voiceSocket.readyState === WebSocket.OPEN) {
     voiceSocket.send(JSON.stringify({ type: 'interrupt' }));
@@ -2529,175 +2358,13 @@ async function callSupervisorTool(name, args = {}, requestId = crypto.randomUUID
   return result;
 }
 
-const actionTools = new Set(['start_work', 'send_work_message', 'open_work', 'delete_work', 'invoke_vscode']);
-
-function toolLabel(name) {
-  return name.replaceAll('_', ' ').replace(/\b\w/g, character => character.toUpperCase());
-}
-
-function addToolChoice(select, value, label) {
-  const option = document.createElement('option');
-  option.value = value;
-  option.textContent = label;
-  select.appendChild(option);
-}
-
-function createToolField(propertyName, schema, required) {
-  const field = document.createElement('div');
-  field.className = 'tool-field';
-  const id = `tool-arg-${propertyName}`;
-  const label = document.createElement('label');
-  label.className = 'tool-field-label';
-  label.htmlFor = id;
-  label.textContent = toolLabel(propertyName);
-  if (required) {
-    const marker = document.createElement('span');
-    marker.className = 'tool-field-required';
-    marker.textContent = ' *';
-    label.appendChild(marker);
-  }
-
-  let control;
-  if (propertyName === 'areaId' && appState.areas.length) {
-    control = document.createElement('select');
-    if (!required) addToolChoice(control, '', 'Not set');
-    for (const area of appState.areas) addToolChoice(control, area.id, `${area.name} / ${area.id.slice(0, 8)}`);
-  } else if (propertyName === 'taskId' && appState.tasks.length) {
-    control = document.createElement('select');
-    if (!required) addToolChoice(control, '', 'Not set');
-    for (const task of [...appState.tasks].reverse()) addToolChoice(control, task.id, `${task.title} / ${task.state}`);
-  } else if (schema.enum) {
-    control = document.createElement('select');
-    for (const value of schema.enum) addToolChoice(control, value, toolLabel(value));
-    if (propertyName === 'context') control.value = appConfig?.defaults?.copilotContext || 'long_context';
-    if (propertyName === 'backend') control.value = appState?.settings?.defaultBackend || appConfig?.defaults?.codingBackend || 'copilot';
-  } else if (['objective', 'prompt'].includes(propertyName)) {
-    control = document.createElement('textarea');
-    control.rows = 4;
-  } else {
-    control = document.createElement('input');
-    control.type = 'text';
-    if (propertyName === 'model') control.value = appConfig?.defaults?.copilotModel || 'gpt-5.6-sol';
-  }
-  control.id = id;
-  control.name = propertyName;
-  control.required = required;
-  control.setAttribute('aria-label', toolLabel(propertyName));
-
-  const help = document.createElement('p');
-  help.className = 'tool-field-help';
-  help.textContent = schema.description || schema.type || 'Argument';
-  field.append(label, control, help);
-  return { field, control };
-}
-
-function selectToolDefinition(definition) {
-  selectedTool = definition;
-  const { name, description, parameters } = definition.function;
-  toolName.textContent = name;
-  toolDescription.textContent = description;
-  toolKindBadge.textContent = actionTools.has(name) ? 'Action' : 'Read only';
-  toolKindBadge.className = actionTools.has(name) ? 'badge badge-warning' : 'badge badge-success';
-  toolRunStatus.textContent = 'Idle';
-  toolRunStatus.className = 'badge';
-  toolResult.textContent = 'Ready';
-  toolForm.replaceChildren();
-
-  for (const [propertyName, schema] of Object.entries(parameters.properties || {})) {
-    const { field } = createToolField(propertyName, schema, parameters.required?.includes(propertyName));
-    toolForm.appendChild(field);
-  }
-
-  const actions = document.createElement('div');
-  actions.className = 'tool-actions';
-  const run = document.createElement('button');
-  run.type = 'submit';
-  run.className = 'btn btn-accent';
-  run.innerHTML = '<i data-lucide="play"></i><span>Run Tool</span>';
-  actions.appendChild(run);
-  toolForm.appendChild(actions);
-
-  for (const item of toolList.querySelectorAll('.tool-list-item')) {
-    item.setAttribute('aria-selected', String(item.dataset.tool === name));
-  }
-}
-
-function renderToolCatalog() {
-  toolList.replaceChildren();
-  toolCount.textContent = String(availableTools.length);
-  for (const definition of availableTools) {
-    const item = document.createElement('button');
-    item.type = 'button';
-    item.className = 'tool-list-item';
-    item.dataset.tool = definition.function.name;
-    item.setAttribute('role', 'option');
-    item.setAttribute('aria-selected', 'false');
-    const icon = document.createElement('span');
-    icon.className = 'tool-list-icon';
-    icon.innerHTML = `<i data-lucide="${actionTools.has(definition.function.name) ? 'play' : 'scan-search'}"></i>`;
-    const copy = document.createElement('span');
-    const name = document.createElement('span');
-    name.className = 'tool-list-name';
-    name.textContent = definition.function.name;
-    const description = document.createElement('span');
-    description.className = 'tool-list-description';
-    description.textContent = definition.function.description;
-    copy.append(name, description);
-    item.append(icon, copy);
-    item.addEventListener('click', () => {
-      selectToolDefinition(definition);
-      updateIcons();
-    });
-    toolList.appendChild(item);
-  }
-  if (availableTools.length) selectToolDefinition(availableTools[0]);
-}
-
-async function loadTools() {
-  try {
-    const response = await fetch('/api/tools');
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
-    availableTools = result;
-    renderToolCatalog();
-    updateIcons();
-  } catch (error) {
-    toolName.textContent = 'Tools unavailable';
-    toolDescription.textContent = error.message;
-    toolRunStatus.textContent = 'Error';
-    toolRunStatus.className = 'badge badge-danger';
-  }
-}
-
-toolForm.addEventListener('submit', async event => {
-  event.preventDefault();
-  if (!selectedTool) return;
-  const name = selectedTool.function.name;
-  if (actionTools.has(name) && !window.confirm(`Run ${name}? This tool can change local session state or open VS Code.`)) return;
-  const args = {};
-  for (const [key, value] of new FormData(toolForm)) {
-    if (typeof value !== 'string' || value.trim()) args[key] = typeof value === 'string' ? value.trim() : value;
-  }
-  const requestId = crypto.randomUUID();
-  const startedAt = performance.now();
-  const submit = toolForm.querySelector('button[type="submit"]');
-  submit.disabled = true;
-  toolRunStatus.textContent = 'Running';
-  toolRunStatus.className = 'badge badge-warning';
-  toolResult.textContent = `${name} running...`;
-  try {
-    const result = await callSupervisorTool(name, args, requestId);
-    toolRunStatus.textContent = `${Math.round(performance.now() - startedAt)} ms`;
-    toolRunStatus.className = 'badge badge-success';
-    toolResult.textContent = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
-    if (name === 'start_work' || name === 'send_work_message') await loadState();
-  } catch (error) {
-    toolRunStatus.textContent = 'Failed';
-    toolRunStatus.className = 'badge badge-danger';
-    toolResult.textContent = error.message;
-  } finally {
-    submit.disabled = false;
-  }
+const toolCatalog = createToolCatalog({
+  document,
+  getAppState: () => appState,
+  getAppConfig: () => appConfig,
+  updateIcons,
+  loadState,
+  callTool: callSupervisorTool,
 });
 
 async function openWorktree(taskId) {
@@ -2983,8 +2650,7 @@ btnClearChat.addEventListener('click', () => {
   currentChatToken++;
   conversation = [];
   chatMessages.replaceChildren();
-  conversationUI.clear();
-  partialTranscript.style.display = 'none';
+  voiceCaptions.reset();
   sessionResetNotice.style.display = 'none';
 });
 
@@ -3027,15 +2693,8 @@ if (routeConfigClose && routeConfigDialog) {
 async function initialize() {
   await loadConfig();
   await loadState();
-  try {
-    const response = await fetch('/api/setup', { cache: 'no-store' });
-    if (response.ok) {
-      setupSnapshot = await response.json();
-      renderSetup();
-      if (appState.settings?.localSetupPrompted !== true && setupSnapshot.status !== 'ready') localSetupPrompt.showModal();
-    }
-  } catch {}
-  await loadTools();
+  await localSetup.initialize();
+  await toolCatalog.load();
   initEventSource();
 }
 

@@ -575,7 +575,6 @@ try {
         const region = document.querySelector('.caption-region').getBoundingClientRect();
         const rootStyle = getComputedStyle(document.documentElement);
         const stackGap = Number.parseFloat(rootStyle.getPropertyValue('--cp-caption-stack-gap'));
-        const speakerOffset = Number.parseFloat(rootStyle.getPropertyValue('--cp-caption-speaker-offset'));
         const captionPadding = Number.parseFloat(rootStyle.getPropertyValue('--cp-caption-padding')) * 2 + 2;
         const text = document.getElementById('caption-text');
         const firstWord = document.createRange();
@@ -590,7 +589,7 @@ try {
           captionFits: captions.length === 2 && captions.every(caption => caption.top >= 12 && caption.bottom < dock.top && caption.left >= surface.left && caption.right <= surface.right),
           captionCentered: Math.abs((region.left + region.right - dock.left - dock.right) / 2) < 1,
           captionStacked: Math.abs(captions[1].top - captions[0].bottom - stackGap) < 1,
-          speakerOffset: Math.abs(captions[0].left - captions[1].left - speakerOffset) < 1,
+          captionCardsCentered: Math.abs((captions[0].left + captions[0].right) - (captions[1].left + captions[1].right)) < 1,
           speakerColors: getComputedStyle(document.getElementById('user-closed-caption')).backgroundImage !== getComputedStyle(document.getElementById('closed-caption')).backgroundImage,
           premiumCaptionStyle: captions.every((_, index) => {
             const caption = document.querySelectorAll('.closed-caption:not([hidden])')[index];
@@ -611,7 +610,7 @@ try {
           spriteCentered: document.getElementById('voice-personality-app').hidden || Math.abs((document.getElementById('agent-sprite').getBoundingClientRect().left + document.getElementById('agent-sprite').getBoundingClientRect().right - dock.left - dock.right) / 2) < 1,
         };
       });
-      assert.deepEqual(layout, { noOverflow: true, surfaceVisible: true, dockClear: true, freeFloating: true, captionFits: true, captionCentered: true, captionStacked: true, speakerOffset: true, speakerColors: true, premiumCaptionStyle: true, titlesHidden: true, compactCaption: true, captionScrollable: true, captionChromeOverlaid: true, captionStartVisible: true, modalCorrect: true, spriteCentered: true }, `${width}x${height} ${view}`);
+      assert.deepEqual(layout, { noOverflow: true, surfaceVisible: true, dockClear: true, freeFloating: true, captionFits: true, captionCentered: true, captionStacked: true, captionCardsCentered: true, speakerColors: true, premiumCaptionStyle: true, titlesHidden: true, compactCaption: true, captionScrollable: true, captionChromeOverlaid: true, captionStartVisible: true, modalCorrect: true, spriteCentered: true }, `${width}x${height} ${view}`);
       if (view === 'settings') {
         assert.equal(await evaluate(() => {
           const settings = document.getElementById('settings-view');

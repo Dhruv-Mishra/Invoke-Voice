@@ -34,6 +34,7 @@
     "lucide": "^1.42.0",
     "marked": "^18.0.12",
     "proper-lockfile": "4.1.2",
+    "semver": "7.7.3",
     "vue": "^3.5.21",
     "ws": "^8.21.3",
     "yauzl": "3.4.0"
@@ -53,6 +54,8 @@
     "asar": true,
     "files": [
       "desktop.cjs",
+      "desktop-preload.cjs",
+      "desktop-update.cjs",
       "package.json",
       "src/**/*.mjs",
       "dist/**/*",

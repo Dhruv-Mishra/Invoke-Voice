@@ -75,6 +75,55 @@ test('local setup uses the private pip recipe with only pinned docopt allowed fr
   }
 });
 
+test('managed Python retries package installation from the uv cache without network access', windowsSetup, async context => {
+  let failedOnlineInstall = false;
+  const { setup, paths, commands } = localFixture(context, {
+    run: async (executable, args, options) => {
+      commands.push({ executable, args, options });
+      if (args.includes('venv')) {
+        mkdirSync(path.dirname(paths.python), { recursive: true });
+        writeFileSync(paths.python, 'fixture Python');
+      }
+      if (!failedOnlineInstall && args.includes('pip') && args.includes('install') && !args.includes('--offline')) {
+        failedOnlineInstall = true;
+        throw new Error('TLS handshake failed');
+      }
+    },
+  });
+  setup.start({ consent: true });
+  assert.equal((await setup.settled()).status, 'ready');
+  const installs = commands.filter(command => command.args.includes('pip') && command.args.includes('install'));
+  assert.equal(installs.length, 3);
+  assert.deepEqual(installs[1].args.slice(0, 4), ['--no-config', '--offline', 'pip', 'install']);
+  assert.equal(installs[1].options.message, 'Installing CPU speech dependencies. Retrying from the verified local package cache without network access.');
+});
+
+test('managed Python replaces a stale virtual environment from a previous pinned version', windowsSetup, async context => {
+  let staleProbe = true;
+  const attempted = [];
+  const { setup, paths } = localFixture(context, {
+    run: async (executable, args) => {
+      attempted.push({ executable, args });
+      if (executable === paths.python && args.includes('-c') && args.at(-1).includes('Pinned Python 3.12.11 required') && staleProbe) {
+        staleProbe = false;
+        throw new Error('Pinned Python 3.12.11 required');
+      }
+      if (args.includes('venv')) {
+        mkdirSync(path.dirname(paths.python), { recursive: true });
+        writeFileSync(paths.python, 'replacement Python');
+      }
+    },
+  });
+  mkdirSync(path.dirname(paths.python), { recursive: true });
+  writeFileSync(paths.python, 'stale Python 3.12.10');
+  setup.start({ consent: true });
+  assert.equal((await setup.settled()).status, 'ready');
+  const replacement = attempted.find(command => command.executable === paths.uv && command.args.includes('venv'));
+  assert.ok(replacement);
+  assert.ok(replacement.args.includes('--clear'));
+  assert.ok(attempted.filter(command => command.executable === paths.python && command.args.includes('-c')).length >= 2);
+});
+
 test('configured Python uses bundled venv and pip without downloading or invoking uv', windowsSetup, async context => {
   const { directory } = fixture(context);
   const pythonBase = path.join(directory, 'approved Python', 'python.exe');
@@ -297,7 +346,7 @@ test('Kokoro install failure keeps validated chat runtime alive with chat ready 
         mkdirSync(path.dirname(paths.python), { recursive: true });
         writeFileSync(paths.python, 'fixture Python');
       }
-      if (args.includes('pip') && args.includes('install') && ++attempts === 1) {
+      if (args.includes('pip') && args.includes('install') && ++attempts <= 2) {
         throw new Error('pip installation failed: network error');
       }
     },
@@ -310,6 +359,7 @@ test('Kokoro install failure keeps validated chat runtime alive with chat ready 
   assert.equal(failed.capabilities.chat.ready, true, 'chat is ready');
   assert.equal(failed.capabilities.voice.ready, false, 'voice is not ready');
   assert.match(failed.capabilities.voice.message, /pip installation failed/);
+  assert.match(failed.capabilities.voice.message, /offline package-cache fallback was attempted/);
 
   // Retry reuses validated chat runtime:
   setup.start({ consent: true });

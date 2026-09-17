@@ -144,6 +144,10 @@ const configForm = document.getElementById('config-form');
 const configFields = document.getElementById('config-fields');
 const configSaveBtn = document.getElementById('config-save-btn');
 const configFeedback = document.getElementById('config-feedback');
+const applicationUpdate = document.getElementById('application-update');
+const applicationUpdateStatus = document.getElementById('application-update-status');
+const applicationUpdateBtn = document.getElementById('application-update-btn');
+const applicationUpdateLabel = document.getElementById('application-update-label');
 
 const chatMessages = document.getElementById('chat-messages');
 const partialTranscript = document.getElementById('partial-transcript');
@@ -1632,6 +1636,40 @@ if (settingsForm) {
         settingsFeedback.textContent = `Error: ${err.message}`;
         settingsFeedback.className = 'settings-feedback error';
       }
+    }
+  });
+}
+
+if (window.voiceSupervisorUpdates && applicationUpdate && applicationUpdateBtn) {
+  applicationUpdate.hidden = false;
+  let updateAvailable = false;
+  applicationUpdateBtn.addEventListener('click', async () => {
+    applicationUpdateBtn.disabled = true;
+    applicationUpdateStatus.textContent = updateAvailable ? 'Downloading and verifying the update...' : 'Checking GitHub Releases...';
+    try {
+      const result = updateAvailable ? await window.voiceSupervisorUpdates.install() : await window.voiceSupervisorUpdates.check();
+      if (result?.error) throw new Error(result.error);
+      if (updateAvailable) {
+        if (result?.cancelled) applicationUpdateStatus.textContent = 'Update installation cancelled.';
+        else if (result?.started) applicationUpdateStatus.textContent = 'Verified installer started. The application will close.';
+        return;
+      }
+      if (!result?.supported) {
+        applicationUpdateStatus.textContent = 'Update checks are available in the installed desktop application.';
+        return;
+      }
+      if (result.available) {
+        updateAvailable = true;
+        applicationUpdateStatus.textContent = `Version ${result.latestVersion} is available. Installed version: ${result.currentVersion}.`;
+        applicationUpdateLabel.textContent = 'Install update';
+        applicationUpdateBtn.classList.add('btn-accent');
+      } else {
+        applicationUpdateStatus.textContent = `Version ${result.currentVersion} is up to date.`;
+      }
+    } catch (error) {
+      applicationUpdateStatus.textContent = error.message || 'The update request failed.';
+    } finally {
+      applicationUpdateBtn.disabled = false;
     }
   });
 }

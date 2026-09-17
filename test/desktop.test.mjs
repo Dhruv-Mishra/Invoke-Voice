@@ -37,12 +37,26 @@ test('installer includes physical runtime dependencies, excludes private data an
   assert.ok(config.scripts['dist:win'].includes('electron-builder --win nsis --x64'));
   assert.equal(config.build.asar, true);
   for (const included of ['src/**', 'scripts/**', 'dist/**', 'package.json', 'requirements-local.txt', 'node_modules/**']) assert.ok(config.build.asarUnpack.includes(included));
-  for (const included of ['scripts/models.mjs', 'scripts/start.mjs', 'scripts/desktop-launch.cjs', 'scripts/kokoro_worker.py', 'requirements-local.txt']) assert.ok(config.build.files.includes(included));
+  for (const included of ['desktop-preload.cjs', 'desktop-update.cjs', 'scripts/models.mjs', 'scripts/start.mjs', 'scripts/desktop-launch.cjs', 'scripts/kokoro_worker.py', 'requirements-local.txt']) assert.ok(config.build.files.includes(included));
   assert.ok(config.build.files.includes('!**/.env*'));
   assert.ok(config.build.files.includes('!**/*.{gguf,pth,pt}'));
   assert.equal(config.build.nsis.oneClick, true);
   assert.equal(config.build.nsis.perMachine, false);
   assert.equal(config.build.nsis.allowElevation, false);
+});
+
+test('desktop updater uses an isolated preload bridge and verified installer flow', () => {
+  const desktop = readFileSync(path.join(root, 'desktop.cjs'), 'utf8');
+  const preload = readFileSync(path.join(root, 'desktop-preload.cjs'), 'utf8');
+  assert.match(desktop, /contextIsolation:\s*true/);
+  assert.match(desktop, /nodeIntegration:\s*false/);
+  assert.match(desktop, /sandbox:\s*true/);
+  assert.match(desktop, /preload:\s*path\.join\(__dirname, 'desktop-preload\.cjs'\)/);
+  assert.match(desktop, /downloadUpdate\(pendingUpdate/);
+  assert.match(desktop, /spawn\(installer, \[\], \{ detached: true, stdio: 'ignore', windowsHide: false, shell: false \}\)/);
+  assert.doesNotMatch(preload, /exposeInMainWorld\([^)]*ipcRenderer/s);
+  assert.match(preload, /check: \(\) => ipcRenderer\.invoke\('updates:check'\)/);
+  assert.match(preload, /install: \(\) => ipcRenderer\.invoke\('updates:install'\)/);
 });
 
 test('beta publisher builds before atomically pushing its version tag and prerelease', () => {

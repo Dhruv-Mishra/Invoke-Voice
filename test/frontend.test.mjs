@@ -160,8 +160,8 @@ test('themes supply local bitmap assets and can replace sprite animations', asyn
     assert.ok(existsSync(new URL(theme.sprite)));
     assert.ok(theme.tokens['--cp-panel']);
     assert.ok(theme.tokens['--cp-font']);
-    assert.match(theme.tokens['--cp-caption-user-bg'], /linear-gradient/);
-    assert.match(theme.tokens['--cp-caption-assistant-bg'], /linear-gradient/);
+    assert.match(theme.tokens['--cp-caption-user-bg'], /linear-gradient.*0\.72/);
+    assert.match(theme.tokens['--cp-caption-assistant-bg'], /linear-gradient.*0\.72/);
     for (const token of ['--cp-caption-padding', '--cp-caption-radius', '--cp-caption-blur', '--cp-caption-stack-gap', '--cp-caption-speaker-offset', '--cp-caption-control-size', '--cp-caption-font-size', '--cp-caption-font-weight']) assert.ok(theme.tokens[token]);
     for (const state of Object.keys(defaultAnimations)) assert.ok(theme.animations[state]);
   }

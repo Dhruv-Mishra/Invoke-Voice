@@ -1,8 +1,9 @@
 const { spawn } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
-const { app, BrowserWindow, session, dialog, shell } = require('electron');
+const { app, BrowserWindow, session, dialog, shell, ipcMain } = require('electron');
 const { serverLaunch, allowedExternal } = require('./scripts/desktop-launch.cjs');
+const { checkForUpdate, downloadUpdate, publicUpdate } = require('./desktop-update.cjs');
 
 if (process.env.VOICE_SUPERVISOR_DISABLE_GPU === '1') app.disableHardwareAcceleration();
 
@@ -14,6 +15,8 @@ let stopped = false;
 let failed = false;
 let startupTimer;
 let logDescriptor;
+let pendingUpdate;
+let installingUpdate = false;
 const ownedChildren = new Set();
 const dataDir = path.join(process.env.LOCALAPPDATA || app.getPath('appData'), 'VoiceSupervisor');
 const logFile = path.join(dataDir, 'logs', 'desktop.log');
@@ -35,6 +38,61 @@ function external(value) {
   if (allowedExternal(value)) void shell.openExternal(value).catch(() => {});
 }
 
+function trustedRenderer(event) {
+  try {
+    return event.sender === mainWindow?.webContents && serverOrigin && new URL(event.senderFrame.url).origin === serverOrigin;
+  } catch { return false; }
+}
+
+function logDesktopError(label, error) {
+  try { fs.writeSync(logDescriptor, `${label}: ${error?.stack || error}\n`); } catch {}
+}
+
+ipcMain.handle('updates:check', async event => {
+  if (!trustedRenderer(event)) return { supported: false, error: 'Update requests are available only from the local application.' };
+  if (!app.isPackaged) return { supported: false, currentVersion: app.getVersion() };
+  try {
+    pendingUpdate = await checkForUpdate(app.getVersion());
+    return { supported: true, ...publicUpdate(pendingUpdate) };
+  } catch (error) {
+    logDesktopError('Update check failed', error);
+    return { supported: true, error: 'Could not check GitHub Releases. Check your network or proxy access and try again.' };
+  }
+});
+
+ipcMain.handle('updates:install', async event => {
+  if (!trustedRenderer(event) || !app.isPackaged) return { started: false, error: 'Updates can be installed only from the installed desktop application.' };
+  if (installingUpdate) return { started: false, error: 'An update is already being prepared.' };
+  if (!pendingUpdate?.available) return { started: false, error: 'Check for updates before installing.' };
+  const confirmation = await dialog.showMessageBox(mainWindow, {
+    type: 'question',
+    title: 'Install application update',
+    message: `Install Voice Work Supervisor ${pendingUpdate.version}?`,
+    detail: 'The installer will replace the current per-user installation and restart can be done after setup completes.',
+    buttons: ['Install', 'Cancel'],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true,
+  });
+  if (confirmation.response !== 0) return { started: false, cancelled: true };
+  installingUpdate = true;
+  try {
+    const installer = await downloadUpdate(pendingUpdate, path.join(app.getPath('temp'), 'VoiceSupervisor', 'updates'));
+    const installerChild = spawn(installer, [], { detached: true, stdio: 'ignore', windowsHide: false, shell: false });
+    await new Promise((resolve, reject) => {
+      installerChild.once('spawn', resolve);
+      installerChild.once('error', reject);
+    });
+    installerChild.unref();
+    setImmediate(() => { void stop(); });
+    return { started: true };
+  } catch (error) {
+    installingUpdate = false;
+    logDesktopError('Update installation failed', error);
+    return { started: false, error: 'The update could not be verified or started. Check GitHub access and available disk space, then try again.' };
+  }
+});
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -49,6 +107,7 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      preload: path.join(__dirname, 'desktop-preload.cjs'),
     },
   });
 

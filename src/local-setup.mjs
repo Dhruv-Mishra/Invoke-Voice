@@ -18,6 +18,7 @@ const CHAT_ASSET_IDS = new Set(['ling', 'llama']);
 const policyGuidance = 'If execution is blocked by IT policy, stop retrying and ask IT to approve the runtime and its virtual environment, or configure PYTHON_BIN with an IT-approved Python 3.12 x64 path and restart the app. Do not bypass Defender, AppLocker or WDAC. Local chat does not require Kokoro.';
 export const approvedPythonProbe = 'import ensurepip, platform, ssl, struct, sys, venv; assert sys.implementation.name == "cpython", "CPython required"; assert sys.version_info[:2] == (3, 12), "Python 3.12 required"; assert platform.machine().lower() in ("amd64", "x86_64") and struct.calcsize("P") == 8, "Windows AMD64 required"; assert ensurepip.version() and ssl.OPENSSL_VERSION and venv.EnvBuilder, "venv, ensurepip and SSL required"';
 const isolatedPythonProbe = 'import pip, sys; assert sys.prefix != sys.base_prefix, "Dedicated virtual environment required"; assert pip.__version__, "Bundled pip required"';
+const managedPythonProbe = `import platform, struct, sys; assert sys.version_info[:3] == (${pythonVersion.split('.').join(', ')}), "Pinned Python ${pythonVersion} required"; assert platform.machine().lower() in ("amd64", "x86_64") and struct.calcsize("P") == 8, "Windows AMD64 required"`;
 
 export function isolatedEnvironment(env, paths) {
   const isolated = Object.fromEntries(Object.entries(env).filter(([key]) => /^(PATH|SYSTEMROOT|WINDIR|COMSPEC|TEMP|TMP|USERPROFILE|LOCALAPPDATA|APPDATA|PROCESSOR_ARCHITECTURE|NUMBER_OF_PROCESSORS)$/i.test(key)));
@@ -284,14 +285,39 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
             await command(paths.python, ['-I', '-c', isolatedPythonProbe], 'python', 'Checking the isolated Kokoro environment and bundled pip.');
           } else {
             await command(paths.uv, ['--no-config', 'python', 'install', pythonVersion], 'python', 'Installing private Python 3.12.11.');
-            if (!existsSync(paths.python)) await command(paths.uv, ['--no-config', 'venv', '--python', pythonVersion, '--managed-python', paths.venv], 'python', 'Creating the isolated Kokoro environment.');
+            let rebuildVenv = !existsSync(paths.python);
+            if (!rebuildVenv) {
+              try {
+                await command(paths.python, ['-I', '-c', managedPythonProbe], 'python', `Checking the cached managed Python ${pythonVersion} environment.`);
+              } catch {
+                rebuildVenv = true;
+              }
+            }
+            if (rebuildVenv) {
+              const clear = existsSync(paths.python) ? ['--clear'] : [];
+              await command(paths.uv, ['--no-config', 'venv', ...clear, '--python', pythonVersion, '--managed-python', paths.venv], 'python', clear.length ? `Replacing the stale Kokoro environment with managed Python ${pythonVersion}.` : 'Creating the isolated Kokoro environment.');
+            }
+            await command(paths.python, ['-I', '-c', managedPythonProbe], 'python', `Checking the managed Python ${pythonVersion} environment.`);
           }
           const installer = paths.pythonBase ? paths.python : paths.uv;
           const installArgs = paths.pythonBase
             ? ['-I', '-m', 'pip', '--isolated', '--disable-pip-version-check', '--no-input', '--cache-dir', commandEnv.PIP_CACHE_DIR, '--use-feature=truststore', 'install']
             : ['--no-config', 'pip', 'install', '--python', paths.python];
-          await command(installer, [...installArgs, '--index-url', torchIndex, 'torch==2.8.0'], 'kokoro', 'Installing CPU speech dependencies.');
-          await command(installer, [...installArgs, '--index-url', pythonIndex, '--only-binary', ':all:', '--no-binary', 'docopt', 'docopt==0.6.2', '-r', requirements, modelUrl], 'kokoro', 'Installing Kokoro and its English language model.');
+          const install = async (args, message) => {
+            try {
+              await command(installer, args, 'kokoro', message);
+            } catch (onlineError) {
+              if (paths.pythonBase) throw onlineError;
+              try {
+                await command(installer, [args[0], '--offline', ...args.slice(1)], 'kokoro', `${message} Retrying from the verified local package cache without network access.`);
+              } catch {
+                const original = onlineError.setupMessage || onlineError.message || 'The package source could not be reached.';
+                throw setupError(`${original} The automatic offline package-cache fallback was attempted but did not contain every required pinned package.`);
+              }
+            }
+          };
+          await install([...installArgs, '--index-url', torchIndex, 'torch==2.8.0'], 'Installing CPU speech dependencies.');
+          await install([...installArgs, '--index-url', pythonIndex, '--only-binary', ':all:', '--no-binary', 'docopt', 'docopt==0.6.2', '-r', requirements, modelUrl], 'Installing Kokoro and its English language model.');
           await command(paths.python, ['-I', '-c', 'import kokoro, soundfile, en_core_web_sm, torch; assert torch.__version__.startswith("2.8.0"); assert en_core_web_sm.__version__ == "3.8.0"'], 'kokoro', 'Checking installed speech dependencies.');
           const stat = statSync(paths.python);
           const base = paths.pythonBase && statSync(paths.pythonBase);

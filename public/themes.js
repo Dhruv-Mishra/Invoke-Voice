@@ -56,6 +56,8 @@ const defaultTokens = {
   '--cp-space-4': '16px',
   '--cp-space-5': '20px',
   '--cp-space-6': '24px',
+  '--cp-space-8': '32px',
+  '--cp-control-height': '44px',
   '--cp-opacity-disabled': '0.5',
   '--cp-duration-fast': '160ms',
   '--cp-duration-enter': '280ms',

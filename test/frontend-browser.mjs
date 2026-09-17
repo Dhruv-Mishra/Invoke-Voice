@@ -70,7 +70,7 @@ const visit = async view => {
   await settle();
 };
 const press = async (key, modifiers = 0) => {
-  const windowsVirtualKeyCode = { Tab: 9, Escape: 27, Space: 32, a: 65 }[key];
+  const windowsVirtualKeyCode = { Tab: 9, Enter: 13, Escape: 27, Space: 32, ArrowUp: 38, ArrowDown: 40, a: 65 }[key];
   const event = { key: key === 'Space' ? ' ' : key, code: key === 'a' ? 'KeyA' : key, modifiers, windowsVirtualKeyCode };
   await browser.webContents.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'keyDown', ...event });
   await browser.webContents.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', ...event });
@@ -103,8 +103,26 @@ const typeText = async (selector, text) => {
 const checkEditableInputs = async scope => {
   const inputs = await evaluate(selector => [...document.querySelectorAll(`${selector} input, ${selector} textarea`)]
     .filter(input => !input.disabled && !input.readOnly && input.getClientRects().length && !['hidden', 'checkbox', 'radio'].includes(input.type))
-    .map(input => ({ id: input.id, type: input.type, value: input.value })), scope);
+    .map(input => {
+      const style = getComputedStyle(input);
+      const placeholder = getComputedStyle(input, '::placeholder');
+      const field = input.closest('.form-group, .tool-field, .config-field');
+      return {
+        id: input.id, type: input.type, value: input.value,
+        spacingMatches: style.paddingTop === '8px' && style.paddingBottom === '8px'
+          && style.paddingLeft === '12px' && style.paddingRight === '12px'
+          && style.borderRadius === '8px' && Number.parseFloat(style.minHeight) >= 44
+          && (input.tagName === 'TEXTAREA' || input.getBoundingClientRect().height === 44)
+          && (!field || getComputedStyle(field).rowGap === '8px'),
+        fontMatches: style.fontSize === (innerWidth <= 760 ? '16px' : '15px')
+          && style.fontFamily === getComputedStyle(document.body).fontFamily && style.fontWeight === '400'
+          && placeholder.fontFamily === style.fontFamily && placeholder.fontSize === style.fontSize
+          && placeholder.fontWeight === style.fontWeight,
+      };
+    }), scope);
   for (const input of inputs) {
+    assert.equal(input.spacingMatches, true, `${input.id} must use shared field dimensions, padding and label spacing`);
+    assert.equal(input.fontMatches, true, `${input.id} must use the responsive field type scale`);
     await typeText(`#${input.id}`, input.type === 'number' ? '12' : 'Editable field with spaces');
     await evaluate(({ id, value }) => { document.getElementById(id).value = value; }, input);
   }
@@ -257,6 +275,29 @@ try {
   assert.deepEqual(await evaluate(() => [...document.querySelectorAll('#config-fields input')].map(control => [control.type, getComputedStyle(control).borderRadius, control.value])), [
     ['url', '8px', 'https://example.test'], ['number', '8px', '8'], ['password', '8px', ''],
   ]);
+  assert.equal(await evaluate(() => [...document.querySelectorAll('select')].every(select => {
+    const style = getComputedStyle(select);
+    return style.fontSize === '15px' && style.fontWeight === '400' && style.borderRadius === '8px'
+      && style.fontFamily === getComputedStyle(document.body).fontFamily
+      && Number.parseFloat(style.minHeight) >= 44
+      && [...select.options].every(option => getComputedStyle(option).fontFamily === style.fontFamily && getComputedStyle(option).fontSize === style.fontSize);
+  })), true);
+  await pointerClick('#motion-preference');
+  assert.equal(await evaluate(() => document.getElementById('motion-preference').matches(':open')), true);
+  assert.equal(await evaluate(() => {
+    const select = document.getElementById('motion-preference');
+    if (!CSS.supports('appearance', 'base-select')) return true;
+    const menu = getComputedStyle(select, '::picker(select)');
+    return menu.fontFamily === getComputedStyle(select).fontFamily && menu.fontSize === '15px' && menu.borderRadius === '8px'
+      && [...select.options].every(option => option.getBoundingClientRect().height >= 44);
+  }), true);
+  await press('Escape');
+  assert.equal(await evaluate(() => document.activeElement.id === 'motion-preference' && !document.activeElement.matches(':open')), true);
+  await pointerClick('#motion-preference');
+  await press('ArrowUp');
+  await press('Enter');
+  assert.equal(await evaluate(() => document.documentElement.dataset.motion), 'reduce');
+  await choose('#motion-preference', 'full');
   const toggles = await evaluate(() => [...document.querySelectorAll('#settings-view .toggle-control input:not(:disabled)')]
     .map(input => ({ id: input.id, checked: input.checked })));
   assert.ok(toggles.length >= 6);
@@ -402,6 +443,9 @@ try {
     await pointerClick('#settings-route-btn');
     assert.equal(await checkEditableInputs('#route-config-dialog'), 1);
     await pointerClick('#route-config-close');
+    await pointerClick('#config-section > summary');
+    assert.equal(await checkEditableInputs('#config-fields'), 3);
+    await pointerClick('#config-section > summary');
     await pointerClick('.toggle-control[for="transparency-preference"] .toggle-track');
     await press('Space');
     await assertPainted('.toggle-control[for="transparency-preference"]');

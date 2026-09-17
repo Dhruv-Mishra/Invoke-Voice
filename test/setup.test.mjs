@@ -23,6 +23,35 @@ function controller(options = {}) {
   return createSetup({ platform: 'win32', arch: 'x64', cacheDir: 'cache', runtimeDir: 'runtime', inspect: () => [{ id: 'fixture', label: 'Fixture', ready: false, sourceUrl: 'https://huggingface.co' }], install: async () => {}, activate: async () => {}, ...options });
 }
 
+function offlinePackFixture(directory) {
+  const packDir = path.join(directory, 'kokoro-offline-pack');
+  const wheelhouse = path.join(packDir, 'wheelhouse');
+  mkdirSync(wheelhouse, { recursive: true });
+  const wheels = [
+    ['torch', '2.8.0+cpu', 'torch-2.8.0+cpu-cp312-cp312-win_amd64.whl'],
+    ['kokoro', '0.9.4', 'kokoro-0.9.4-py3-none-any.whl'],
+    ['spacy', '3.8.7', 'spacy-3.8.7-cp312-cp312-win_amd64.whl'],
+    ['en-core-web-sm', '3.8.0', 'en_core_web_sm-3.8.0-py3-none-any.whl'],
+    ['soundfile', '0.13.1', 'soundfile-0.13.1-py2.py3-none-win_amd64.whl'],
+  ].map(([name, version, filename]) => {
+    const contents = Buffer.from(`${name}-${version}`);
+    writeFileSync(path.join(wheelhouse, filename), contents);
+    return { name, version, filename, size: contents.length, sha256: createHash('sha256').update(contents).digest('hex') };
+  });
+  const lock = wheels.map(wheel => `${wheel.name}==${wheel.version} --hash=sha256:${wheel.sha256}`).join('\n') + '\n';
+  writeFileSync(path.join(packDir, 'requirements.lock'), lock);
+  writeFileSync(path.join(packDir, 'manifest.json'), JSON.stringify({
+    schemaVersion: 1,
+    platform: 'win32',
+    arch: 'x64',
+    python: '3.12',
+    abi: 'cp312',
+    lock: { filename: 'requirements.lock', size: Buffer.byteLength(lock), sha256: createHash('sha256').update(lock).digest('hex') },
+    wheels,
+  }));
+  return { packDir, wheelhouse, wheels };
+}
+
 function localFixture(context, options = {}) {
   const { env: envOverrides = {}, ...setupOptions } = options;
   const { directory } = fixture(context);
@@ -52,6 +81,7 @@ function localFixture(context, options = {}) {
       return { llama: child };
     },
     warm: async () => true,
+    offlinePackDir: path.join(directory, 'missing-kokoro-offline-pack'),
     ...setupOptions,
   });
   context.after(() => setup.close());
@@ -73,6 +103,32 @@ test('local setup uses the private pip recipe with only pinned docopt allowed fr
     assert.equal(command.options.cwd, paths.home);
     assert.equal(command.options.env.PYTHONNOUSERSITE, '1');
   }
+});
+
+test('local setup installs a verified bundled pack without contacting package indexes', windowsSetup, async context => {
+  const { directory } = fixture(context);
+  const { packDir, wheelhouse } = offlinePackFixture(directory);
+
+  const { setup, paths, commands } = localFixture(context, { offlinePackDir: packDir });
+  setup.start({ consent: true });
+  assert.equal((await setup.settled()).status, 'ready');
+  const installs = commands.filter(command => command.args.includes('pip') && command.args.includes('install'));
+  assert.equal(installs.length, 1);
+  assert.deepEqual(installs[0].args, ['--no-config', '--offline', 'pip', 'install', '--python', paths.python, '--no-index', '--find-links', wheelhouse, '--only-binary', ':all:', '--require-hashes', '-r', path.join(packDir, 'requirements.lock')]);
+  assert.equal(installs[0].options.message, 'Installing verified bundled Kokoro dependencies without network access.');
+});
+
+test('local setup rejects a modified bundled pack and preserves the online fallback', windowsSetup, async context => {
+  const { directory } = fixture(context);
+  const { packDir, wheelhouse, wheels } = offlinePackFixture(directory);
+  writeFileSync(path.join(wheelhouse, wheels[0].filename), 'modified wheel');
+  const { setup, commands } = localFixture(context, { offlinePackDir: packDir });
+  setup.start({ consent: true });
+  assert.equal((await setup.settled()).status, 'ready');
+  const installs = commands.filter(command => command.args.includes('pip') && command.args.includes('install'));
+  assert.equal(installs.length, 2);
+  assert.ok(installs[0].args.includes('--index-url'));
+  assert.equal(installs.some(command => command.args.includes('--find-links')), false);
 });
 
 test('managed Python retries package installation from the uv cache without network access', windowsSetup, async context => {

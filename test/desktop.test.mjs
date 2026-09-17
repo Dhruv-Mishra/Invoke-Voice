@@ -34,15 +34,27 @@ test('installer includes physical runtime dependencies, excludes private data an
   const config = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
   assert.equal(config.main, 'desktop.cjs');
   assert.doesNotMatch(config.devDependencies.electron, /alpha|beta/);
+  assert.equal(config.scripts['kokoro-pack'], 'node scripts/build-kokoro-pack.mjs');
+  assert.ok(config.scripts['dist:win'].startsWith('npm run kokoro-pack &&'));
   assert.ok(config.scripts['dist:win'].includes('electron-builder --win nsis --x64'));
   assert.equal(config.build.asar, true);
-  for (const included of ['src/**', 'scripts/**', 'dist/**', 'package.json', 'requirements-local.txt', 'node_modules/**']) assert.ok(config.build.asarUnpack.includes(included));
-  for (const included of ['desktop-preload.cjs', 'desktop-update.cjs', 'scripts/models.mjs', 'scripts/start.mjs', 'scripts/desktop-launch.cjs', 'scripts/kokoro_worker.py', 'requirements-local.txt']) assert.ok(config.build.files.includes(included));
+  for (const included of ['src/**', 'scripts/**', 'dist/**', 'artifacts/kokoro-offline-pack/**', 'package.json', 'requirements-local.txt', 'node_modules/**']) assert.ok(config.build.asarUnpack.includes(included));
+  for (const included of ['desktop-preload.cjs', 'desktop-update.cjs', 'scripts/models.mjs', 'scripts/start.mjs', 'scripts/desktop-launch.cjs', 'scripts/kokoro_worker.py', 'artifacts/kokoro-offline-pack/**/*', 'requirements-local.txt']) assert.ok(config.build.files.includes(included));
   assert.ok(config.build.files.includes('!**/.env*'));
   assert.ok(config.build.files.includes('!**/*.{gguf,pth,pt}'));
+  assert.ok(config.build.files.indexOf('artifacts/kokoro-offline-pack/**/*') > config.build.files.indexOf('!**/{test,tests,artifacts,state,.git,.venv,__pycache__}/**'));
   assert.equal(config.build.nsis.oneClick, true);
   assert.equal(config.build.nsis.perMachine, false);
   assert.equal(config.build.nsis.allowElevation, false);
+});
+
+test('Kokoro pack recipe targets Python 3.12 Windows x64 and verifies a hash-locked offline install', () => {
+  const recipe = readFileSync(path.join(root, 'requirements-kokoro-pack.in'), 'utf8');
+  const builder = readFileSync(path.join(root, 'scripts', 'build-kokoro-pack.mjs'), 'utf8');
+  for (const requirement of ['torch==2.8.0', 'kokoro==0.9.4', 'soundfile==0.13.1', 'spacy>=3.8,<3.9', 'docopt==0.6.2', 'en_core_web_sm-3.8.0-py3-none-any.whl']) assert.ok(recipe.includes(requirement));
+  for (const target of ["'win_amd64'", "'cp312'", "'3.12'"]) assert.ok(builder.includes(target));
+  for (const verification of ["'--no-index'", "'--require-hashes'", "'check'", 'torch.version.cuda is None', 'verifyKokoroPack']) assert.ok(builder.includes(verification));
+  assert.ok(builder.indexOf("'torch==2.8.0'") < builder.indexOf("'-r', recipe"));
 });
 
 test('desktop updater uses an isolated preload bridge and verified installer flow', () => {
@@ -66,6 +78,7 @@ test('beta publisher builds before atomically pushing its version tag and prerel
   const localPublisher = readFileSync(path.join(root, 'scripts', 'publish-beta-local.mjs'), 'utf8');
   assert.equal(config.scripts['release:beta'], 'node scripts/publish-beta.mjs');
   assert.equal(config.scripts['release:beta:local'], 'node scripts/publish-beta-local.mjs');
+  assert.match(workflow, /actions\/setup-python@v5[\s\S]*python-version: '3\.12'[\s\S]*architecture: x64/);
   assert.match(publisher, /git', \['status', '--porcelain'/);
   assert.match(publisher, /releaseBranch = process\.env\.RELEASE_BRANCH \|\| 'master'/);
   assert.ok(workflow.indexOf('run: npm run dist:win') < workflow.indexOf('git push --atomic'));

@@ -18,7 +18,8 @@
     "agency:check": "node --env-file-if-exists=.env scripts/check-copilot.mjs --agency",
     "test": "node --test test/*.test.mjs",
     "desktop": "npm run build && electron desktop.cjs",
-    "dist:win": "npm run build && electron-builder --win nsis --x64",
+    "kokoro-pack": "node scripts/build-kokoro-pack.mjs",
+    "dist:win": "npm run kokoro-pack && npm run build && electron-builder --win nsis --x64",
     "release:beta": "node scripts/publish-beta.mjs",
     "release:beta:local": "node scripts/publish-beta-local.mjs",
     "models": "node --env-file-if-exists=.env scripts/models.mjs",
@@ -66,12 +67,14 @@
       "requirements-local.txt",
       "!**/.env*",
       "!**/*.{gguf,pth,pt}",
-      "!**/{test,tests,artifacts,state,.git,.venv,__pycache__}/**"
+      "!**/{test,tests,artifacts,state,.git,.venv,__pycache__}/**",
+      "artifacts/kokoro-offline-pack/**/*"
     ],
     "asarUnpack": [
       "src/**",
       "scripts/**",
       "dist/**",
+      "artifacts/kokoro-offline-pack/**",
       "requirements-local.txt",
       "package.json",
       "node_modules/**"

@@ -58,6 +58,8 @@ export function stackPaths(env = process.env, appRoot = root) {
   const runtimeDir = path.resolve(env.RUNTIME_DIR || path.join(home, 'runtimes'));
   const base = env.SUPERVISOR_CONFIG_DIR || appRoot;
   const configured = value => value ? path.resolve(base, value) : null;
+  const pythonBase = env.PYTHON_BIN && env.PYTHON_BIN !== 'python' ? configured(env.PYTHON_BIN) : null;
+  const venv = path.join(runtimeDir, pythonBase ? `kokoro-approved-${createHash('sha256').update(pythonBase).digest('hex').slice(0, 20)}` : 'kokoro-venv');
   const select = (...candidates) => candidates.find(candidate => candidate && fileStat(candidate));
   const localStack = path.resolve(appRoot, '../LocalVoiceStack');
   const requestedMoonshine = configured(env.MOONSHINE_MODEL);
@@ -73,8 +75,8 @@ export function stackPaths(env = process.env, appRoot = root) {
     llama: select(configured(env.LLAMA_SERVER_BIN)) || path.join(runtimeDir, 'llama', 'llama-server.exe'),
     crispasr: select(configured(env.CRISPASR_BIN), path.join(runtimeDir, 'crispasr.exe')) || path.join(runtimeDir, 'crispasr', 'crispasr.exe'),
     uv: path.join(runtimeDir, 'uv', 'uv.exe'),
-    venv: path.join(runtimeDir, 'kokoro-venv'),
-    python: path.join(runtimeDir, 'kokoro-venv', 'Scripts', 'python.exe'),
+    pythonBase, venv,
+    python: path.join(venv, 'Scripts', 'python.exe'),
     kokoroConfig: path.join(modelDir, 'kokoro', 'config.json'),
     kokoroModel: path.join(modelDir, 'kokoro', 'kokoro-v1_0.pth'),
     kokoroVoice: path.join(modelDir, 'kokoro', 'af_heart.pt'),
@@ -253,7 +255,7 @@ async function main() {
   }
   if (target === 'runtimes' && (process.platform !== 'win32' || process.arch !== 'x64')) throw setupError('Prebuilt runtimes support Windows x64 only.');
   const paths = stackPaths();
-  const selected = ASSETS.filter(asset => target === 'runtimes' ? Boolean(asset.executable) : target === 'all' ? ['ling', 'moonshine', 'tokenizer', 'vad'].includes(asset.id) : target === 'ling' ? asset.id === 'ling' : ['moonshine', 'tokenizer', 'vad'].includes(asset.id));
+  const selected = ASSETS.filter(asset => target === 'runtimes' ? Boolean(asset.executable) && !(asset.id === 'uv' && paths.pythonBase) : target === 'all' ? ['ling', 'moonshine', 'tokenizer', 'vad'].includes(asset.id) : target === 'ling' ? asset.id === 'ling' : ['moonshine', 'tokenizer', 'vad'].includes(asset.id));
   await withSetupLock(paths, async () => {
     for (const asset of selected) await ensureAsset(paths, asset, { report: event => { if (!event.progress) console.log(event.message); } });
   });

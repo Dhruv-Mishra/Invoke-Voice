@@ -49,6 +49,8 @@ function savePreference(key, value) {
 const themeKey = 'voice-supervisor-theme-v2';
 const soundsKey = 'voice-supervisor-sounds-v1';
 const motionKey = 'voice-supervisor-motion-v1';
+const transparencyKey = 'voice-supervisor-transparency-v1';
+let transparencyEnabled = readPreference(transparencyKey) !== 'false';
 const savedTheme = readPreference(themeKey);
 const savedSounds = readPreference(soundsKey);
 const theme = ref(themes.find(item => item.id === savedTheme) || themes[0]);
@@ -137,7 +139,7 @@ function onTheme(event) {
   if (!next) return;
   stopSound();
   theme.value = next;
-  applyTheme(next);
+  applyTheme(next, { transparency: transparencyEnabled });
   for (const button of document.querySelectorAll('button[data-appearance]')) {
     button.setAttribute('aria-pressed', String(button.dataset.appearance === next.id));
   }
@@ -187,7 +189,7 @@ const VoiceHome = {
   },
 };
 
-applyTheme(theme.value);
+applyTheme(theme.value, { transparency: transparencyEnabled });
 renderThemeOptions();
 syncSoundControls();
 const motionSelect = document.getElementById('motion-preference');
@@ -197,6 +199,13 @@ const homeApp = createApp(VoiceHome);
 homeApp.mount('#voice-personality-app');
 const listeners = new AbortController();
 const listenerOptions = { signal: listeners.signal };
+const transparencyInput = document.getElementById('transparency-preference');
+transparencyInput.checked = transparencyEnabled;
+transparencyInput.addEventListener('change', () => {
+  transparencyEnabled = transparencyInput.checked;
+  savePreference(transparencyKey, String(transparencyEnabled));
+  applyTheme(theme.value, { transparency: transparencyEnabled });
+}, listenerOptions);
 window.addEventListener('voice-supervisor:agent-state', onState, listenerOptions);
 window.addEventListener('voice-supervisor:theme', onTheme, listenerOptions);
 document.addEventListener('click', onInteraction, listenerOptions);

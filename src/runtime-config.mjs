@@ -1,5 +1,6 @@
 import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { stackPaths } from '../scripts/models.mjs';
 
 const fields = Object.freeze([
   { key: 'DEFAULT_PROVIDER', label: 'Default text provider', group: 'Defaults', type: 'select', defaultValue: 'local', options: [['local', 'Local'], ['gemini', 'Gemini'], ['openai', 'OpenAI'], ['anthropic', 'Anthropic'], ['azure', 'Azure OpenAI'], ['custom', 'Custom']] },
@@ -20,8 +21,10 @@ const fields = Object.freeze([
   { key: 'AZURE_OPENAI_API_VERSION', label: 'Azure OpenAI API version', group: 'Models and endpoints', type: 'text', defaultValue: '2024-06-01' },
   { key: 'CUSTOM_BASE_URL', label: 'Custom OpenAI-compatible URL', group: 'Models and endpoints', type: 'url' },
   { key: 'CUSTOM_MODEL', label: 'Custom model', group: 'Models and endpoints', type: 'text' },
+  { key: 'PYTHON_BIN', label: 'IT-approved Python 3.12 x64 path (optional)', group: 'Local setup network', type: 'text', absolutePath: true, restartRequired: true },
   { key: 'LOCAL_PYPI_INDEX_URL', label: 'Python package index', group: 'Local setup network', type: 'url', defaultValue: 'https://pypi.org/simple' },
   { key: 'LOCAL_TORCH_INDEX_URL', label: 'PyTorch package index', group: 'Local setup network', type: 'url', defaultValue: 'https://download.pytorch.org/whl/cpu' },
+  { key: 'LOCAL_SPACY_MODEL_URL', label: 'spaCy English 3.8.0 wheel URL (optional)', group: 'Local setup network', type: 'url' },
   { key: 'COPILOT_CLI', label: 'Copilot CLI executable', group: 'Coding tools', type: 'text', defaultValue: 'copilot.exe' },
   { key: 'AGENCY_CLI', label: 'Agency executable', group: 'Coding tools', type: 'text', defaultValue: 'agency.exe' },
   { key: 'COPILOT_REASONING', label: 'Copilot reasoning effort', group: 'Coding tools', type: 'select', defaultValue: 'medium', options: [['low', 'Low'], ['medium', 'Medium'], ['high', 'High']] },
@@ -38,6 +41,7 @@ function normalize(field, raw) {
   if (typeof raw !== 'string') throw new Error(`${field.label} must be text.`);
   const value = raw.trim();
   if (value.length > (field.secret ? 4096 : 500)) throw new Error(`${field.label} is too long.`);
+  if (field.absolutePath && value && !path.isAbsolute(value)) throw new Error(`${field.label} must be an absolute executable path.`);
   if (field.type === 'select' && !field.options.some(([id]) => id === value)) throw new Error(`${field.label} has an unsupported value.`);
   if (field.type === 'number') {
     const number = Number(value);
@@ -57,6 +61,7 @@ function normalize(field, raw) {
 export function createRuntimeConfig({ dataDir, env = process.env } = {}) {
   const file = path.join(dataDir, 'config.json');
   let values = {};
+  let startupValues;
   const apply = (includeRestart) => {
     for (const field of fields) {
       if (!includeRestart && field.restartRequired) continue;
@@ -74,9 +79,9 @@ export function createRuntimeConfig({ dataDir, env = process.env } = {}) {
       ...(field.options ? { options: field.options.map(([value, label]) => ({ value, label })) } : {}),
       ...(field.min !== undefined ? { min: field.min, max: field.max } : {}),
       restartRequired: field.restartRequired === true,
-      pendingRestart: field.restartRequired === true && Object.hasOwn(values, field.key) && env[field.key] !== values[field.key],
+      pendingRestart: field.restartRequired === true && Object.hasOwn(values, field.key) && startupValues[field.key] !== values[field.key],
       configured: field.secret === true ? Boolean(env[field.key]) : undefined,
-      value: field.secret ? undefined : (Object.hasOwn(values, field.key) ? values[field.key] : env[field.key] || field.defaultValue || ''),
+      value: field.secret ? undefined : (Object.hasOwn(values, field.key) ? values[field.key] : (field.restartRequired ? startupValues[field.key] : env[field.key]) || field.defaultValue || ''),
     })),
   });
   try {
@@ -88,6 +93,8 @@ export function createRuntimeConfig({ dataDir, env = process.env } = {}) {
   } catch (error) {
     if (error.code !== 'ENOENT') console.warn(`Saved application configuration was ignored: ${error.message}`);
   }
+  const startupEnvironment = { ...env, PYTHON_BIN: stackPaths(env).pythonBase || '' };
+  startupValues = Object.fromEntries(fields.filter(field => field.restartRequired).map(field => [field.key, startupEnvironment[field.key]]));
   return {
     snapshot,
     update(input) {

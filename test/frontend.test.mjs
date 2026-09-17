@@ -7,10 +7,10 @@ import path from 'node:path';
 import { createSSRApp, h } from 'vue';
 import { renderToString } from 'vue/server-renderer';
 import VoiceSprite, { defaultAnimations } from '../public/VoiceSprite.js';
-import { motionPreference, themes } from '../public/themes.js';
+import { captionTiming, motionPreference, themes } from '../public/themes.js';
 import { createCaptionController } from '../public/conversation-ui.js';
 
-test('frontend browser preserves conversation contracts and responsive preferences', { timeout: 60000 }, async context => {
+test('frontend browser preserves conversation contracts and responsive preferences', { timeout: 90000 }, async context => {
   const electronDirectory = path.dirname(fileURLToPath(import.meta.resolve('electron')));
   const pathFile = path.join(electronDirectory, 'path.txt');
   const electronPath = existsSync(pathFile) ? path.join(electronDirectory, 'dist', readFileSync(pathFile, 'utf8').trim()) : '';
@@ -27,7 +27,7 @@ test('frontend browser preserves conversation contracts and responsive preferenc
   await new Promise((resolve, reject) => {
     const child = spawn(electronPath, [fileURLToPath(new URL('./frontend-browser.mjs', import.meta.url))], { env: environment, windowsHide: false });
     let output = '';
-    const timeout = setTimeout(() => { child.kill(); reject(new Error(`Browser validation timed out\n${output}`)); }, 55000);
+    const timeout = setTimeout(() => { child.kill(); reject(new Error(`Browser validation timed out\n${output}`)); }, 85000);
     child.stdout.on('data', chunk => { output += chunk; });
     child.stderr.on('data', chunk => { output += chunk; });
     child.on('error', error => { clearTimeout(timeout); reject(error); });
@@ -46,7 +46,7 @@ test('captions replace partials, ignore tools, expire and cannot be cleared by s
   let sequence = 0;
   const captions = createCaptionController(value => updates.push(value), {
     setTimeout(callback, delay) {
-      assert.ok(delay >= 6000 && delay <= 16000);
+      assert.ok(delay === captionTiming.fade || (delay >= captionTiming.minimum && delay <= captionTiming.maximum));
       pending.set(++sequence, callback);
       return sequence;
     },
@@ -55,6 +55,11 @@ test('captions replace partials, ignore tools, expire and cannot be cleared by s
       pending.delete(id);
     },
   });
+  const expireNext = () => {
+    const [id, callback] = pending.entries().next().value;
+    pending.delete(id);
+    callback();
+  };
   captions.update('user', 'Hello', true);
   assert.deepEqual(updates.at(-1), { role: 'user', text: 'Hello', partial: true });
   captions.update('user', 'Hello again');
@@ -69,20 +74,58 @@ test('captions replace partials, ignore tools, expire and cannot be cleared by s
   captions.update('user', null);
   assert.equal(updates.length, 3);
   captions.update('assistant', 'a'.repeat(1000));
-  assert.equal(updates.at(-1).text.length, 280);
+  assert.equal(updates.at(-1).text, 'a'.repeat(1000));
+  expireNext();
+  assert.equal(updates.at(-1).fading, true);
   captions.pause(true);
+  assert.equal(updates.at(-1).fading, false);
   assert.equal(pending.size, 0);
+  cancelled.at(-1)();
+  assert.equal(updates.at(-1).text.length, 1000);
   captions.update('assistant', 'Still readable');
   assert.equal(pending.size, 0);
   captions.pause(false);
   assert.equal(pending.size, 1);
-  [...pending.values()][0]();
+  expireNext();
+  assert.equal(updates.at(-1).fading, true);
+  captions.update('assistant', 'New text cancels the fade');
+  cancelled.at(-1)();
+  assert.equal(updates.at(-1).text, 'New text cancels the fade');
+  expireNext();
+  expireNext();
   assert.equal(updates.at(-1), null);
   captions.update('user', 'Next session');
   captions.clear();
   assert.equal(pending.size, 0);
   for (const callback of cancelled) callback();
   assert.equal(updates.at(-1), null);
+});
+
+test('speaker captions retain separate text, fade and dismissal lifecycles', () => {
+  const updates = new Map();
+  const pending = new Map();
+  let sequence = 0;
+  const timers = {
+    setTimeout(callback) { pending.set(++sequence, callback); return sequence; },
+    clearTimeout(id) { pending.delete(id); },
+  };
+  const user = createCaptionController(value => updates.set('user', value), timers);
+  const assistant = createCaptionController(value => updates.set('assistant', value), timers);
+  user.update('user', 'A complete question');
+  assistant.update('assistant', 'First partial', true);
+  assistant.update('assistant', 'Updated partial', true);
+  assert.equal(updates.get('user').text, 'A complete question');
+  assert.equal(updates.get('assistant').text, 'Updated partial');
+  const expire = pending.get(1);
+  pending.delete(1);
+  expire();
+  assert.equal(updates.get('user').fading, true);
+  assert.equal(updates.get('assistant').fading, undefined);
+  assistant.clear();
+  assert.equal(updates.get('assistant'), null);
+  assert.equal(updates.get('user').text, 'A complete question');
+  user.clear();
+  assert.equal(pending.size, 0);
 });
 
 test('motion overrides validate persisted values and default to system preference', () => {
@@ -100,11 +143,8 @@ test('voice sprite renders each state with its animation and accessible label', 
     assert.ok(output.includes(`aria-label="Agent ${state}"`));
     assert.ok(output.includes(`animation-name:${animation}`));
     assert.ok(output.includes('src="/sprite.png"'));
-    assert.equal(output.includes('class="voice-bars"'), state === 'listening');
-    if (state === 'listening') {
-      assert.equal((output.match(/--bar-index:/g) || []).length, 9);
-      assert.ok(output.includes('class="voice-bars" aria-hidden="true"'));
-    }
+    assert.equal(output.includes('class="voice-bars"'), false);
+    assert.equal((output.match(/class="sprite-image"/g) || []).length, 1);
   }
 });
 

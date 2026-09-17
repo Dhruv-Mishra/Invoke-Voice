@@ -1,8 +1,9 @@
 import { defineConfig } from 'vite';
+import { realpathSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const root = fileURLToPath(new URL('./public', import.meta.url));
+const root = realpathSync.native(fileURLToPath(new URL('./public', import.meta.url)));
 
 export default defineConfig({
   root,

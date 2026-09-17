@@ -6,11 +6,11 @@ import path from 'node:path';
 import { app, BrowserWindow } from 'electron';
 import { WebSocketServer } from 'ws';
 
-app.disableHardwareAcceleration();
+if (process.env.VOICE_SUPERVISOR_DISABLE_GPU === '1') app.disableHardwareAcceleration();
 app.commandLine.appendSwitch('use-fake-ui-for-media-stream');
 app.commandLine.appendSwitch('use-fake-device-for-media-stream');
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
-app.commandLine.appendSwitch('disable-features', 'HardwareMediaKeyHandling');
+app.commandLine.appendSwitch('disable-features', 'HardwareMediaKeyHandling,CalculateNativeWinOcclusion');
 let server;
 let browser;
 let chatResponse;
@@ -65,11 +65,58 @@ const visit = async view => {
   await settle();
 };
 const press = async (key, modifiers = 0) => {
-  const windowsVirtualKeyCode = key === 'Tab' ? 9 : 27;
-  await browser.webContents.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'keyDown', key, code: key, modifiers, windowsVirtualKeyCode });
-  await browser.webContents.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', key, code: key, modifiers, windowsVirtualKeyCode });
+  const windowsVirtualKeyCode = { Tab: 9, Escape: 27, Space: 32, a: 65 }[key];
+  const event = { key: key === 'Space' ? ' ' : key, code: key === 'a' ? 'KeyA' : key, modifiers, windowsVirtualKeyCode };
+  await browser.webContents.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'keyDown', ...event });
+  await browser.webContents.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', ...event });
   await settle();
 };
+const pointerClick = async selector => {
+  const point = await evaluate(target => {
+    const control = document.querySelector(target);
+    control.scrollIntoView({ block: 'center', inline: 'nearest' });
+    const box = control.getBoundingClientRect();
+    const position = { x: box.left + box.width / 2, y: box.top + box.height / 2 };
+    return { ...position, reachable: control.contains(document.elementFromPoint(position.x, position.y)) };
+  }, selector);
+  assert.equal(point.reachable, true, `${selector} must receive pointer input`);
+  for (const type of ['mousePressed', 'mouseReleased']) {
+    await browser.webContents.debugger.sendCommand('Input.dispatchMouseEvent', { type, x: point.x, y: point.y, button: 'left', clickCount: 1 });
+  }
+  await settle();
+};
+const typeText = async (selector, text) => {
+  await pointerClick(selector);
+  assert.equal(await evaluate(target => document.activeElement === document.querySelector(target), selector), true, `${selector} must retain focus`);
+  await press('a', 2);
+  for (const character of text) {
+    await browser.webContents.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'keyDown', key: character, code: character === ' ' ? 'Space' : '', text: character });
+    await browser.webContents.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', key: character, code: character === ' ' ? 'Space' : '' });
+  }
+  assert.equal(await evaluate(target => document.querySelector(target).value, selector), text, `${selector} must accept keyboard entry including spaces`);
+};
+const checkEditableInputs = async scope => {
+  const inputs = await evaluate(selector => [...document.querySelectorAll(`${selector} input, ${selector} textarea`)]
+    .filter(input => !input.disabled && !input.readOnly && input.getClientRects().length && !['hidden', 'checkbox', 'radio'].includes(input.type))
+    .map(input => ({ id: input.id, type: input.type, value: input.value })), scope);
+  for (const input of inputs) {
+    await typeText(`#${input.id}`, input.type === 'number' ? '12' : 'Editable field with spaces');
+    await evaluate(({ id, value }) => { document.getElementById(id).value = value; }, input);
+  }
+  return inputs.length;
+};
+async function assertPainted(selector) {
+  const bounds = await evaluate(target => {
+    const box = document.querySelector(target).getBoundingClientRect();
+    return { x: Math.ceil(box.left), y: Math.ceil(box.top), width: Math.floor(box.width), height: Math.floor(box.height) };
+  }, selector);
+  const pixels = (await browser.webContents.capturePage(bounds)).toBitmap();
+  const shades = new Set();
+  for (let offset = 0; offset < pixels.length; offset += 4) {
+    shades.add(`${pixels[offset] >> 4},${pixels[offset + 1] >> 4},${pixels[offset + 2] >> 4}`);
+  }
+  assert.ok(shades.size > 8, `${selector} should paint text and controls, not a blank surface`);
+}
 const choose = (selector, value) => evaluate((target, selection) => {
   const input = document.querySelector(target);
   input.value = selection;
@@ -146,7 +193,7 @@ try {
           '/api/config': config,
           '/api/state': { areas: [{ id: 'fixture-area', name: 'Fixture repository', repoPath: 'C:\\fixture' }], tasks: fixtureTasks, settings },
           '/api/areas/fixture-area/agents': [{ id: 'agent', name: 'Default agent' }],
-          '/api/tools': [{ type: 'function', function: { name: 'list_work', description: 'List work', parameters: { type: 'object', properties: {} } } }],
+          '/api/tools': [{ type: 'function', function: { name: 'list_work', description: 'List work', parameters: { type: 'object', properties: { query: { type: 'string' }, prompt: { type: 'string' } } } } }],
         };
         response.writeHead(request.url in routes ? 200 : 404, { 'Content-Type': 'application/json' });
         response.end(JSON.stringify(routes[request.url] || { error: 'Fixture route unavailable' }));
@@ -174,7 +221,7 @@ try {
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   console.log('Browser fixture: loading UI');
-  browser = new BrowserWindow({ width: 1440, height: 960, show: true, webPreferences: { partition: `frontend-fixture-${process.pid}`, backgroundThrottling: false, contextIsolation: true, sandbox: true } });
+  browser = new BrowserWindow({ width: 1440, height: 960, show: true, titleBarStyle: 'hidden', titleBarOverlay: { height: 32 }, webPreferences: { partition: `frontend-fixture-${process.pid}`, backgroundThrottling: false, contextIsolation: true, sandbox: true } });
   browser.webContents.session.setPermissionRequestHandler((_contents, permission, callback) => callback(permission === 'media'));
   console.log('Browser fixture: initializing renderer');
   await browser.loadURL('about:blank');
@@ -187,6 +234,7 @@ try {
   await browser.loadURL(url);
   console.log('Browser fixture: checking appearance');
   await waitFor(() => document.getElementById('route-status-badge').textContent.includes('Ready'));
+  console.log('Browser fixture: route ready');
 
   assert.equal(await evaluate(() => document.querySelectorAll('.appearance-options input').length), 0);
   assert.equal(await evaluate(() => document.querySelector('.top-bar').getBoundingClientRect().width), 288);
@@ -196,19 +244,39 @@ try {
   assert.equal(await evaluate(() => document.getElementById('local-setup-prompt').open), true);
   await click('#local-setup-start');
   await waitFor(() => document.body.dataset.view === 'settings' && document.activeElement.id === 'setup-consent');
+  console.log('Browser fixture: settings ready');
   assert.equal(settingsWrites, 1);
   await waitFor(() => document.getElementById('setup-status').textContent === 'idle');
   assert.deepEqual(await evaluate(() => [...document.querySelectorAll('#config-fields input')].map(control => [control.type, getComputedStyle(control).borderRadius, control.value])), [
     ['url', '10px', 'https://example.test'], ['number', '10px', '8'], ['password', '10px', ''],
   ]);
-  const toggleCheck = await evaluate(() => {
-    const inputs = [...document.querySelectorAll('.toggle-control input[type="checkbox"]:not(:disabled)')];
-    const before = inputs.map(input => input.checked);
-    inputs.forEach(input => { input.click(); input.click(); });
-    return { count: inputs.length, stable: before.every((value, index) => value === inputs[index].checked) && document.body.dataset.view === 'settings' && document.body.innerText.length > 100 };
-  });
-  assert.ok(toggleCheck.count >= 10);
-  assert.equal(toggleCheck.stable, true);
+  const toggles = await evaluate(() => [...document.querySelectorAll('#settings-view .toggle-control input:not(:disabled)')]
+    .map(input => ({ id: input.id, checked: input.checked })));
+  assert.ok(toggles.length >= 6);
+  for (const toggle of toggles) {
+    console.log(`Browser fixture: toggle ${toggle.id}`);
+    const label = `.toggle-control[for="${toggle.id}"]`;
+    await pointerClick(`${label} .toggle-track`);
+    assert.equal(await evaluate(id => document.getElementById(id).checked, toggle.id), !toggle.checked);
+    assert.equal(await evaluate(() => document.activeElement.id), toggle.id);
+    const scroll = await evaluate(() => document.getElementById('settings-view').scrollTop);
+    await press('Space');
+    assert.equal(await evaluate(id => document.getElementById(id).checked, toggle.id), toggle.checked);
+    assert.equal(await evaluate(() => document.getElementById('settings-view').scrollTop), scroll);
+    assert.equal(await evaluate(id => {
+      const input = document.getElementById(id).getBoundingClientRect();
+      const label = document.getElementById(id).closest('label').getBoundingClientRect();
+      return input.left >= label.left && input.right <= label.right && input.top >= label.top && input.bottom <= label.bottom
+        && document.getElementById('view-dialog').scrollTop === 0
+        && document.querySelector('.view-dialog-content').scrollTop === 0
+        && document.getElementById('view-dialog').matches(':modal') && document.body.dataset.view === 'settings';
+    }, toggle.id), true);
+    console.log(`Browser fixture: capture ${toggle.id}`);
+    await assertPainted(label);
+  }
+  await pointerClick('#config-section > summary');
+  assert.equal(await checkEditableInputs('#config-fields'), 3);
+  await pointerClick('#config-section > summary');
   assert.equal(await evaluate(() => document.getElementById('setup-install-btn').disabled), true);
   assert.equal(await evaluate(() => document.getElementById('setup-cache').textContent), setup.cacheDir);
   assert.equal(await evaluate(() => document.querySelectorAll('#setup-components a[href]').length), 1);
@@ -303,17 +371,52 @@ try {
   assert.equal(await evaluate(() => window.fixtureHome === document.getElementById('agent-sprite') && window.fixtureSettings === document.getElementById('settings-view')), true);
   await click('[data-open-view="tool-lab"]');
   assert.equal(await evaluate(() => document.body.dataset.view === 'tool-lab' && document.activeElement.id === 'close-view-btn'), true);
+  assert.equal(await checkEditableInputs('#tool-lab-view'), 2);
+  for (const width of [820, 390]) {
+    browser.setContentSize(width, 844);
+    await visit('workspace');
+    if (!await evaluate(() => document.getElementById('areas-disclosure').open)) await pointerClick('#areas-disclosure > summary');
+    await pointerClick('#btn-new-area');
+    await waitFor(() => document.getElementById('area-dialog').matches(':modal'));
+    await choose('#area-agent-select', '__custom__');
+    assert.equal(await checkEditableInputs('#area-dialog'), 6);
+    await press('Tab');
+    assert.equal(await evaluate(() => document.getElementById('area-dialog').contains(document.activeElement)), true);
+    await press('Escape');
+    await waitFor(() => !document.getElementById('area-dialog').open);
+    assert.equal(await evaluate(() => document.body.dataset.view), 'workspace');
+    await pointerClick('#btn-new-task');
+    assert.ok(await checkEditableInputs('#new-task-dialog') >= 1);
+    await pointerClick('#task-dialog-close');
+    await visit('settings');
+    await pointerClick('#settings-route-btn');
+    assert.equal(await checkEditableInputs('#route-config-dialog'), 1);
+    await pointerClick('#route-config-close');
+    await pointerClick('.toggle-control[for="transparency-preference"] .toggle-track');
+    await press('Space');
+    await assertPainted('.toggle-control[for="transparency-preference"]');
+  }
+  browser.setContentSize(1440, 960);
+  await settle();
   await visit('settings');
   await click('button[data-appearance="jarvis"]');
   assert.equal(await evaluate(() => document.querySelector('button[data-appearance="jarvis"]').getAttribute('aria-pressed')), 'true');
   assert.equal(await evaluate(() => document.querySelectorAll('button[data-appearance][aria-pressed="true"]').length), 1);
   assert.equal(await evaluate(() => document.documentElement.hasAttribute('aria-pressed')), false);
+  await pointerClick('.toggle-control[for="transparency-preference"] .toggle-track');
+  assert.equal(await evaluate(() => document.documentElement.dataset.transparency), 'off');
   await choose('#motion-preference', 'reduce');
   await browser.loadURL(url);
   await waitFor(() => document.querySelector('.sprite-image') && document.getElementById('route-status-badge').textContent.includes('Ready'));
   assert.equal(await evaluate(() => document.getElementById('local-setup-prompt').open), false);
   assert.equal(await evaluate(() => document.documentElement.dataset.motion), 'reduce');
   assert.equal(await evaluate(() => document.documentElement.dataset.appearance), 'jarvis');
+  assert.equal(await evaluate(() => document.documentElement.dataset.transparency), 'off');
+  assert.equal(await evaluate(() => document.getElementById('transparency-preference').checked), false);
+  assert.equal(await evaluate(() => [...document.querySelectorAll('.suggestions, .voice-strip, .top-bar')].every(element => {
+    const style = getComputedStyle(element);
+    return style.backdropFilter === 'none' && !style.backgroundColor.startsWith('rgba');
+  })), true);
   assert.equal(await evaluate(() => getComputedStyle(document.querySelector('.sprite-image')).animationName), 'none');
   await choose('#motion-preference', 'system');
   await browser.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
@@ -327,13 +430,17 @@ try {
   await click('.history-entry');
   assert.equal(await evaluate(() => document.getElementById('task-detail-dialog').open && document.getElementById('detail-content').textContent.includes('coding task')), true);
   await click('#detail-dialog-close');
+  await pointerClick('.history-entry[data-task-id="finished-task"]');
+  await pointerClick('#detail-continue-task-btn');
+  assert.equal(await checkEditableInputs('#continue-thread-dialog'), 1);
+  await pointerClick('#continue-dialog-close');
   await click('#history-compose-btn');
   await waitFor(() => document.getElementById('new-task-dialog').open);
   assert.equal(await evaluate(() => document.getElementById('new-task-dialog').open), true);
   await click('#task-dialog-close');
   await click('#open-chat-btn');
   console.log('Browser fixture: checking typed chat');
-  await evaluate(() => { document.getElementById('chat-input').value = '<img src=x onerror=alert(1)> hello'; });
+  await typeText('#chat-input', '<img src=x onerror=alert(1)> hello');
   await click('#btn-send-chat');
   await waitFor(() => document.getElementById('caption-text').textContent === 'Streaming reply');
   assert.equal(await evaluate(() => document.getElementById('caption-announcement').textContent), '');
@@ -355,29 +462,42 @@ try {
   await click('#mic-toggle-btn');
   console.log('Browser fixture: checking voice');
   await waitFor(() => document.getElementById('agent-sprite').dataset.state === 'listening');
-  assert.equal(await evaluate(() => document.querySelectorAll('.voice-bars span').length), 9);
+  assert.equal(await evaluate(() => document.querySelectorAll('.voice-bars, #mic-canvas').length), 0);
+  assert.equal(await evaluate(() => getComputedStyle(document.querySelector('.sprite-image')).visibility), 'visible');
+  await evaluate(() => { window.fixtureSpriteImage = document.querySelector('.sprite-image'); });
   assert.equal(await evaluate(() => document.body.dataset.voiceActive === 'true'
-    && !document.getElementById('mic-canvas').hidden
-    && Number(getComputedStyle(document.body, '::before').opacity) > 0), true);
+    && Number(getComputedStyle(document.body, '::before').opacity) >= 0.75), true);
   await voice({ type: 'transcript', role: 'user', text: 'Voice partial', partial: true });
-  assert.equal(await evaluate(() => document.getElementById('caption-text').textContent), 'Voice partial');
+  assert.equal(await evaluate(() => document.getElementById('user-caption-text').textContent), 'Voice partial');
   assert.equal(await evaluate(() => document.querySelectorAll('.history-entry').length), 2);
   await voice({ type: 'transcript', role: 'user', text: 'Voice final', partial: false });
   assert.equal(await evaluate(() => document.querySelectorAll('.history-entry').length), 2);
   await voice({ type: 'transcript', role: 'assistant', text: 'Agent reply', partial: true });
+  assert.equal(await evaluate(() => document.querySelectorAll('.closed-caption:not([hidden])').length), 2);
+  assert.equal(await evaluate(() => document.getElementById('user-caption-text').textContent), 'Voice final');
   await voice({ type: 'tool', name: 'list_work', result: { ok: true } });
   assert.equal(await evaluate(() => document.body.dataset.voiceActivity === 'tool'
     && getComputedStyle(document.body, '::after').animationName === 'tool-presence'), true);
   await voice({ type: 'state', state: 'speaking' });
-  await waitFor(() => document.querySelectorAll('.voice-bars span').length === 0);
+  await waitFor(() => document.getElementById('agent-sprite').dataset.state === 'speaking');
   assert.equal(await evaluate(() => getComputedStyle(document.querySelector('.sprite-image')).visibility === 'visible'
+    && document.querySelector('.sprite-image') === window.fixtureSpriteImage
     && getComputedStyle(document.getElementById('agent-sprite'), '::before').animationName === 'speaker-ripple'), true);
   await voice({ type: 'transcript', role: 'assistant', text: 'Agent reply', partial: false });
+  await pointerClick('#voice-options-btn');
+  await pointerClick('#ptt-mode-opt + .toggle-track');
+  await pointerClick('#open-chat-btn');
+  await typeText('#chat-input', 'Spaces remain editable during push to talk');
+  await pointerClick('#close-chat-btn');
+  await pointerClick('#voice-options-btn');
+  await pointerClick('#ptt-mode-opt + .toggle-track');
+  await pointerClick('#voice-options-btn');
   await visit('settings');
   Object.assign(fixtureTasks[1], { state: 'completed', result: '## Working changes' });
   eventResponse.write(`data: ${JSON.stringify({ type: 'state', state: { areas: [], tasks: fixtureTasks, settings: {} } })}\n\n`);
   await waitFor(() => document.querySelector('.history-entry[data-task-id="active-task"]').dataset.state === 'completed');
   await click('button[data-appearance="opal"]');
+  assert.equal(await evaluate(() => document.documentElement.dataset.transparency), 'off');
   await choose('#motion-preference', 'reduce');
   assert.equal(voiceConnections, 1);
   assert.equal(await evaluate(() => document.getElementById('mic-toggle-btn').getAttribute('aria-pressed')), 'true');
@@ -387,10 +507,12 @@ try {
   assert.equal(await evaluate(() => getComputedStyle(document.body, '::after').animationName === 'none'
     && Number(getComputedStyle(document.body, '::after').opacity) > 0), true);
   await voice({ type: 'interrupted' });
-  assert.equal(await evaluate(() => document.getElementById('closed-caption').hidden), true);
+  assert.equal(await evaluate(() => [...document.querySelectorAll('.closed-caption')].every(caption => caption.hidden)), true);
   assert.equal(await evaluate(() => document.querySelector('.caption-region').getBoundingClientRect().height < 1), true);
   await voice({ type: 'transcript', role: 'assistant', text: 'Last reply', partial: false });
   await click('button[data-appearance="alpine"]');
+  await pointerClick('.toggle-control[for="transparency-preference"] .toggle-track');
+  assert.equal(await evaluate(() => document.documentElement.dataset.transparency), 'on');
   await click('#close-view-btn');
   await click('#mic-toggle-btn');
   assert.equal(await evaluate(() => document.getElementById('closed-caption').hidden), true);
@@ -409,25 +531,46 @@ try {
     for (const view of ['home', 'workspace', 'calendar', 'files', 'settings']) {
       console.log(`Browser fixture: ${view}`);
       await visit(view);
-      await voice({ type: 'transcript', role: view === 'home' ? 'user' : 'assistant', text: 'A long caption stays readable across pages. '.repeat(12), partial: true });
-      await evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      const contentBefore = await evaluate(() => document.querySelector('.page-views').getBoundingClientRect().toJSON());
+      const longCaption = 'Supervisor a designated work area. '.repeat(24);
+      await voice({ type: 'transcript', role: 'user', text: longCaption, partial: false });
+      await voice({ type: 'transcript', role: 'assistant', text: longCaption, partial: true });
+      await waitFor(() => [...document.querySelectorAll('.caption-text')].every(text => !text.getAnimations().some(animation => animation.playState === 'running')));
+      assert.deepEqual(await evaluate(() => document.querySelector('.page-views').getBoundingClientRect().toJSON()), contentBefore);
+      assert.equal(await evaluate(() => document.getElementById('caption-text').textContent), longCaption.trim());
+      assert.equal(await evaluate(() => [...document.querySelectorAll('.caption-text')].every(text =>
+        getComputedStyle(text).textAlign === (text.closest('.closed-caption').dataset.role === 'user' ? 'right' : 'left')
+        && Number.parseFloat(text.style.height) > 0)), true,
+      'Caption text must align by speaker and retain measured heights for smooth growth');
       const layout = await evaluate(() => {
         const surface = document.querySelector('.app-main').getBoundingClientRect();
         const dock = document.querySelector('.voice-strip').getBoundingClientRect();
-        const caption = document.getElementById('closed-caption').getBoundingClientRect();
-        const content = document.querySelector('.page-views').getBoundingClientRect();
+        const captions = [...document.querySelectorAll('.closed-caption:not([hidden])')].map(caption => caption.getBoundingClientRect());
+        const region = document.querySelector('.caption-region').getBoundingClientRect();
+        const text = document.getElementById('caption-text');
+        const firstWord = document.createRange();
+        firstWord.setStart(text.firstElementChild.firstChild, 0);
+        firstWord.setEnd(text.firstElementChild.firstChild, 10);
+        const firstWordBounds = firstWord.getBoundingClientRect();
         return {
           noOverflow: document.documentElement.scrollWidth <= innerWidth,
           surfaceVisible: surface.width > 0 && surface.height > 0 && surface.left >= 0 && surface.right <= innerWidth,
           dockClear: surface.bottom <= dock.top,
           freeFloating: getComputedStyle(document.querySelector('.app-main')).backgroundColor === 'rgba(0, 0, 0, 0)' && getComputedStyle(document.querySelector('.app-main')).boxShadow === 'none',
-          captionFits: caption.top >= content.bottom && caption.bottom <= surface.bottom && caption.left >= surface.left && caption.right <= surface.right,
-          captionCentered: Math.abs((caption.left + caption.right - dock.left - dock.right) / 2) < 1,
+          captionFits: captions.length === 2 && captions.every(caption => caption.top >= 12 && caption.bottom < dock.top && caption.left >= surface.left && caption.right <= surface.right),
+          captionCentered: Math.abs((region.left + region.right - dock.left - dock.right) / 2) < 1,
+          captionStacked: Math.abs(captions[1].top - captions[0].bottom - 6) < 1,
+          speakerOffset: Math.abs(captions[0].left - captions[1].left - 12) < 1,
+          speakerColors: getComputedStyle(document.getElementById('user-closed-caption')).backgroundColor !== getComputedStyle(document.getElementById('closed-caption')).backgroundColor,
+          titlesHidden: [...document.querySelectorAll('.caption-speaker')].every(label => getComputedStyle(label).position === 'absolute' && label.getBoundingClientRect().height <= 1),
+          compactCaption: captions.every(caption => caption.height <= Math.min(126, innerHeight * .16) + 19),
+          captionScrollable: text.scrollHeight > text.clientHeight && text.clientHeight <= Math.min(126, innerHeight * .16) + 1 && getComputedStyle(text).overflowY === 'auto',
+          captionStartVisible: firstWordBounds.left >= text.getBoundingClientRect().left && firstWordBounds.right <= text.getBoundingClientRect().right,
           modalCorrect: document.getElementById('view-dialog').matches(':modal') === (innerWidth > 760 && document.body.dataset.view !== 'home'),
           spriteCentered: document.getElementById('voice-personality-app').hidden || Math.abs((document.getElementById('agent-sprite').getBoundingClientRect().left + document.getElementById('agent-sprite').getBoundingClientRect().right - dock.left - dock.right) / 2) < 1,
         };
       });
-      assert.deepEqual(layout, { noOverflow: true, surfaceVisible: true, dockClear: true, freeFloating: true, captionFits: true, captionCentered: true, modalCorrect: true, spriteCentered: true }, `${width}x${height} ${view}`);
+      assert.deepEqual(layout, { noOverflow: true, surfaceVisible: true, dockClear: true, freeFloating: true, captionFits: true, captionCentered: true, captionStacked: true, speakerOffset: true, speakerColors: true, titlesHidden: true, compactCaption: true, captionScrollable: true, captionStartVisible: true, modalCorrect: true, spriteCentered: true }, `${width}x${height} ${view}`);
       if (view === 'settings') {
         assert.equal(await evaluate(() => {
           const settings = document.getElementById('settings-view');
@@ -454,7 +597,7 @@ try {
   assert.equal(await evaluate(() => document.getElementById('closed-caption').hidden), true);
   assert.equal(await evaluate(() => document.getElementById('history-empty').hidden), true);
   assert.deepEqual(errors, []);
-  console.log('Frontend browser checks passed: setup consent/progress/retry/visibility, persistent task history, modal focus/resize, unchanged voice/SSE ownership, themes and five viewports.');
+  console.log('Frontend browser checks passed: real toggle/input events and painted surfaces, two overlay captions, persisted transparency, setup lifecycle, unchanged voice/SSE ownership, themes and five viewports.');
 } catch (error) {
   console.error(error.stack);
   console.error('Browser console:', JSON.stringify(errors));

@@ -1,5 +1,6 @@
 import { defaultAnimations } from './VoiceSprite.js';
 
+export const captionTiming = Object.freeze({ minimum: 6000, maximum: 16000, perCharacter: 40, fade: 1800 });
 const alpineBackground = new URL('./alpine-lake.webp', import.meta.url).href;
 const defaultTokens = {
   '--cp-bg': '#e8f2f7',
@@ -52,6 +53,16 @@ const defaultTokens = {
   '--cp-space-6': '24px',
   '--cp-opacity-disabled': '0.5',
   '--cp-duration-fast': '140ms',
+  '--cp-glass-blur': '10px',
+  '--cp-caption-width': '680px',
+  '--cp-caption-max-height': 'min(126px, 16dvh)',
+  '--cp-caption-offset': '12px',
+  '--cp-caption-gap': '6px',
+  '--cp-caption-assistant-bg': 'var(--cp-panel-strong)',
+  '--cp-caption-user-bg': 'color-mix(in srgb, var(--cp-accent) 12%, var(--cp-panel-strong))',
+  '--cp-caption-grow-duration': '220ms',
+  '--cp-caption-fade-duration': `${captionTiming.fade}ms`,
+  '--cp-voice-edge-strength': '68%',
 };
 
 const themeDefaults = Object.freeze({
@@ -89,16 +100,28 @@ export function motionPreference(value) {
 
 const appliedTokens = new Set();
 
-export function applyTheme(theme) {
+export function applyTheme(theme, { transparency = true } = {}) {
   const root = document.documentElement;
   for (const token of appliedTokens) root.style.removeProperty(token);
   appliedTokens.clear();
-  for (const [token, value] of Object.entries(theme.tokens)) {
+  const tokens = { ...theme.tokens };
+  if (!transparency) {
+    for (const [token, surface] of Object.entries({
+      '--cp-panel': '--cp-surface', '--cp-panel-strong': '--cp-bg-elevated',
+      '--cp-sidebar': '--cp-bg-elevated', '--cp-voice-glass': '--cp-surface-soft',
+      '--cp-overlay': '--cp-bg', '--cp-border': '--cp-border-strong', '--cp-sheen': '--cp-border-strong',
+    })) tokens[token] = tokens[surface];
+    tokens['--cp-highlight'] = tokens['--cp-bg'];
+    tokens['--cp-accent-soft'] = `color-mix(in srgb, ${tokens['--cp-accent']} 12%, ${tokens['--cp-surface']})`;
+    tokens['--cp-glass-blur'] = '0px';
+  }
+  for (const [token, value] of Object.entries(tokens)) {
     if (!token.startsWith('--cp-') || value == null) continue;
     root.style.setProperty(token, value);
     appliedTokens.add(token);
   }
   root.style.setProperty('--cp-background-image', theme.background ? `url(${JSON.stringify(theme.background)})` : 'none');
   root.dataset.appearance = theme.id;
+  root.dataset.transparency = transparency ? 'on' : 'off';
   root.style.colorScheme = theme.preferences.colorScheme;
 }

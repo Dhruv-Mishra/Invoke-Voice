@@ -15,6 +15,7 @@ const pythonVersion = '3.12.11';
 const englishModel = 'https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl';
 const receiptVersion = createHash('sha256').update(readFileSync(requirements)).update(`${pythonVersion}:torch2.8.0:spacy3.8.0:kokoro-local-v1`).digest('hex');
 const CHAT_ASSET_IDS = new Set(['ling', 'llama']);
+const policyGuidance = 'If execution is blocked by IT policy, stop retrying and ask IT to approve the runtime and its virtual environment, or configure PYTHON_BIN with an IT-approved Python 3.12 x64 path and restart the app. Do not bypass Defender, AppLocker or WDAC. Local chat does not require Kokoro.';
 
 export function isolatedEnvironment(env, paths) {
   const isolated = Object.fromEntries(Object.entries(env).filter(([key]) => /^(PATH|SYSTEMROOT|WINDIR|COMSPEC|TEMP|TMP|USERPROFILE|LOCALAPPDATA|APPDATA|PROCESSOR_ARCHITECTURE|NUMBER_OF_PROCESSORS)$/i.test(key)));
@@ -76,7 +77,7 @@ export function runSetupCommand(executable, args, { env, cwd, signal, report = (
       signal?.removeEventListener('abort', abort);
       let logged = false;
       try {
-        let output = `${new Date().toISOString()} ${stage}: ${message}\n${error ? error.setupMessage : 'Process completed.'}\n`;
+        let output = `${new Date().toISOString()} ${stage}: ${message}\nExecutable: ${executable}\n${error ? error.setupMessage : 'Process completed.'}\n`;
         for (const [name, tail] of Object.entries(tails)) {
           const text = tail.truncated ? (tail.text.includes('\n') ? tail.text.slice(tail.text.indexOf('\n') + 1) : '') : tail.text;
           output += `\n[${name}${tail.truncated ? ' tail truncated' : ''}]\n${text}\n`;
@@ -91,13 +92,14 @@ export function runSetupCommand(executable, args, { env, cwd, signal, report = (
         reject(setupError(`${error.setupMessage}${hint}`));
       } else resolve();
     }
-    child.once('error', error => finish(setupError(`${message} Could not run the local process (${error.code || 'launch error'}). Check security software and the configured Python 3.12 path, then retry.`)));
+    child.once('error', error => finish(setupError(`${message} Could not run the local process (${error.code || 'launch error'}). Check that the configured executable exists and is permitted to run. ${policyGuidance}`)));
     child.once('close', (code, exitSignal) => {
       const diagnostic = `${tails.stdout.text}\n${tails.stderr.text}`;
       const secureConnectionFailed = /HandshakeFailure|certificate verify failed|CERTIFICATE_VERIFY_FAILED|TLS handshake|SSL error/i.test(diagnostic);
-      const guidance = secureConnectionFailed
-        ? 'Could not establish a secure HTTPS connection to the package source. Check proxy or TLS inspection policy, trusted certificates, and access to files.pythonhosted.org, then retry.'
-        : 'Check disk space, network/proxy access and runtime prerequisites, then retry.';
+      const policyBlocked = /AppLocker|WDAC|blocked by (?:group policy|your (?:system )?administrator)|application control|access is denied|WinError (?:5|577|1260)\b/i.test(diagnostic) || [577, 1260, 0xc0000428].includes(code >>> 0);
+      const guidance = policyBlocked ? policyGuidance : secureConnectionFailed
+        ? 'Could not establish a secure HTTPS connection to the package source. Ask IT about trusted certificates, proxy or TLS inspection policy, and approved package mirrors. Do not disable TLS verification.'
+        : 'Check disk space, network/proxy access and runtime prerequisites. Configured Python must be Python 3.12 x64 with venv and bundled pip. If IT reports a policy block, stop retries and contact IT; do not bypass security controls.';
       finish(stoppingError || (code === 0 ? null : setupError(`${message} Process exited with ${exitSignal ? `signal ${exitSignal}` : `code ${code}`}. ${guidance}`)));
     });
   });
@@ -106,7 +108,13 @@ export function runSetupCommand(executable, args, { env, cwd, signal, report = (
 function pythonReady(paths) {
   const receipt = readJson(path.join(paths.venv, 'complete.json'));
   if (receipt?.version !== receiptVersion) return false;
-  try { const stat = statSync(paths.python); return stat.isFile() && stat.size === receipt.size && stat.mtimeMs === receipt.mtimeMs; } catch { return false; }
+  try {
+    const stat = statSync(paths.python);
+    if (!stat.isFile() || stat.size !== receipt.size || stat.mtimeMs !== receipt.mtimeMs) return false;
+    if (!paths.pythonBase) return true;
+    const base = statSync(paths.pythonBase);
+    return base.isFile() && receipt.base?.path === paths.pythonBase && base.size === receipt.base.size && base.mtimeMs === receipt.base.mtimeMs;
+  } catch { return false; }
 }
 
 function packageIndex(value, fallback, label) {
@@ -119,6 +127,7 @@ function packageIndex(value, fallback, label) {
 
 export function createLocalSetup({ env = process.env, activateLLM, run = runSetupCommand, provision = ensureAsset, warm = warmLocalVoice } = {}) {
   const paths = stackPaths(env);
+  const assets = ASSETS.filter(asset => asset.id !== 'uv' || !paths.pythonBase);
   const completionFile = path.join(paths.home, 'local-setup.json');
   const saved = readJson(completionFile);
   const pathInputs = Object.fromEntries(['LOCAL_LLM_PATH', 'MOONSHINE_MODEL', 'LLAMA_SERVER_BIN', 'CRISPASR_BIN', 'VAD_MODEL', 'PYTHON_BIN'].map(key => [key, env[key] || '']));
@@ -138,7 +147,7 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
   let voiceReady = false;
   let voiceMessage = 'Local voice pipeline is not ready. Start setup to initialize it.';
 
-  const inspect = () => [...ASSETS.map(asset => ({ id: asset.id, label: asset.label, sourceUrl: asset.repo ? `https://huggingface.co/${asset.repo}` : asset.sourceUrl.replace(/\/releases\/download\/([^/]+)\/.*$/, '/releases/tag/$1'), ready: assetReady(paths, asset) })),
+  const inspect = () => [...assets.map(asset => ({ id: asset.id, label: asset.label, sourceUrl: asset.repo ? `https://huggingface.co/${asset.repo}` : asset.sourceUrl.replace(/\/releases\/download\/([^/]+)\/.*$/, '/releases/tag/$1'), ready: assetReady(paths, asset) })),
     { id: 'kokoro', label: 'Kokoro Python environment', sourceUrl: 'https://pypi.org/project/kokoro/0.9.4/', ready: pythonReady(paths) }];
 
   const applyChatPaths = () => {
@@ -257,26 +266,33 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
       await activateChat({ report, signal });
       writeJson(completionFile, { version: 1, pathInputs, paths: Object.fromEntries(ASSETS.map(asset => [asset.id, paths[asset.id]])) });
 
-      for (const asset of ASSETS.filter(asset => !CHAT_ASSET_IDS.has(asset.id))) {
+      for (const asset of assets.filter(asset => !CHAT_ASSET_IDS.has(asset.id))) {
         await provision(paths, asset, { report, signal });
       }
       if (!pythonReady(paths)) {
         try {
           const command = (executable, args, stage, message) => run(executable, args, { env: commandEnv, redactEnv: env, cwd: paths.home, signal, report, stage, message });
-          const configuredPython = env.PYTHON_BIN && env.PYTHON_BIN !== 'python' ? path.resolve(env.SUPERVISOR_CONFIG_DIR || root, env.PYTHON_BIN) : null;
-          let python = pythonVersion;
-          if (configuredPython && configuredPython !== paths.python && existsSync(configuredPython)) {
-            await command(configuredPython, ['-I', '-c', 'import sys; assert sys.version_info[:2] == (3, 12), "Python 3.12 required"'], 'python', 'Checking your existing Python 3.12.');
-            python = configuredPython;
+          const torchIndex = packageIndex(env.LOCAL_TORCH_INDEX_URL, 'https://download.pytorch.org/whl/cpu', 'PyTorch package index');
+          const pythonIndex = packageIndex(env.LOCAL_PYPI_INDEX_URL, 'https://pypi.org/simple', 'Python package index');
+          const modelUrl = packageIndex(env.LOCAL_SPACY_MODEL_URL, englishModel, 'spaCy model URL');
+          if (paths.pythonBase) {
+            if (!existsSync(paths.pythonBase)) throw setupError('Configured PYTHON_BIN was not found. Set it to the full path of an IT-approved Python 3.12 x64 interpreter and restart the app. No downloaded Python or uv fallback will be attempted.');
+            await command(paths.pythonBase, ['-I', '-c', 'import sys, struct; assert sys.version_info[:2] == (3, 12) and struct.calcsize("P") == 8, "Python 3.12 x64 required"'], 'python', 'Checking configured Python 3.12 x64. It must be approved by your IT administrator.');
+            await command(paths.pythonBase, ['-I', '-m', 'venv', paths.venv], 'python', 'Creating Kokoro isolation with configured Python and bundled pip.');
           } else {
             await command(paths.uv, ['--no-config', 'python', 'install', pythonVersion], 'python', 'Installing private Python 3.12.11.');
+            if (!existsSync(paths.python)) await command(paths.uv, ['--no-config', 'venv', '--python', pythonVersion, '--managed-python', paths.venv], 'python', 'Creating the isolated Kokoro environment.');
           }
-          if (!existsSync(paths.python)) await command(paths.uv, ['--no-config', 'venv', '--python', python, ...(python === pythonVersion ? ['--managed-python'] : []), paths.venv], 'python', 'Creating the isolated Kokoro environment.');
-          await command(paths.uv, ['--no-config', 'pip', 'install', '--python', paths.python, '--index-url', packageIndex(env.LOCAL_TORCH_INDEX_URL, 'https://download.pytorch.org/whl/cpu', 'PyTorch package index'), 'torch==2.8.0'], 'kokoro', 'Installing CPU speech dependencies.');
-          await command(paths.uv, ['--no-config', 'pip', 'install', '--python', paths.python, '--index-url', packageIndex(env.LOCAL_PYPI_INDEX_URL, 'https://pypi.org/simple', 'Python package index'), '--only-binary', ':all:', '--no-binary', 'docopt', 'docopt==0.6.2', '-r', requirements, englishModel], 'kokoro', 'Installing Kokoro and its English language model.');
-          await command(paths.python, ['-I', '-c', 'import kokoro, soundfile, en_core_web_sm, torch; assert torch.__version__.startswith("2.8.0")'], 'kokoro', 'Checking installed speech dependencies.');
+          const installer = paths.pythonBase ? paths.python : paths.uv;
+          const installArgs = paths.pythonBase
+            ? ['-I', '-m', 'pip', '--isolated', '--disable-pip-version-check', '--no-input', '--cache-dir', commandEnv.PIP_CACHE_DIR, '--use-feature=truststore', 'install']
+            : ['--no-config', 'pip', 'install', '--python', paths.python];
+          await command(installer, [...installArgs, '--index-url', torchIndex, 'torch==2.8.0'], 'kokoro', 'Installing CPU speech dependencies.');
+          await command(installer, [...installArgs, '--index-url', pythonIndex, '--only-binary', ':all:', '--no-binary', 'docopt', 'docopt==0.6.2', '-r', requirements, modelUrl], 'kokoro', 'Installing Kokoro and its English language model.');
+          await command(paths.python, ['-I', '-c', 'import kokoro, soundfile, en_core_web_sm, torch; assert torch.__version__.startswith("2.8.0"); assert en_core_web_sm.__version__ == "3.8.0"'], 'kokoro', 'Checking installed speech dependencies.');
           const stat = statSync(paths.python);
-          writeJson(path.join(paths.venv, 'complete.json'), { version: receiptVersion, size: stat.size, mtimeMs: stat.mtimeMs });
+          const base = paths.pythonBase && statSync(paths.pythonBase);
+          writeJson(path.join(paths.venv, 'complete.json'), { version: receiptVersion, size: stat.size, mtimeMs: stat.mtimeMs, ...(base ? { base: { path: paths.pythonBase, size: base.size, mtimeMs: base.mtimeMs } } : {}) });
         } catch (error) {
           voiceReady = false;
           voiceMessage = error.setupMessage || error.message || 'Kokoro speech dependencies failed to install. Retry setup to complete speech.';
@@ -327,7 +343,7 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
           voiceMessage = 'Local voice is unavailable because the chat runtime stopped.';
           throw setupError(`${runtime} did not pass startup checks. Check available memory, Windows runtime requirements and security software, then retry. Completed models are retained.`);
         }
-        voiceMessage = `${runtime} did not pass startup checks. Check available memory, Windows runtime requirements and security software, then retry. If Kokoro dependencies are damaged, close the app and remove only runtimes/kokoro-venv from the cache before retrying. Completed models are retained.`;
+        voiceMessage = `${runtime} did not pass startup checks. Check available memory and Windows runtime requirements. ${policyGuidance} For damaged Kokoro dependencies, ask IT to review the isolated environment under the configured runtime directory. Completed models are retained.`;
         throw setupError(voiceMessage);
       }
     },

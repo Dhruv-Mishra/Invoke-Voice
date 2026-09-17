@@ -1,10 +1,17 @@
 import { execFile, spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { promisify } from 'node:util';
-import { existsSync, mkdirSync, writeFileSync, readFileSync, appendFileSync, realpathSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, writeFileSync, readFileSync, appendFileSync, realpathSync } from 'node:fs';
+import { devNull } from 'node:os';
 import path from 'node:path';
 
 const execute = promisify(execFile);
+
+export const DEFAULT_WORK_AREA = Object.freeze({ name: 'My Workspace', agent: 'agent', baseRef: 'HEAD', instructions: '', allowPublish: false });
+
+export function defaultWorkspacePath(dataDir) {
+  return path.join(realpathSync.native(dataDir), 'workspace');
+}
 
 export function copilotPrompt(task, area) {
   const publish = area.allowPublish ? 'You may commit, push, and create a draft PR.' : 'Do not commit, push, or create a PR.';
@@ -70,7 +77,39 @@ export function resolveVSCodeInstallation(env = process.env) {
 
 export function createVSCodeBridge(dataDir, env = process.env) {
   let handoff = Promise.resolve();
+  let workspaceReady;
   const git = (cwd, args) => execute('git', args, { cwd, windowsHide: true, timeout: 30000, maxBuffer: 1024 * 1024 });
+  async function ensureWorkspace(repoPath) {
+    if (repoPath !== defaultWorkspacePath(dataDir)) return;
+    if (realpathSync.native(repoPath) !== repoPath) throw new Error('Default workspace must stay inside the application data directory');
+    const gitDirectory = path.join(repoPath, '.git');
+    if (existsSync(gitDirectory) && (!lstatSync(gitDirectory).isDirectory() || realpathSync.native(gitDirectory) !== gitDirectory)) throw new Error('Default workspace Git directory must be a local directory');
+    if (!workspaceReady) {
+      const managedGit = args => {
+        const pending = execute('git', ['-c', `core.hooksPath=${devNull}`, '-c', 'core.fsmonitor=false', ...args], {
+          cwd: repoPath, env: Object.fromEntries(Object.entries(env).filter(([key]) => !key.toUpperCase().startsWith('GIT_'))),
+          windowsHide: true, timeout: 30000, maxBuffer: 1024 * 1024,
+        });
+        pending.child.stdin.end();
+        return pending;
+      };
+      workspaceReady = (async () => {
+        if (!existsSync(gitDirectory)) await managedGit(['init', '--initial-branch=main', '--template=']);
+        const { stdout: root } = await managedGit(['rev-parse', '--absolute-git-dir']);
+        if (path.relative(realpathSync.native(gitDirectory), realpathSync.native(root.trim()))) throw new Error('Default workspace must use its own Git repository');
+        const head = await managedGit(['rev-parse', '--verify', '--quiet', 'HEAD']).catch(error => {
+          if (error.code !== 1) throw error;
+          return null;
+        });
+        if (!head) {
+          const { stdout: tree } = await managedGit(['hash-object', '-t', 'tree', '-w', '--stdin']);
+          const { stdout: commit } = await managedGit(['-c', 'user.name=Voice Supervisor', '-c', 'user.email=workspace@localhost', '-c', 'commit.gpgsign=false', 'commit-tree', tree.trim(), '-m', 'Initialize local workspace']);
+          await managedGit(['update-ref', 'HEAD', commit.trim(), '0'.repeat(commit.trim().length)]);
+        }
+      })().catch(error => { workspaceReady = undefined; throw error; });
+    }
+    await workspaceReady;
+  }
   async function code(cwd, args) {
     if (process.platform !== 'win32') return execute(env.VSCODE_CLI || 'code', args, { cwd, timeout: 20000 });
     const { executable, cli } = resolveVSCodeInstallation(env);
@@ -121,10 +160,12 @@ export function createVSCodeBridge(dataDir, env = process.env) {
   }
   return {
     async verifyRepo(repoPath) {
+      await ensureWorkspace(repoPath);
       const { stdout } = await git(repoPath, ['rev-parse', '--show-prefix']);
       if (stdout.trim()) throw new Error('Register the Git repository root, not a subfolder');
     },
     async prepare(task, area) {
+      await ensureWorkspace(area.repoPath);
       const worktree = path.join(dataDir, 'worktrees', task.id);
       const branch = `voice/${task.id.slice(0, 8)}`;
       mkdirSync(path.dirname(worktree), { recursive: true });

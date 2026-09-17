@@ -56,7 +56,6 @@ const muteMicOpt = document.getElementById('mute-mic-opt');
 const pttModeOpt = document.getElementById('ptt-mode-opt');
 const quietModeBtn = document.getElementById('quiet-mode-btn');
 const quietBadge = document.getElementById('quiet-badge');
-const micCanvas = document.getElementById('mic-canvas');
 const micToggleBtn = document.getElementById('mic-toggle-btn');
 const micBtnLabel = document.getElementById('mic-btn-label');
 const pttBtn = document.getElementById('ptt-btn');
@@ -333,7 +332,7 @@ viewDialog.addEventListener('close', () => {
   if (!viewDialog.open && document.body.dataset.view !== 'home') activateView('home');
 });
 viewDialog.addEventListener('keydown', event => {
-  if (event.key !== 'Tab' || !viewDialog.matches(':modal')) return;
+  if (event.key !== 'Tab' || !viewDialog.matches(':modal') || event.target.closest('dialog') !== viewDialog) return;
   const controls = [...viewDialog.querySelectorAll('button, a[href], input, select, textarea, summary, [tabindex]')]
     .filter(element => !element.disabled && element.tabIndex >= 0 && element.getClientRects().length && !element.closest('[inert]'));
   const first = controls[0];
@@ -369,7 +368,6 @@ document.getElementById('dock-route-btn').addEventListener('click', () => {
   routeConfigBtn.click();
 });
 document.getElementById('calendar-date').textContent = new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric' }).format(new Date());
-window.addEventListener('voice-supervisor:theme', () => drawMicLevel(0));
 
 const conversationDialog = document.getElementById('conversation-dialog');
 function openConversation(text) {
@@ -600,29 +598,6 @@ window.addEventListener('pagehide', () => {
   setupRequest?.abort();
 });
 activateView('home');
-
-// Microphone Level Visualizer
-const canvasCtx = micCanvas.getContext('2d');
-function drawMicLevel(level) {
-  if (micCanvas.hidden) return;
-  const width = micCanvas.width;
-  const height = micCanvas.height;
-  canvasCtx.clearRect(0, 0, width, height);
-  canvasCtx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--cp-wave').trim();
-  for (let index = 0; index < 42; index++) {
-    const sideIndex = index % 21;
-    const envelope = Math.exp(-Math.pow((sideIndex - 10) / 6, 2));
-    const variation = 0.55 + 0.45 * Math.abs(Math.sin(index * 2.3 + level * 15));
-    const barHeight = 5 + envelope * (height * .85) * variation * (0.85 + Math.min(level * 4, .15));
-    const position = index < 21 ? 8 + index * 10 : width - 208 + sideIndex * 10;
-    canvasCtx.globalAlpha = .25 + envelope * .6;
-    canvasCtx.beginPath();
-    canvasCtx.roundRect(position, (height - barHeight) / 2, 5, barHeight, 3);
-    canvasCtx.fill();
-  }
-  canvasCtx.globalAlpha = 1;
-}
-drawMicLevel(0);
 
 // Base64 helper for PCM16 audio chunks
 function arrayBufferToBase64(buffer) {
@@ -987,7 +962,6 @@ async function startVoiceSession() {
       if (sessionToken !== currentSessionToken) return;
       const msg = event.data;
       if (msg.type === 'level') {
-        drawMicLevel(isMuted ? 0 : msg.peak);
         if (msg.peak > USER_SPEAKING_THRESHOLD && !isMuted) {
           lastUserSpeechTime = Date.now();
         }
@@ -1168,7 +1142,6 @@ function stopVoiceSession() {
   }
 
   clearPlayback();
-  drawMicLevel(0);
 
   micBtnLabel.textContent = 'Connect Mic';
   micToggleBtn.className = 'btn btn-accent';
@@ -1185,7 +1158,6 @@ muteMicOpt.addEventListener('change', () => {
   }
   for (const track of mediaStream?.getAudioTracks() || []) track.enabled = !isMuted;
   workletNode?.port.postMessage({ type: 'reset' });
-  drawMicLevel(0);
 });
 
 pttModeOpt.addEventListener('change', () => {

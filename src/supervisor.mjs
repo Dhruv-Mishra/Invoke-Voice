@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, renameSync, realpathSync } from 'node:fs';
 import path from 'node:path';
+import { DEFAULT_WORK_AREA, defaultWorkspacePath } from './vscode-bridge.mjs';
 
 const definition = (name, description, properties, required = []) => ({
   type: 'function', function: { name, description, parameters: { type: 'object', properties, ...(required.length ? { required } : {}), additionalProperties: false } },
@@ -67,9 +68,19 @@ export class Supervisor extends EventEmitter {
     };
     if (!BACKENDS.includes(this.state.settings.defaultBackend)) this.state.settings.defaultBackend = 'copilot';
     if (!CONTEXTS.includes(this.state.settings.copilotContext)) this.state.settings.copilotContext = 'default';
+    this.save();
   }
 
   save() {
+    if (!this.state.areas.length) {
+      const repoPath = defaultWorkspacePath(this.dataDir);
+      mkdirSync(repoPath, { recursive: true });
+      if (realpathSync.native(repoPath) !== repoPath) throw new Error('Default workspace must stay inside the application data directory');
+      this.state.areas.push({ id: randomUUID(), ...DEFAULT_WORK_AREA, aliases: [], repoPath });
+    }
+    if (!this.state.areas.some(area => area.id === this.state.settings.defaultAreaId)) {
+      this.state.settings.defaultAreaId = this.state.areas[0]?.id || null;
+    }
     writeFileSync(`${this.file}.tmp`, JSON.stringify(this.state, null, 2));
     renameSync(`${this.file}.tmp`, this.file);
     this.emit('change', this.snapshot());
@@ -83,8 +94,8 @@ export class Supervisor extends EventEmitter {
     const name = requiredText(input.name, 'work area name', 100);
     const repoPath = realpathSync(requiredText(input.repoPath, 'repo path', 2000));
     await this.bridge.verifyRepo(repoPath);
-    const agent = requiredText(input.agent || 'agent', 'agent', 100);
-    const baseRef = requiredText(input.baseRef || 'HEAD', 'base ref', 200);
+    const agent = requiredText(input.agent || DEFAULT_WORK_AREA.agent, 'agent', 100);
+    const baseRef = requiredText(input.baseRef || DEFAULT_WORK_AREA.baseRef, 'base ref', 200);
     if (baseRef.startsWith('-') || !/^[\w ./-]+$/.test(agent)) throw new Error('Invalid ref or agent mode');
     const aliases = Array.isArray(input.aliases) ? input.aliases.map(alias => requiredText(alias, 'alias', 100)).slice(0, 20) : [];
     const existing = input.id && this.state.areas.find(area => area.id === input.id);
@@ -135,7 +146,6 @@ export class Supervisor extends EventEmitter {
     if (!area) throw new Error('Unknown work area');
     if (this.state.tasks.some(task => task.areaId === id)) throw new Error('Delete this area\'s tasks first');
     this.state.areas = this.state.areas.filter(item => item.id !== id);
-    if (this.state.settings.defaultAreaId === id) this.state.settings.defaultAreaId = null;
     this.save();
     return { deleted: 'area' };
   }
@@ -251,7 +261,7 @@ export class Supervisor extends EventEmitter {
     const backend = args.backend || this.state.settings.defaultBackend;
     if (!BACKENDS.includes(backend)) throw new Error('Invalid coding backend');
     const model = requiredText(args.model || this.state.settings.copilotModel, 'model', 100);
-    const agent = requiredText(args.agent || area.agent || 'agent', 'agent', 100);
+    const agent = requiredText(args.agent || area.agent || DEFAULT_WORK_AREA.agent, 'agent', 100);
     if (!/^[\w ./-]+$/.test(agent)) throw new Error('Invalid agent');
     const selectedContext = args.context || this.state.settings.copilotContext;
     if (!CONTEXTS.includes(selectedContext)) throw new Error('Invalid context tier');

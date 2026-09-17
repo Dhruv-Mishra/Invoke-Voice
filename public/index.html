@@ -345,7 +345,6 @@
     .toggle-track::after { content: ""; display: block; width: 10px; height: 10px; border-radius: 50%; background: var(--cp-text-muted); transition: transform 140ms ease, background 140ms ease; }
     .toggle-control input:checked + .toggle-track { border-color: var(--cp-accent); background: var(--cp-accent-soft); }
     .toggle-control input:checked + .toggle-track::after { transform: translateX(12px); background: var(--cp-accent); }
-    canvas#mic-canvas { width: 64px; height: 20px; border: 1px solid var(--cp-border); border-radius: 6px; background: var(--cp-surface-soft); vertical-align: middle; flex-shrink: 0; }
 
     /* Tool Lab */
     .tool-lab { min-height: 0; flex: 1; display: grid; grid-template-columns: 280px minmax(0, 1fr); overflow: hidden; background: var(--cp-bg); }
@@ -604,6 +603,10 @@
         <h2 class="settings-section-title"><i data-lucide="sparkles" aria-hidden="true"></i>Appearance</h2>
         <div class="setting-row"><span id="avatar-label">Assistant avatar</span><div class="appearance-options" role="group" aria-labelledby="avatar-label"></div></div>
         <div class="setting-row"><label for="motion-preference">Motion</label><select id="motion-preference"><option value="system">Use device setting</option><option value="reduce">Reduced motion</option><option value="full">Full motion</option></select></div>
+        <label class="form-row-checkbox toggle-control setting-row" for="transparency-preference">
+          <input type="checkbox" id="transparency-preference" checked>
+          <span class="toggle-track" aria-hidden="true"></span><span>Transparency</span>
+        </label>
         <label class="form-row-checkbox toggle-control setting-row" for="theme-sounds">
           <input type="checkbox" id="theme-sounds" data-theme-sounds>
           <span class="toggle-track" aria-hidden="true"></span><span>Interaction sounds</span>
@@ -745,14 +748,19 @@
   </div>
   </dialog>
   </div>
+  </div>
   <div class="caption-region">
-    <div id="closed-caption" class="closed-caption" hidden>
-      <span id="caption-speaker" class="caption-speaker"></span>
-      <p id="caption-text" tabindex="0" aria-label="Current caption"></p>
+    <div id="user-closed-caption" class="closed-caption" data-role="user" hidden>
+      <span class="caption-speaker sr-only">You</span>
+      <p id="user-caption-text" class="caption-text" tabindex="0" aria-label="Your caption"><span class="caption-content"></span></p>
+      <button type="button" class="btn btn-icon" aria-label="Dismiss your caption" title="Dismiss your caption"><i data-lucide="x"></i></button>
+    </div>
+    <div id="closed-caption" class="closed-caption" data-role="assistant" hidden>
+      <span id="caption-speaker" class="caption-speaker sr-only">Supervisor</span>
+      <p id="caption-text" class="caption-text" tabindex="0" aria-label="Supervisor caption"><span class="caption-content"></span></p>
       <button type="button" id="dismiss-caption-btn" class="btn btn-icon" aria-label="Dismiss caption" title="Dismiss caption"><i data-lucide="x"></i></button>
     </div>
     <span id="caption-announcement" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></span>
-  </div>
   </div>
 
   <dialog id="conversation-dialog" aria-labelledby="conversation-title">
@@ -943,7 +951,6 @@
 
   <div class="voice-strip" role="region" aria-label="Voice controls">
     <button type="button" class="dock-utility" id="voice-options-btn" aria-label="Voice options" title="Voice options" aria-expanded="false" aria-controls="voice-options"><i data-lucide="sliders-horizontal"></i></button>
-    <canvas id="mic-canvas" width="600" height="96" aria-label="Microphone volume level"></canvas>
     <button class="btn btn-accent" id="mic-toggle-btn" type="button" aria-label="Connect or Disconnect Microphone" title="Connect microphone">
       <i data-lucide="mic"></i><span id="mic-btn-label">Connect Mic</span>
     </button>

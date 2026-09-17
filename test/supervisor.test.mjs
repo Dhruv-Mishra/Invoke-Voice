@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Supervisor, tools } from '../src/supervisor.mjs';
@@ -29,6 +29,96 @@ test('deletes stale inactive work while protecting active work', async () => {
     assert.equal(supervisor.status('recent-task').stale, false);
     assert.equal(supervisor.status('recent-task').deletable, false);
     await assert.rejects(supervisor.callTool('delete_work', { taskId: 'recent-task' }), /Only finished or stale tasks/);
+  } finally { rmSync(dataDir, { recursive: true, force: true }); }
+});
+
+test('persists automatic work area selection and preserves user choices', async () => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-supervisor-default-'));
+  const bridge = { verifyRepo: async () => {} };
+  try {
+    const supervisor = new Supervisor({ dataDir, bridge });
+    const managed = supervisor.resolveArea();
+    const first = await supervisor.registerArea({ name: 'First', repoPath: dataDir });
+    const second = await supervisor.registerArea({ name: 'Second', repoPath: dataDir });
+    assert.equal(supervisor.resolveArea().id, managed.id);
+    supervisor.deleteArea(managed.id);
+    assert.equal(supervisor.resolveArea().id, first.id);
+    assert.equal(JSON.parse(readFileSync(supervisor.file, 'utf8')).settings.defaultAreaId, first.id);
+    supervisor.updateSettings({ defaultAreaId: second.id, copilotModel: 'custom-model', defaultBackend: 'agency' });
+    const restored = new Supervisor({ dataDir, bridge });
+    assert.equal(restored.resolveArea().id, second.id);
+    assert.equal(restored.snapshot().settings.copilotModel, 'custom-model');
+    assert.equal(restored.snapshot().settings.defaultBackend, 'agency');
+    assert.throws(() => restored.resolveArea('missing'), /Choose a work area/);
+    assert.throws(() => restored.updateSettings({ defaultAreaId: 'missing' }), /Unknown default work area/);
+    restored.deleteArea(second.id);
+    assert.equal(restored.resolveArea().id, first.id);
+    assert.equal(JSON.parse(readFileSync(restored.file, 'utf8')).settings.defaultAreaId, first.id);
+    restored.deleteArea(first.id);
+    const replacement = restored.resolveArea();
+    assert.equal(replacement.repoPath, managed.repoPath);
+    assert.equal(replacement.allowPublish, false);
+    assert.equal(restored.snapshot().areas.length, 1);
+    assert.equal(new Supervisor({ dataDir, bridge }).resolveArea().id, replacement.id);
+  } finally { rmSync(dataDir, { recursive: true, force: true }); }
+});
+
+test('fresh installs persist an editable private workspace and omitted work options resolve', async () => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-supervisor-bootstrap-'));
+  let invocation;
+  let dispatched;
+  const bridge = {
+    verifyRepo: async () => {},
+    prepare: async (task, area) => { dispatched = { task, area }; return { worktree: area.repoPath, branch: 'voice/test' }; },
+    dispatch: async () => ({ result: 'Test only' }),
+    invokeVSCode: async request => { invocation = request; },
+  };
+  try {
+    const supervisor = new Supervisor({ dataDir, bridge, env: {} });
+    const area = supervisor.resolveArea();
+    assert.equal(area.name, 'My Workspace');
+    assert.equal(area.repoPath, path.join(realpathSync.native(dataDir), 'workspace'));
+    assert.notEqual(area.repoPath, process.cwd());
+    assert.ok(existsSync(area.repoPath));
+    assert.equal(existsSync(path.join(area.repoPath, '.git')), false);
+    assert.deepEqual({ agent: area.agent, baseRef: area.baseRef, instructions: area.instructions, allowPublish: area.allowPublish }, { agent: 'agent', baseRef: 'HEAD', instructions: '', allowPublish: false });
+    assert.equal(new Supervisor({ dataDir, bridge }).resolveArea().id, area.id);
+    assert.equal((await supervisor.callTool('list_work')).defaultAreaId, area.id);
+    await supervisor.callTool('invoke_vscode', { prompt: 'Test note' }, { requestId: 'default-note' });
+    assert.equal(invocation.directory, area.repoPath);
+    const receipt = await supervisor.callTool('start_work', { objective: 'Test dispatch' }, { requestId: 'default-work' });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(supervisor.status(receipt.taskId).state, 'result_ready');
+    assert.equal(dispatched.area.id, area.id);
+    assert.equal(dispatched.area.allowPublish, false);
+    assert.equal(dispatched.task.backend, 'copilot');
+    assert.equal(dispatched.task.context, 'default');
+    assert.equal(dispatched.task.agent, 'agent');
+    assert.throws(() => supervisor.deleteArea(area.id), /Delete this area's tasks first/);
+    await supervisor.registerArea({ ...area, name: 'Personal workspace', agent: 'builder', baseRef: 'main', instructions: 'Keep changes local.' });
+    supervisor.updateSettings({ defaultAreaId: null, copilotModel: 'chosen-model', copilotContext: 'long_context' });
+    const restored = new Supervisor({ dataDir, bridge });
+    assert.equal(restored.resolveArea().name, 'Personal workspace');
+    assert.equal(restored.resolveArea().agent, 'builder');
+    assert.equal(restored.resolveArea().baseRef, 'main');
+    assert.equal(restored.resolveArea().instructions, 'Keep changes local.');
+    assert.equal(restored.snapshot().settings.copilotModel, 'chosen-model');
+    assert.equal(restored.snapshot().settings.copilotContext, 'long_context');
+  } finally { rmSync(dataDir, { recursive: true, force: true }); }
+});
+
+test('repairs missing and stale defaults in existing saved work areas', () => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-supervisor-upgrade-'));
+  const area = { id: 'existing', name: 'Existing', aliases: [], repoPath: dataDir, agent: 'agent', baseRef: 'HEAD', instructions: '', allowPublish: false };
+  try {
+    for (const settings of [{}, { defaultAreaId: null }, { defaultAreaId: 'deleted' }]) {
+      writeFileSync(path.join(dataDir, 'state.json'), JSON.stringify({ areas: [area], tasks: [], settings }));
+      const supervisor = new Supervisor({ dataDir, bridge: {} });
+      assert.equal(supervisor.resolveArea().id, area.id);
+      assert.deepEqual(supervisor.snapshot().areas, [area]);
+      assert.equal(existsSync(path.join(dataDir, 'workspace')), false);
+      assert.equal(JSON.parse(readFileSync(supervisor.file, 'utf8')).settings.defaultAreaId, area.id);
+    }
   } finally { rmSync(dataDir, { recursive: true, force: true }); }
 });
 

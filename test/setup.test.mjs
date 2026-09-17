@@ -11,6 +11,7 @@ import { createSetup } from '../src/setup.mjs';
 import { ASSETS, assetReady, ensureAsset, stackPaths, trustedDownloadUrl, withSetupLock } from '../scripts/models.mjs';
 import { createLocalSetup, isolatedEnvironment, runSetupCommand } from '../src/local-setup.mjs';
 import { startSupervisor } from '../src/server.mjs';
+import { createRuntimeConfig } from '../src/runtime-config.mjs';
 
 function fixture(context) {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'voice-setup-'));
@@ -26,12 +27,14 @@ function localFixture(context, options = {}) {
   const { env: envOverrides = {}, ...setupOptions } = options;
   const { directory } = fixture(context);
   const commands = [];
+  const provisioned = [];
   const children = [];
   const env = { SUPERVISOR_CACHE_DIR: directory, ...envOverrides };
   const paths = stackPaths(env);
   const setup = createLocalSetup({
     env,
     provision: async (paths, asset) => {
+      provisioned.push(asset.id);
       if (asset.id !== 'uv') paths[asset.id] = path.join(directory, asset.id);
       mkdirSync(path.dirname(paths[asset.id]), { recursive: true });
       writeFileSync(paths[asset.id], 'fixture');
@@ -52,7 +55,7 @@ function localFixture(context, options = {}) {
     ...setupOptions,
   });
   context.after(() => setup.close());
-  return { setup, paths, commands, children, env };
+  return { setup, paths, commands, provisioned, children, env };
 }
 
 const windowsSetup = { skip: process.platform !== 'win32' || process.arch !== 'x64' };
@@ -70,6 +73,108 @@ test('local setup uses the private pip recipe with only pinned docopt allowed fr
     assert.equal(command.options.cwd, paths.home);
     assert.equal(command.options.env.PYTHONNOUSERSITE, '1');
   }
+});
+
+test('configured Python uses bundled venv and pip without downloading or invoking uv', windowsSetup, async context => {
+  const { directory } = fixture(context);
+  const pythonBase = path.join(directory, 'approved Python', 'python.exe');
+  mkdirSync(path.dirname(pythonBase), { recursive: true });
+  writeFileSync(pythonBase, 'approved interpreter fixture');
+  const { setup, paths, commands, provisioned, children } = localFixture(context, { env: { PYTHON_BIN: pythonBase } });
+  assert.equal(setup.snapshot().components.some(component => component.id === 'uv'), false);
+  setup.start({ consent: true });
+  assert.equal((await setup.settled()).status, 'ready');
+  assert.equal(provisioned.includes('uv'), false);
+  assert.equal(commands.some(command => command.executable === paths.uv), false);
+  assert.equal(commands[0].executable, pythonBase);
+  assert.match(commands[0].args.at(-1), /sys.version_info.*struct.calcsize/);
+  assert.deepEqual(commands[1].args, ['-I', '-m', 'venv', paths.venv]);
+  assert.equal(commands[1].executable, pythonBase);
+  assert.notEqual(paths.venv, path.join(paths.runtimeDir, 'kokoro-venv'));
+  const installs = commands.filter(command => command.args.includes('pip'));
+  assert.equal(installs.length, 2);
+  for (const command of installs) {
+    assert.equal(command.executable, paths.python);
+    assert.deepEqual(command.args.slice(0, 3), ['-I', '-m', 'pip']);
+    for (const flag of ['--isolated', '--no-input', '--use-feature=truststore']) assert.ok(command.args.includes(flag));
+    assert.equal(command.options.env.PIP_CONFIG_FILE, 'NUL');
+  }
+  assert.ok(installs[0].args.includes('torch==2.8.0'));
+  assert.deepEqual(installs[1].args.slice(installs[1].args.indexOf('--only-binary'), -3), ['--only-binary', ':all:', '--no-binary', 'docopt', 'docopt==0.6.2']);
+  assert.equal(readFileSync(pythonBase, 'utf8'), 'approved interpreter fixture');
+  const receipt = JSON.parse(readFileSync(path.join(paths.venv, 'complete.json'), 'utf8'));
+  assert.equal(receipt.base.path, pythonBase);
+  const installedCommands = commands.length;
+  children[0].exitCode = 1;
+  children[0].emit('exit', 1, null);
+  setup.start({ consent: true });
+  assert.equal((await setup.settled()).status, 'ready');
+  assert.equal(commands.length, installedCommands, 'receipt avoids reinstall after PYTHON_BIN becomes the runtime path');
+  writeFileSync(pythonBase, 'updated approved interpreter fixture');
+  assert.equal(setup.snapshot().components.find(component => component.id === 'kokoro').ready, false);
+});
+
+test('missing or unusable configured Python never falls back and leaves local chat usable', windowsSetup, async context => {
+  for (const failure of ['missing', 'policy blocked', 'wrong version', 'missing venv']) {
+    await context.test(failure, async context => {
+      const { directory } = fixture(context);
+      const pythonBase = path.join(directory, 'python.exe');
+      if (failure !== 'missing') writeFileSync(pythonBase, 'approved interpreter fixture');
+      const attempted = [];
+      const { setup, paths, provisioned, children } = localFixture(context, {
+        env: { PYTHON_BIN: pythonBase },
+        run: async (executable, args) => {
+          attempted.push({ executable, args });
+          if (failure !== 'missing venv' || args.includes('venv')) throw new Error(failure);
+        },
+      });
+      setup.start({ consent: true });
+      const failed = await setup.settled();
+      assert.equal(failed.status, 'error');
+      assert.equal(failed.capabilities.chat.ready, true);
+      assert.equal(failed.capabilities.voice.ready, false);
+      assert.equal(children[0].killed, false);
+      assert.equal(provisioned.includes('uv'), false);
+      assert.ok(attempted.every(command => command.executable === pythonBase));
+      assert.equal(existsSync(path.join(paths.venv, 'complete.json')), false);
+      if (failure === 'missing') {
+        assert.equal(attempted.length, 0);
+        assert.match(failed.error, /PYTHON_BIN.*not found.*No downloaded Python or uv fallback/);
+      }
+    });
+  }
+});
+
+test('configured Python repairs an incomplete venv on retry without touching a downloaded runtime', windowsSetup, async context => {
+  const { directory } = fixture(context);
+  const pythonBase = path.join(directory, 'python.exe');
+  writeFileSync(pythonBase, 'approved interpreter fixture');
+  const attempted = [];
+  let creations = 0;
+  const { setup, paths, provisioned, children } = localFixture(context, {
+    env: { PYTHON_BIN: pythonBase },
+    run: async (executable, args) => {
+      attempted.push(executable);
+      if (args.includes('venv')) {
+        mkdirSync(path.dirname(paths.python), { recursive: true });
+        writeFileSync(paths.python, 'fixture Python');
+        if (++creations === 1) throw new Error('ensurepip interrupted');
+      }
+    },
+  });
+  const downloadedPython = path.join(paths.runtimeDir, 'kokoro-venv', 'Scripts', 'python.exe');
+  mkdirSync(path.dirname(downloadedPython), { recursive: true });
+  writeFileSync(downloadedPython, 'downloaded interpreter fixture');
+  setup.start({ consent: true });
+  assert.equal((await setup.settled()).capabilities.chat.ready, true);
+  assert.equal(existsSync(path.join(paths.venv, 'complete.json')), false);
+  setup.start({ consent: true });
+  assert.equal((await setup.settled()).status, 'ready');
+  assert.equal(creations, 2);
+  assert.equal(children.length, 1);
+  assert.equal(provisioned.includes('uv'), false);
+  assert.ok(attempted.every(executable => [pythonBase, paths.python].includes(executable)));
+  assert.equal(readFileSync(downloadedPython, 'utf8'), 'downloaded interpreter fixture');
 });
 
 test('llama exit during speech warmup fails readiness and permits a cached retry', windowsSetup, async context => {
@@ -313,6 +418,23 @@ test('setup launch failures and unwritable logs remain actionable without leakin
     assert.doesNotMatch(error.setupMessage, /raw-private-output/);
     return true;
   });
+});
+
+test('setup reports policy and TLS failures without implying a bypass or exposing raw diagnostics', async context => {
+  const { directory } = fixture(context);
+  for (const diagnostic of ['This program is blocked by group policy', 'CERTIFICATE_VERIFY_FAILED']) {
+    await assert.rejects(runSetupCommand(process.execPath, ['-e', `process.stderr.write(${JSON.stringify(diagnostic)}); process.exitCode = 1;`], {
+      cwd: directory, stage: 'python', message: 'Preparing Kokoro.',
+    }), error => {
+      assert.match(error.setupMessage, /logs\/local-setup\.log/);
+      assert.doesNotMatch(error.setupMessage, new RegExp(diagnostic));
+      assert.match(error.setupMessage, diagnostic.includes('policy') ? /stop retrying.*IT-approved.*Do not bypass Defender, AppLocker or WDAC/ : /trusted certificates.*approved package mirrors.*Do not disable TLS/);
+      return true;
+    });
+    const output = readFileSync(path.join(directory, 'logs', 'local-setup.log'), 'utf8');
+    assert.match(output, /Executable:/);
+    assert.ok(output.includes(diagnostic));
+  }
 });
 
 test('setup requires exact consent and serializes asynchronous starts', async () => {
@@ -616,16 +738,59 @@ test('setup API is same-origin, consent-gated and returns 202 without waiting fo
   } finally { release(); await app.close(); }
 });
 
+test('setup configuration persists approved Python and mirrors without replacing the running interpreter', context => {
+  const { directory } = fixture(context);
+  const basePython = path.join(directory, 'Python312', 'python.exe');
+  const nextPython = path.join(directory, 'approved Python', 'python.exe');
+  const env = { PYTHON_BIN: basePython };
+  const config = createRuntimeConfig({ dataDir: directory, env });
+  env.PYTHON_BIN = path.join(directory, 'active-venv', 'python.exe');
+  assert.equal(config.snapshot().fields.find(field => field.key === 'PYTHON_BIN').value, basePython);
+  const updated = config.update({ values: { PYTHON_BIN: nextPython, LOCAL_SPACY_MODEL_URL: 'https://packages.example.test/en_core_web_sm-3.8.0-py3-none-any.whl' } });
+  const pythonField = updated.fields.find(field => field.key === 'PYTHON_BIN');
+  assert.equal(pythonField.value, nextPython);
+  assert.equal(pythonField.pendingRestart, true);
+  assert.equal(env.PYTHON_BIN, path.join(directory, 'active-venv', 'python.exe'));
+  assert.equal(env.LOCAL_SPACY_MODEL_URL, 'https://packages.example.test/en_core_web_sm-3.8.0-py3-none-any.whl');
+  assert.throws(() => config.update({ values: { PYTHON_BIN: 'relative/python.exe' } }), /absolute executable path/);
+  assert.throws(() => config.update({ values: { LOCAL_SPACY_MODEL_URL: 'http://untrusted.example/model.whl' } }), /HTTPS/);
+  const restartedEnv = {};
+  const restarted = createRuntimeConfig({ dataDir: directory, env: restartedEnv });
+  assert.equal(restartedEnv.PYTHON_BIN, nextPython);
+  assert.equal(restarted.snapshot().fields.find(field => field.key === 'PYTHON_BIN').pendingRestart, false);
+  restarted.update({ values: { PYTHON_BIN: '', LOCAL_SPACY_MODEL_URL: '' } });
+  const managedEnv = {};
+  createRuntimeConfig({ dataDir: directory, env: managedEnv });
+  assert.equal(managedEnv.PYTHON_BIN, '');
+  for (const python of ['python', path.join('.venv', 'Scripts', 'python.exe')]) {
+    const dataDir = path.join(directory, python === 'python' ? 'managed-config' : 'legacy-config');
+    const legacyEnv = { PYTHON_BIN: python, SUPERVISOR_CONFIG_DIR: directory };
+    const legacy = createRuntimeConfig({ dataDir, env: legacyEnv });
+    const field = legacy.snapshot().fields.find(field => field.key === 'PYTHON_BIN');
+    assert.equal(field.value, stackPaths(legacyEnv).pythonBase || '');
+    const saved = legacy.update({ values: { PYTHON_BIN: field.value } });
+    assert.equal(saved.fields.find(field => field.key === 'PYTHON_BIN').pendingRestart, false);
+  }
+});
+
 test('local setup accepts explicit HTTPS package mirrors and rejects insecure indexes', windowsSetup, async context => {
-  const mirrored = localFixture(context, { env: {
-    LOCAL_PYPI_INDEX_URL: 'https://packages.contoso.test/pypi/',
-    LOCAL_TORCH_INDEX_URL: 'https://packages.contoso.test/torch/',
-  } });
-  mirrored.setup.start({ consent: true });
-  assert.equal((await mirrored.setup.settled()).status, 'ready');
-  const installs = mirrored.commands.filter(command => command.args[1] === 'pip' && command.args[2] === 'install');
-  assert.equal(installs[0].args[6], 'https://packages.contoso.test/torch');
-  assert.equal(installs[1].args[6], 'https://packages.contoso.test/pypi');
+  const { directory } = fixture(context);
+  const pythonBase = path.join(directory, 'python.exe');
+  writeFileSync(pythonBase, 'approved interpreter fixture');
+  for (const python of [undefined, pythonBase]) {
+    const mirrored = localFixture(context, { env: {
+      PYTHON_BIN: python,
+      LOCAL_PYPI_INDEX_URL: 'https://packages.contoso.test/pypi/',
+      LOCAL_TORCH_INDEX_URL: 'https://packages.contoso.test/torch/',
+      LOCAL_SPACY_MODEL_URL: 'https://packages.contoso.test/en_core_web_sm-3.8.0-py3-none-any.whl',
+    } });
+    mirrored.setup.start({ consent: true });
+    assert.equal((await mirrored.setup.settled()).status, 'ready');
+    const installs = mirrored.commands.filter(command => command.args.includes('pip') && command.args.includes('install'));
+    assert.equal(installs[0].args[installs[0].args.indexOf('--index-url') + 1], 'https://packages.contoso.test/torch');
+    assert.equal(installs[1].args[installs[1].args.indexOf('--index-url') + 1], 'https://packages.contoso.test/pypi');
+    assert.equal(installs[1].args.at(-1), 'https://packages.contoso.test/en_core_web_sm-3.8.0-py3-none-any.whl');
+  }
 
   const insecure = localFixture(context, { env: { LOCAL_PYPI_INDEX_URL: 'http://packages.example.test/simple' } });
   insecure.setup.start({ consent: true });
@@ -633,6 +798,13 @@ test('local setup accepts explicit HTTPS package mirrors and rejects insecure in
   assert.equal(failed.capabilities.chat.ready, true);
   assert.equal(failed.capabilities.voice.ready, false);
   assert.match(failed.error, /Python package index must use HTTPS/);
+  assert.equal(insecure.commands.length, 0);
+  for (const modelUrl of ['http://packages.contoso.test/model.whl', 'https://user:password@packages.contoso.test/model.whl', 'file:///C:/model.whl']) {
+    const invalid = localFixture(context, { env: { LOCAL_SPACY_MODEL_URL: modelUrl } });
+    invalid.setup.start({ consent: true });
+    assert.match((await invalid.setup.settled()).error, /spaCy model URL must use HTTPS/);
+    assert.equal(invalid.commands.length, 0);
+  }
 });
 
 test('cached chat resumes after restart when Kokoro installation was incomplete', windowsSetup, async context => {

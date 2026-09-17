@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const { app, BrowserWindow, session, dialog, shell } = require('electron');
 const { serverLaunch, allowedExternal } = require('./scripts/desktop-launch.cjs');
 
-app.disableHardwareAcceleration();
+if (process.env.VOICE_SUPERVISOR_DISABLE_GPU === '1') app.disableHardwareAcceleration();
 
 let mainWindow = null;
 let serverOrigin = null;

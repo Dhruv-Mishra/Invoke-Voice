@@ -10,13 +10,15 @@ Open the **Voice Work Supervisor Setup** executable from a trusted build. The on
 
 Local AI is optional. On first start, choose local setup, configure a provider, or decide later. Local setup opens Settings and still requires explicit download consent; nothing downloads just by opening the app. Setup installs and configures Ling/llama.cpp chat first, followed by Moonshine, Silero VAD, CrispASR, and an isolated Kokoro Python environment. If speech setup fails, local chat remains available and voice can be retried separately. Keep the app open until setup finishes. Allow several GB of downloads and at least 12 GB of free disk space; 16 GB RAM is recommended.
 
+New installations get an editable **My Workspace** under the application data directory, with publishing disabled. Existing work areas and valid defaults are preserved. Change the work area, coding backend, model and context under Settings. GPU rendering is enabled by default; `VOICE_SUPERVISOR_DISABLE_GPU=1` is an opt-in troubleshooting setting requiring a desktop restart. **Settings > Appearance > Transparency effects** persists locally and replaces translucent surfaces with opaque ones; Motion remains separately configurable.
+
 Files are kept under `%LOCALAPPDATA%\VoiceSupervisor`: `models`, `runtimes`, `huggingface`, `pip-cache`, and `uv-cache`. Existing configured `LocalVoiceStack` models are verified in place, not copied. Completed, verified files are reused on retry and future launches, including offline. Unfinished downloads are never reported ready. First verification of previously unrecorded models needs source metadata online. Local setup does not edit your `.env` or system Python/PATH.
 
 After successful setup, local runtimes start automatically on desktop launch without downloading anything. Setup changes take effect in the running app. Each desktop instance uses private loopback ports, so a browser development server can remain open. Closing the app stops its managed runtimes. Microphone permission is still required, and setup startup checks do not prove microphone/speaker hardware works.
 
 Configure provider keys, models, endpoints, defaults and local performance under **Settings > Config**. Values are stored in `%LOCALAPPDATA%\VoiceSupervisor\config.json`, excluded from the installer and never returned to the browser UI. The file contains secrets in plain text under the current Windows user profile, so do not share it or the app-data folder. Logs are in `%LOCALAPPDATA%\VoiceSupervisor\logs\desktop.log` and are replaced on launch. Cached models and user data are retained on uninstall. Remove the cache folder yourself only when the app is closed and you no longer need that data.
 
-Installation failures keep a bounded, sanitized diagnostic tail in `logs/local-setup.log` inside the cache directory. Completed downloads are retained for retry. The Kokoro `https://pypi.org/project/kokoro/0.9.4/` link is the genuine human-readable PyPI release page; installation uses the package index and artifact hosts, normally `pypi.org/simple`, `files.pythonhosted.org`, and `download.pytorch.org`. If policy blocks those public services, set **Python package index** and **PyTorch package index** under **Settings > Config > Local setup network** to IT-approved HTTPS mirrors. Do not disable TLS verification or bypass organizational policy.
+Installation failures keep the stage, executable path and a bounded, sanitized diagnostic tail in `logs/local-setup.log` inside the cache directory. Completed downloads are retained for retry. The [Kokoro 0.9.4 release page](https://pypi.org/project/kokoro/0.9.4/) identifies the Python package, not the Python or uv executable. Installation normally contacts `pypi.org/simple`, `files.pythonhosted.org`, `download.pytorch.org`, and GitHub for the English spaCy model. If policy blocks those services, use IT-approved sources as described under [Approved Python And Policy Blocks](#approved-python-and-policy-blocks). Do not disable TLS verification or bypass organizational policy.
 
 Builds are unsigned unless your distributor adds signing. Windows SmartScreen or organizational policy may warn or block them. Only run a build you trust; do not bypass organizational security policy.
 
@@ -81,11 +83,47 @@ For individual model/runtime downloads instead of full setup:
 npm run models -- all
 npm run models -- runtimes
 ```
-`all` installs Ling, Moonshine Q4_K, its tokenizer and Silero VAD. `runtimes` installs pinned Windows x64 CPU llama.cpp, CrispASR and uv. These commands alone do not install or validate the complete voice stack. `ling` and `moonshine` select a single model group.
+`all` installs Ling, Moonshine Q4_K, its tokenizer and Silero VAD. `runtimes` installs pinned Windows x64 CPU llama.cpp, CrispASR and, unless `PYTHON_BIN` is configured, uv. These commands alone do not install or validate the complete voice stack. `ling` and `moonshine` select a single model group.
 
-Setup pins Hugging Face revisions plus SHA-verified native archives: CrispASR 0.8.32, llama.cpp b10970 CPU and uv 0.8.17. uv installs Python 3.12.11 privately, or uses an explicitly configured existing Python 3.12 only as the base for a separate environment. Kokoro 0.9.4 requirements come from [`requirements-local.txt`](requirements-local.txt), with CPU Torch 2.8.0 and the English spaCy 3.8.0 model. Transitive Python dependencies are resolved from trusted indexes, not a fully hash-locked environment. Unsupported Windows architectures need a separately maintained manual runtime setup.
+Setup pins Hugging Face revisions plus SHA-verified native archives: CrispASR 0.8.32, llama.cpp b10970 CPU and uv 0.8.17. By default uv installs Python 3.12.11 privately. An explicitly configured Python 3.12 x64 instead creates a separate environment using its own `venv` and bundled `pip`, without downloading or running uv or managed Python. Kokoro 0.9.4 requirements come from [`requirements-local.txt`](requirements-local.txt), with CPU Torch 2.8.0 and the English spaCy 3.8.0 model. Transitive Python dependencies are resolved from the selected indexes, not a fully hash-locked environment. Unsupported Windows architectures need a separately maintained manual runtime setup.
 
 The paths in [`example.env`](example.env) can point to sibling `..\LocalVoiceStack` or absolute local files. `MODEL_DIR`, `RUNTIME_DIR`, `CRISPASR_BIN`, `VAD_MODEL` and `PYTHON_BIN` remain source configuration overrides. Setup verifies existing models and refuses to overwrite mismatched external files. Normal Kokoro startup is offline; missing English dependencies or weights require explicit setup. Managed Kokoro uses the pinned `af_heart` English voice.
+
+### Approved Python And Policy Blocks
+
+If Windows says an administrator blocked execution, stop retries and ask IT to review the named executable. Do not rename or relocate a blocked binary to evade a rule, disable Defender, change AppLocker/WDAC, elevate, or install another Python distribution as a workaround. A clipped-subtitle screenshot does not establish an execution-policy failure. The local setup log and matching Windows policy events are needed to distinguish a block from missing files, wrong Python version, TLS inspection, or package/build errors. Do not share configuration files or unsanitized logs containing credentials.
+
+For an existing IT-approved interpreter, set its full executable path in **Settings > Config > Local setup network > IT-approved Python 3.12 x64 path**, save, and restart the app. The launch environment or source workflow's `.env` can also supply `PYTHON_BIN`. For example, `PYTHON_BIN=C:/Program Files/Python312/python.exe` is appropriate only if that actual installation is approved by IT. Do not use a Store alias or a command with embedded arguments. Setup requires Python 3.12 x64, `venv` and bundled `ensurepip`; it does not search PATH, download missing tools, or fall back to uv when the configured interpreter fails. Leaving the Settings field empty restores the managed-download route after restart.
+
+The configured interpreter is used only as a base: package installation stays inside `runtimes/kokoro-approved-<path-hash>`, separate from the downloaded `kokoro-venv`. The hash distinguishes base paths; it is not a certificate or proof of approval. Setup checks the base version/architecture, repairs an interrupted venv on retry, and records both interpreter file identities for cached readiness. It never installs packages into the base interpreter. IT must permit the venv executable, package installation and native libraries as well as the base Python. If policy forbids them or execution from app-data, this option cannot resolve the block: keep using local chat and ask IT for an approved deployment. llama.cpp and CrispASR also require their own approval.
+
+Package sources are shared by both runtime routes:
+
+| Control | Default / Requirement |
+| --- | --- |
+| `LOCAL_PYPI_INDEX_URL` | `https://pypi.org/simple`; also exposed as **Python package index** in Settings |
+| `LOCAL_TORCH_INDEX_URL` | `https://download.pytorch.org/whl/cpu`; also exposed as **PyTorch package index** in Settings |
+| `LOCAL_SPACY_MODEL_URL` | [English spaCy 3.8.0 wheel](https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl); also exposed as **spaCy English 3.8.0 wheel URL** in Settings |
+
+Use only IT-approved HTTPS mirrors (HTTP loopback is also supported for local mirrors), without URL credentials. The spaCy mirror must supply the same `en_core_web_sm` 3.8.0 wheel. PyPI/Torch index overrides alone do not redirect that GitHub wheel or the native/model downloads. All three source URLs are validated before Python/package commands. uv uses native TLS trust; the configured-Python route uses pip's system certificate support (`truststore`), without disabling verification. These controls do not automatically configure proxy authentication; ask IT to provision any required network trust or access. Consent in Settings is still required before setup installs anything. Verified chat remains available when speech setup fails.
+
+### Runtime Sources And Trust
+
+The exact app-pinned native archive URLs and SHA-256 values are in [`scripts/models.mjs`](scripts/models.mjs):
+
+| Runtime | Download | App-Pinned SHA-256 |
+| --- | --- | --- |
+| uv 0.8.17 | [Windows x64 MSVC archive](https://github.com/astral-sh/uv/releases/download/0.8.17/uv-x86_64-pc-windows-msvc.zip) | `0d051779fbcb173b183efeae1c3e96148764fd82709bbbf0966df3efe48b67c5` |
+| llama.cpp b10970 | [Windows x64 CPU archive](https://github.com/ggml-org/llama.cpp/releases/download/b10970/llama-b10970-bin-win-cpu-x64.zip) | `2c6d6516c04e95caa080d8eb917743e71858c73985acbb6739ad61b14e68b298` |
+| CrispASR 0.8.32 | [Windows x64 CPU archive](https://github.com/CrispStrobe/CrispASR/releases/download/v0.8.32/crispasr-windows-x86_64-cpu-legacy.zip) | `ba4e23fb8dfcc99b8a76af034954576a75f88193e3dbf62fc774287bcbd1114b` |
+
+The app verifies archive size and digest before extraction; allowed HTTPS redirects include GitHub release-asset hosts. These are repository-pinned integrity values, not independent security attestations. uv publishes an [archive checksum](https://github.com/astral-sh/uv/releases/download/0.8.17/uv-x86_64-pc-windows-msvc.zip.sha256) for administrator comparison.
+
+Managed Python is Astral's [python-build-standalone](https://github.com/astral-sh/python-build-standalone/releases), not a python.org Windows installer. `uv python install 3.12.11` selects the Windows x64 entry from uv 0.8.17's [download metadata](https://github.com/astral-sh/uv/blob/0.8.17/crates/uv-python/download-metadata.json). That entry supplies the exact dated archive URL and expected SHA-256; the app does not pin them separately. uv's [download implementation](https://github.com/astral-sh/uv/blob/0.8.17/crates/uv-python/src/downloads.rs) verifies that checksum when unpacking a fresh download. Inspect the entry and local cache to establish which build is actually present; do not infer it from the Python version alone.
+
+Kokoro configuration, weights and voice come from [hexgrad/Kokoro-82M at revision f3ff3571791e39611d31c381e3a41a3af07b4987](https://huggingface.co/hexgrad/Kokoro-82M/tree/f3ff3571791e39611d31c381e3a41a3af07b4987), with digests obtained from the pinned Hugging Face tree metadata. The Python recipe pins Kokoro 0.9.4, Torch 2.8.0 and `docopt` 0.6.2; SoundFile and transitive dependencies are not fully pinned or hash-locked. `docopt` is explicitly permitted to build from source. The direct spaCy wheel is version-pinned but has no separately pinned digest in this app. Index metadata hashes and HTTPS do not replace package review.
+
+No setup step verifies Authenticode signatures, publisher certificate chains or enterprise allow rules. Cached readiness uses file size/modification-time receipts, not a fresh signature check. Neither a recognized project URL nor a matching checksum proves safety or permission to execute. IT should review the actual blocked file's hash, signature/publisher and policy event before approving any deployment. No policy exemption is created by setup.
 
 Check Ling, then start local llama.cpp and the supervisor:
 ```powershell

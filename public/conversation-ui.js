@@ -58,12 +58,22 @@ export function createConversationUI(document) {
   const captions = new Map();
   const fit = content => {
     const text = content.parentElement;
-    const maximum = parseFloat(document.defaultView.getComputedStyle(text).maxHeight);
-    text.style.height = `${Math.min(content.getBoundingClientRect().height, maximum)}px`;
+    const caption = text.closest('.closed-caption');
+    const captionStyle = document.defaultView.getComputedStyle(caption);
+    const button = caption.querySelector('button');
+    const chromeWidth = parseFloat(captionStyle.paddingLeft) + parseFloat(captionStyle.paddingRight)
+      + parseFloat(captionStyle.borderLeftWidth) + parseFloat(captionStyle.borderRightWidth)
+      + parseFloat(captionStyle.columnGap) + button.getBoundingClientRect().width;
+    const minimumWidth = parseFloat(captionStyle.minWidth);
+    const maximumWidth = region.getBoundingClientRect().width - parseFloat(captionStyle.getPropertyValue('--cp-caption-offset'));
+    content.style.whiteSpace = 'nowrap';
+    const intrinsicWidth = content.scrollWidth;
+    content.style.whiteSpace = '';
+    caption.style.width = `${Math.min(maximumWidth, Math.max(minimumWidth, Math.ceil(intrinsicWidth + chromeWidth)))}px`;
+    text.style.height = 'auto';
+    const maximumHeight = parseFloat(document.defaultView.getComputedStyle(text).maxHeight);
+    text.style.height = `${Math.min(content.getBoundingClientRect().height, maximumHeight)}px`;
   };
-  const resize = new ResizeObserver(entries => {
-    for (const { target } of entries) fit(target);
-  });
   document.defaultView.addEventListener('resize', () => {
     for (const content of region.querySelectorAll('.caption-content')) fit(content);
   });
@@ -74,13 +84,15 @@ export function createConversationUI(document) {
     const controller = createCaptionController(value => {
       caption.hidden = !value;
       caption.dataset.fading = String(Boolean(value?.fading));
-      if (content.textContent !== (value?.text || '')) content.textContent = value?.text || '';
+      if (content.textContent !== (value?.text || '')) {
+        content.textContent = value?.text || '';
+        if (value) fit(content);
+      }
       if (value && !value.partial && !value.fading && !document.getElementById('conversation-dialog').open) {
         announcement.textContent = `${speaker.textContent}: ${value.text}`;
       }
     });
     captions.set(role, controller);
-    resize.observe(content);
     const syncPause = () => controller.pause(caption.matches(':hover') || caption.contains(document.activeElement));
     for (const event of ['pointerenter', 'pointerleave', 'focusin']) caption.addEventListener(event, syncPause);
     caption.addEventListener('focusout', event => controller.pause(caption.matches(':hover') || caption.contains(event.relatedTarget)));
@@ -101,7 +113,6 @@ export function createConversationUI(document) {
   };
   document.defaultView.addEventListener('pagehide', () => {
     clear();
-    resize.disconnect();
   });
 
   return {

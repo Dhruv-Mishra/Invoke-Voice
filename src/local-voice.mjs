@@ -336,6 +336,7 @@ export async function createLocalVoice({ send, callTool, provider = 'local', mod
     messages.splice(0, Math.max(0, messages.length - 12));
     let raw = '';
     let streamRoute;
+    let transcriptText = '';
     let speechBuffer = '';
     responses.set(responseId, { token, generationDone: false, ended: false, audioSent: false, synthesisFailed: false });
     const flushSpeech = final => {
@@ -353,12 +354,17 @@ export async function createLocalVoice({ send, callTool, provider = 'local', mod
           const prefix = raw.match(/^\s*(SAY|ACTION)\s*:\s*/i);
           if (prefix) {
             streamRoute = prefix[1].toLowerCase();
-            speechBuffer = raw.slice(prefix[0].length);
+            transcriptText = raw.slice(prefix[0].length);
+            speechBuffer = transcriptText;
           }
         } else {
+          transcriptText += event.text;
           speechBuffer += event.text;
         }
-        if (streamRoute) flushSpeech(false);
+        if (streamRoute) {
+          flushSpeech(false);
+          if (transcriptText.trim()) send({ type: 'transcript', turnId: responseId, role: 'assistant', text: transcriptText.trim(), partial: true });
+        }
       }
       if (turn !== token || signal.aborted || closed) return;
       const response = parseVoiceResponse(raw);
@@ -368,7 +374,7 @@ export async function createLocalVoice({ send, callTool, provider = 'local', mod
       messages.splice(0, Math.max(0, messages.length - 12));
       responses.get(responseId).generationDone = true;
       if (response.route === 'action') pendingActions.set(responseId, { id: responseId, text, context: messages.slice(-6) });
-      send({ type: 'transcript', role: 'assistant', text: response.text, partial: false });
+      send({ type: 'transcript', turnId: responseId, role: 'assistant', text: response.text, partial: false });
       finishResponse(responseId);
     } catch (error) {
       if (!signal.aborted && !closed) {
@@ -463,14 +469,11 @@ export async function createLocalVoice({ send, callTool, provider = 'local', mod
         const action = pendingActions.get(responseId);
         pendingActions.delete(responseId);
         if (outcome === 'played' && action) queueAction(action);
-        if (outcome === 'interrupted' && response.announcement && !action) announcementQueue.unshift({ ...response.announcement, transcript: false });
         if (outcome === 'failed' && action) {
           const retry = retryPlaybackAction(action);
           if (retry) queueAnnouncement('I will try that now.', { transcript: true, action: retry });
           else send({ type: 'error', message: 'The action was not started because acknowledgement audio failed twice.' });
         }
-        if (outcome === 'played' && response.announcement?.notificationId) send({ type: 'notify_ack', notificationId: response.announcement.notificationId });
-        if (outcome === 'failed' && response.announcement?.notificationId) acceptedNotifications.delete(response.announcement.notificationId);
         send({ type: 'state', state: 'listening' });
         pumpAnnouncements();
       },

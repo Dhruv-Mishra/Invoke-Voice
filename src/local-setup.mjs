@@ -16,6 +16,8 @@ const englishModel = 'https://github.com/explosion/spacy-models/releases/downloa
 const receiptVersion = createHash('sha256').update(readFileSync(requirements)).update(`${pythonVersion}:torch2.8.0:spacy3.8.0:kokoro-local-v1`).digest('hex');
 const CHAT_ASSET_IDS = new Set(['ling', 'llama']);
 const policyGuidance = 'If execution is blocked by IT policy, stop retrying and ask IT to approve the runtime and its virtual environment, or configure PYTHON_BIN with an IT-approved Python 3.12 x64 path and restart the app. Do not bypass Defender, AppLocker or WDAC. Local chat does not require Kokoro.';
+export const approvedPythonProbe = 'import ensurepip, platform, ssl, struct, sys, venv; assert sys.implementation.name == "cpython", "CPython required"; assert sys.version_info[:2] == (3, 12), "Python 3.12 required"; assert platform.machine().lower() in ("amd64", "x86_64") and struct.calcsize("P") == 8, "Windows AMD64 required"; assert ensurepip.version() and ssl.OPENSSL_VERSION and venv.EnvBuilder, "venv, ensurepip and SSL required"';
+const isolatedPythonProbe = 'import pip, sys; assert sys.prefix != sys.base_prefix, "Dedicated virtual environment required"; assert pip.__version__, "Bundled pip required"';
 
 export function isolatedEnvironment(env, paths) {
   const isolated = Object.fromEntries(Object.entries(env).filter(([key]) => /^(PATH|SYSTEMROOT|WINDIR|COMSPEC|TEMP|TMP|USERPROFILE|LOCALAPPDATA|APPDATA|PROCESSOR_ARCHITECTURE|NUMBER_OF_PROCESSORS)$/i.test(key)));
@@ -148,7 +150,7 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
   let voiceMessage = 'Local voice pipeline is not ready. Start setup to initialize it.';
 
   const inspect = () => [...assets.map(asset => ({ id: asset.id, label: asset.label, sourceUrl: asset.repo ? `https://huggingface.co/${asset.repo}` : asset.sourceUrl.replace(/\/releases\/download\/([^/]+)\/.*$/, '/releases/tag/$1'), ready: assetReady(paths, asset) })),
-    { id: 'kokoro', label: 'Kokoro Python environment', sourceUrl: 'https://pypi.org/project/kokoro/0.9.4/', ready: pythonReady(paths) }];
+    { id: 'kokoro', label: paths.pythonBase ? 'Kokoro (approved Python; runtime download skipped)' : 'Kokoro Python environment', sourceUrl: 'https://pypi.org/project/kokoro/0.9.4/', ready: pythonReady(paths) }];
 
   const applyChatPaths = () => {
     Object.assign(env, {
@@ -277,8 +279,9 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
           const modelUrl = packageIndex(env.LOCAL_SPACY_MODEL_URL, englishModel, 'spaCy model URL');
           if (paths.pythonBase) {
             if (!existsSync(paths.pythonBase)) throw setupError('Configured PYTHON_BIN was not found. Set it to the full path of an IT-approved Python 3.12 x64 interpreter and restart the app. No downloaded Python or uv fallback will be attempted.');
-            await command(paths.pythonBase, ['-I', '-c', 'import sys, struct; assert sys.version_info[:2] == (3, 12) and struct.calcsize("P") == 8, "Python 3.12 x64 required"'], 'python', 'Checking configured Python 3.12 x64. It must be approved by your IT administrator.');
+            await command(paths.pythonBase, ['-I', '-c', approvedPythonProbe], 'python', 'Checking approved full CPython 3.12 x64 with venv, pip bootstrap and SSL. No Python runtime will be downloaded.');
             await command(paths.pythonBase, ['-I', '-m', 'venv', paths.venv], 'python', 'Creating Kokoro isolation with configured Python and bundled pip.');
+            await command(paths.python, ['-I', '-c', isolatedPythonProbe], 'python', 'Checking the isolated Kokoro environment and bundled pip.');
           } else {
             await command(paths.uv, ['--no-config', 'python', 'install', pythonVersion], 'python', 'Installing private Python 3.12.11.');
             if (!existsSync(paths.python)) await command(paths.uv, ['--no-config', 'venv', '--python', pythonVersion, '--managed-python', paths.venv], 'python', 'Creating the isolated Kokoro environment.');

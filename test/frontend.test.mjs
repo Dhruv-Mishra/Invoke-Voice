@@ -9,6 +9,7 @@ import { renderToString } from 'vue/server-renderer';
 import VoiceSprite, { defaultAnimations } from '../public/VoiceSprite.js';
 import { captionTiming, motionPreference, themes } from '../public/themes.js';
 import { createCaptionController } from '../public/conversation-ui.js';
+import { shouldForwardCapturedAudio } from '../public/voice-session.js';
 
 test('frontend browser preserves conversation contracts and responsive preferences', { timeout: 90000 }, async context => {
   const electronDirectory = path.dirname(fileURLToPath(import.meta.resolve('electron')));
@@ -128,9 +129,9 @@ test('speaker captions retain separate text, fade and dismissal lifecycles', () 
   assert.equal(pending.size, 0);
 });
 
-test('motion overrides validate persisted values and default to system preference', () => {
+test('motion overrides validate persisted values and default to full motion', () => {
   for (const value of ['system', 'reduce', 'full']) assert.equal(motionPreference(value), value);
-  for (const value of [null, undefined, '', 'false', 'invalid']) assert.equal(motionPreference(value), 'system');
+  for (const value of [null, undefined, '', 'false', 'invalid']) assert.equal(motionPreference(value), 'full');
   assert.ok(themes.some(theme => theme.id === 'jarvis' && theme.label === 'Jarvis'));
 });
 
@@ -155,6 +156,8 @@ test('themes supply local bitmap assets and can replace sprite animations', asyn
     assert.ok(existsSync(new URL(theme.sprite)));
     assert.ok(theme.tokens['--cp-panel']);
     assert.ok(theme.tokens['--cp-font']);
+    assert.match(theme.tokens['--cp-caption-user-bg'], /linear-gradient/);
+    assert.match(theme.tokens['--cp-caption-assistant-bg'], /linear-gradient/);
     for (const state of Object.keys(defaultAnimations)) assert.ok(theme.animations[state]);
   }
   const output = await renderToString(createSSRApp({
@@ -164,4 +167,11 @@ test('themes supply local bitmap assets and can replace sprite animations', asyn
   }));
   assert.ok(output.includes('animation-name:alternate-listen'));
   assert.ok(output.includes('src="/alternate.png"'));
+});
+
+test('hands-free capture pauses for playback while push to talk remains explicit', () => {
+  assert.equal(shouldForwardCapturedAudio({ muted: false, pttMode: false, pttHeld: false, assistantSpeaking: false }), true);
+  assert.equal(shouldForwardCapturedAudio({ muted: false, pttMode: false, pttHeld: false, assistantSpeaking: true }), false);
+  assert.equal(shouldForwardCapturedAudio({ muted: false, pttMode: true, pttHeld: true, assistantSpeaking: true }), true);
+  assert.equal(shouldForwardCapturedAudio({ muted: true, pttMode: true, pttHeld: true, assistantSpeaking: false }), false);
 });

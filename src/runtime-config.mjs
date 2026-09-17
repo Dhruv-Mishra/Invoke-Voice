@@ -21,7 +21,7 @@ const fields = Object.freeze([
   { key: 'AZURE_OPENAI_API_VERSION', label: 'Azure OpenAI API version', group: 'Models and endpoints', type: 'text', defaultValue: '2024-06-01' },
   { key: 'CUSTOM_BASE_URL', label: 'Custom OpenAI-compatible URL', group: 'Models and endpoints', type: 'url' },
   { key: 'CUSTOM_MODEL', label: 'Custom model', group: 'Models and endpoints', type: 'text' },
-  { key: 'PYTHON_BIN', label: 'IT-approved Python 3.12 x64 path (optional)', group: 'Local setup network', type: 'text', absolutePath: true, restartRequired: true },
+  { key: 'PYTHON_BIN', label: 'Use IT-approved Python 3.12 x64 (skips runtime download)', group: 'Local setup network', type: 'text', absolutePath: true, restartRequired: true },
   { key: 'LOCAL_PYPI_INDEX_URL', label: 'Python package index', group: 'Local setup network', type: 'url', defaultValue: 'https://pypi.org/simple' },
   { key: 'LOCAL_TORCH_INDEX_URL', label: 'PyTorch package index', group: 'Local setup network', type: 'url', defaultValue: 'https://download.pytorch.org/whl/cpu' },
   { key: 'LOCAL_SPACY_MODEL_URL', label: 'spaCy English 3.8.0 wheel URL (optional)', group: 'Local setup network', type: 'url' },

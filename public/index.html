@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-   <link rel="icon" href="data:," />
+  <link rel="icon" href="./copilot-icon.webp" />
   <title>Voice Work Supervisor</title>
   <script>
     (() => {
@@ -13,7 +13,7 @@
       document.documentElement.setAttribute("data-theme", theme);
       try {
         const motion = localStorage.getItem("voice-supervisor-motion-v1");
-        document.documentElement.dataset.motion = ['system', 'reduce', 'full'].includes(motion) ? motion : 'system';
+        document.documentElement.dataset.motion = ['system', 'reduce', 'full'].includes(motion) ? motion : 'full';
         const personality = localStorage.getItem("voice-supervisor-personality-v1") || "copilot";
         document.documentElement.setAttribute("data-personality", personality);
       } catch (_) {

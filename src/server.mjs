@@ -226,7 +226,10 @@ export async function startSupervisor(options = {}) {
           session?.audio(message.data);
         } else if (['commit', 'interrupt'].includes(message.type)) session?.[message.type]();
           else if (message.type === 'playback_done') session?.playbackDone?.(String(message.responseId || ''), ['played', 'interrupted', 'failed'].includes(message.outcome) ? message.outcome : 'failed');
-          else if (message.type === 'notify') session?.notify(String(message.text || '').slice(0, 1800), String(message.notificationId || '').slice(0, 100));
+          else if (message.type === 'notify') {
+            const notificationId = String(message.notificationId || '').slice(0, 100);
+            if (session?.notify(String(message.text || '').slice(0, 1800), notificationId) === true) send({ type: 'notify_ack', notificationId });
+          }
       } catch (error) { starting = false; send({ type: 'error', message: error.message, fatal: true }); session?.close(); if (voiceOwner === socket) voiceOwner = null; socket.close(); }
     });
     socket.on('close', () => { cancelled = true; session?.close(); if (voiceOwner === socket) voiceOwner = null; });

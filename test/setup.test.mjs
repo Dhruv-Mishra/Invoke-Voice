@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { deflateRawSync } from 'node:zlib';
 import { createSetup } from '../src/setup.mjs';
 import { ASSETS, assetReady, ensureAsset, stackPaths, trustedDownloadUrl, withSetupLock } from '../scripts/models.mjs';
-import { createLocalSetup, isolatedEnvironment, runSetupCommand } from '../src/local-setup.mjs';
+import { approvedPythonProbe, createLocalSetup, isolatedEnvironment, runSetupCommand } from '../src/local-setup.mjs';
 import { startSupervisor } from '../src/server.mjs';
 import { createRuntimeConfig } from '../src/runtime-config.mjs';
 
@@ -87,9 +87,12 @@ test('configured Python uses bundled venv and pip without downloading or invokin
   assert.equal(provisioned.includes('uv'), false);
   assert.equal(commands.some(command => command.executable === paths.uv), false);
   assert.equal(commands[0].executable, pythonBase);
-  assert.match(commands[0].args.at(-1), /sys.version_info.*struct.calcsize/);
+  assert.equal(commands[0].args.at(-1), approvedPythonProbe);
+  for (const requirement of ['cpython', 'platform.machine', 'ensurepip', 'ssl', 'venv']) assert.match(approvedPythonProbe, new RegExp(requirement));
   assert.deepEqual(commands[1].args, ['-I', '-m', 'venv', paths.venv]);
   assert.equal(commands[1].executable, pythonBase);
+  assert.equal(commands[2].executable, paths.python);
+  assert.match(commands[2].args.at(-1), /sys\.prefix != sys\.base_prefix.*pip\.\__version__/);
   assert.notEqual(paths.venv, path.join(paths.runtimeDir, 'kokoro-venv'));
   const installs = commands.filter(command => command.args.includes('pip'));
   assert.equal(installs.length, 2);

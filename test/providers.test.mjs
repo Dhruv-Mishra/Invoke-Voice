@@ -4,7 +4,7 @@ import http from 'node:http';
 import { compactToolResult, streamReply, voiceInstructions } from '../src/llm.mjs';
 import { supervisorInstructions } from '../src/supervisor.mjs';
 import { drainVoiceText, isVoiceResponsePlayable, localSttArguments, parseVoiceResponse, retryPlaybackAction } from '../src/local-voice.mjs';
-import { DEFAULT_GEMINI_LIVE_MODEL, geminiLiveConfig, geminiLiveFunctionResponse } from '../src/realtime.mjs';
+import { createTranscriptStream, DEFAULT_GEMINI_LIVE_MODEL, geminiLiveConfig, geminiLiveFunctionResponse } from '../src/realtime.mjs';
 
 test('keeps the user-facing agent contract concise and hides implementation details', () => {
   assert.match(supervisorInstructions, /one or two short sentences/i);
@@ -52,6 +52,20 @@ test('streams complete voice text once across stable synthesis chunks', () => {
   assert.equal(isVoiceResponsePlayable({ audioSent: true, synthesisFailed: true }), false);
   assert.equal(retryPlaybackAction({ id: 'action', playbackRetries: 1 }), null);
   assert.deepEqual(retryPlaybackAction({ id: 'action' }), { id: 'action', playbackRetries: 1 });
+});
+
+test('normalizes provider transcript deltas into cumulative partials and authoritative finals', () => {
+  const events = [];
+  const transcripts = createTranscriptStream(event => events.push(event));
+  transcripts.push('assistant', 'Hello', { id: 'response-1' });
+  transcripts.push('assistant', ' there', { id: 'response-1' });
+  transcripts.push('assistant', 'Hello there.', { id: 'response-1', final: true, replacement: true });
+  assert.deepEqual(events.map(({ text, partial }) => ({ text, partial })), [
+    { text: 'Hello', partial: true },
+    { text: 'Hello there', partial: true },
+    { text: 'Hello there.', partial: false },
+  ]);
+  assert.ok(events.every(event => event.turnId === 'response-1'));
 });
 
 test('routes only explicit ACTION voice responses to deferred work', () => {

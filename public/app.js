@@ -3,6 +3,7 @@
 
 import { createConversationUI } from './conversation-ui.js';
 import captureWorkletUrl from './capture-worklet.js?url';
+import { shouldForwardCapturedAudio } from './voice-session.js';
 
 let appConfig = null;
 let appState = { areas: [], tasks: [] };
@@ -740,6 +741,7 @@ function sendPlaybackOutcome(responseId, outcome) {
   if (voiceSocket?.readyState === WebSocket.OPEN) {
     voiceSocket.send(JSON.stringify({ type: 'playback_done', responseId, outcome }));
   }
+  workletNode?.port.postMessage({ type: 'reset' });
 }
 
 function maybeCompletePlayback(responseId) {
@@ -836,6 +838,8 @@ function queueAudioChunk(data, token) {
   if (data.responseId && !responsePlaybackGenerations.has(data.responseId)) {
     responsePlaybackGenerations.set(data.responseId, { generation: token, seenAt: Date.now() });
     if (responsePlaybackGenerations.size > 100) responsePlaybackGenerations.delete(responsePlaybackGenerations.keys().next().value);
+    pendingCommit = false;
+    workletNode?.port.postMessage({ type: 'reset' });
   }
   audioQueuePromise = audioQueuePromise.then(async () => {
     if (token !== playbackGeneration) return;
@@ -848,9 +852,7 @@ function queueAudioChunk(data, token) {
 
 // Gating and Hold State for Push-to-Talk and Mute
 function shouldForwardAudio() {
-  if (isMuted) return false;
-  if (isPttMode) return isPttHeld;
-  return true;
+  return shouldForwardCapturedAudio({ muted: isMuted, pttMode: isPttMode, pttHeld: isPttHeld, assistantSpeaking: isAssistantSpeaking() });
 }
 
 function startPttHold() {
@@ -887,7 +889,7 @@ function isUserSpeaking() {
 function isAssistantSpeaking() {
   if (activeSources.length > 0) return true;
   if (playbackContext && nextPlayTime > playbackContext.currentTime) return true;
-  return false;
+  return [...responsePlaybackGenerations.values()].some(response => response.generation === playbackGeneration);
 }
 
 // Voice Session & AudioWorklet capture
@@ -962,7 +964,7 @@ async function startVoiceSession() {
       if (sessionToken !== currentSessionToken) return;
       const msg = event.data;
       if (msg.type === 'level') {
-        if (msg.peak > USER_SPEAKING_THRESHOLD && !isMuted) {
+        if (msg.peak > USER_SPEAKING_THRESHOLD && shouldForwardAudio()) {
           lastUserSpeechTime = Date.now();
         }
       } else if (msg.type === 'audio') {

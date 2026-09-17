@@ -469,6 +469,20 @@ try {
     && Number(getComputedStyle(document.body, '::before').opacity) >= 0.75), true);
   await voice({ type: 'transcript', role: 'user', text: 'Voice partial', partial: true });
   assert.equal(await evaluate(() => document.getElementById('user-caption-text').textContent), 'Voice partial');
+  const shortCaption = await evaluate(() => {
+    const bounds = document.getElementById('user-closed-caption').getBoundingClientRect();
+    window.fixtureShortCaptionWidth = bounds.width;
+    return bounds.toJSON();
+  });
+  await voice({ type: 'transcript', role: 'user', text: 'Voice partial grows smoothly as each recognized word arrives', partial: true });
+  await waitFor(() => document.getElementById('user-closed-caption').getBoundingClientRect().width > window.fixtureShortCaptionWidth);
+  const growingCaption = await evaluate(() => document.getElementById('user-closed-caption').getBoundingClientRect().toJSON());
+  assert.ok(growingCaption.width > shortCaption.width);
+  assert.equal(await evaluate(() => {
+    const user = getComputedStyle(document.getElementById('user-closed-caption')).backgroundImage;
+    const assistant = getComputedStyle(document.getElementById('closed-caption')).backgroundImage;
+    return user.includes('linear-gradient') && assistant.includes('linear-gradient') && user !== assistant;
+  }), true);
   assert.equal(await evaluate(() => document.querySelectorAll('.history-entry').length), 2);
   await voice({ type: 'transcript', role: 'user', text: 'Voice final', partial: false });
   assert.equal(await evaluate(() => document.querySelectorAll('.history-entry').length), 2);
@@ -561,7 +575,7 @@ try {
           captionCentered: Math.abs((region.left + region.right - dock.left - dock.right) / 2) < 1,
           captionStacked: Math.abs(captions[1].top - captions[0].bottom - 6) < 1,
           speakerOffset: Math.abs(captions[0].left - captions[1].left - 12) < 1,
-          speakerColors: getComputedStyle(document.getElementById('user-closed-caption')).backgroundColor !== getComputedStyle(document.getElementById('closed-caption')).backgroundColor,
+          speakerColors: getComputedStyle(document.getElementById('user-closed-caption')).backgroundImage !== getComputedStyle(document.getElementById('closed-caption')).backgroundImage,
           titlesHidden: [...document.querySelectorAll('.caption-speaker')].every(label => getComputedStyle(label).position === 'absolute' && label.getBoundingClientRect().height <= 1),
           compactCaption: captions.every(caption => caption.height <= Math.min(126, innerHeight * .16) + 19),
           captionScrollable: text.scrollHeight > text.clientHeight && text.clientHeight <= Math.min(126, innerHeight * .16) + 1 && getComputedStyle(text).overflowY === 'auto',

@@ -55,11 +55,13 @@ const defaultTokens = {
   '--cp-duration-fast': '140ms',
   '--cp-glass-blur': '10px',
   '--cp-caption-width': '680px',
+  '--cp-caption-min-width': '176px',
   '--cp-caption-max-height': 'min(126px, 16dvh)',
   '--cp-caption-offset': '12px',
   '--cp-caption-gap': '6px',
-  '--cp-caption-assistant-bg': 'var(--cp-panel-strong)',
-  '--cp-caption-user-bg': 'color-mix(in srgb, var(--cp-accent) 12%, var(--cp-panel-strong))',
+  '--cp-caption-assistant-bg': 'linear-gradient(135deg, rgba(174, 48, 221, 0.96), rgba(235, 64, 164, 0.96) 58%, rgba(255, 126, 108, 0.96))',
+  '--cp-caption-user-bg': 'linear-gradient(135deg, rgba(13, 169, 242, 0.96), rgba(28, 111, 220, 0.96) 58%, rgba(35, 66, 190, 0.96))',
+  '--cp-caption-text': '#ffffff',
   '--cp-caption-grow-duration': '220ms',
   '--cp-caption-fade-duration': `${captionTiming.fade}ms`,
   '--cp-voice-edge-strength': '68%',
@@ -95,7 +97,7 @@ export const themes = Object.freeze([
 ].map(defineTheme));
 
 export function motionPreference(value) {
-  return ['system', 'reduce', 'full'].includes(value) ? value : 'system';
+  return ['system', 'reduce', 'full'].includes(value) ? value : 'full';
 }
 
 const appliedTokens = new Set();

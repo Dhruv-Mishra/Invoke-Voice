@@ -158,6 +158,7 @@ test('themes supply local bitmap assets and can replace sprite animations', asyn
     assert.ok(theme.tokens['--cp-font']);
     assert.match(theme.tokens['--cp-caption-user-bg'], /linear-gradient/);
     assert.match(theme.tokens['--cp-caption-assistant-bg'], /linear-gradient/);
+    for (const token of ['--cp-caption-padding-block', '--cp-caption-padding-inline', '--cp-caption-stack-gap', '--cp-caption-speaker-offset', '--cp-caption-dismiss-space', '--cp-caption-control-size']) assert.ok(theme.tokens[token]);
     for (const state of Object.keys(defaultAnimations)) assert.ok(theme.animations[state]);
   }
   const output = await renderToString(createSSRApp({

@@ -474,6 +474,7 @@ try {
     window.fixtureShortCaptionWidth = bounds.width;
     return bounds.toJSON();
   });
+  assert.ok(shortCaption.height <= 36, `Expected a compact single-line caption, received ${shortCaption.height}px`);
   await voice({ type: 'transcript', role: 'user', text: 'Voice partial grows smoothly as each recognized word arrives', partial: true });
   await waitFor(() => document.getElementById('user-closed-caption').getBoundingClientRect().width > window.fixtureShortCaptionWidth);
   const growingCaption = await evaluate(() => document.getElementById('user-closed-caption').getBoundingClientRect().toJSON());
@@ -561,6 +562,10 @@ try {
         const dock = document.querySelector('.voice-strip').getBoundingClientRect();
         const captions = [...document.querySelectorAll('.closed-caption:not([hidden])')].map(caption => caption.getBoundingClientRect());
         const region = document.querySelector('.caption-region').getBoundingClientRect();
+        const rootStyle = getComputedStyle(document.documentElement);
+        const stackGap = Number.parseFloat(rootStyle.getPropertyValue('--cp-caption-stack-gap'));
+        const speakerOffset = Number.parseFloat(rootStyle.getPropertyValue('--cp-caption-speaker-offset'));
+        const captionPadding = Number.parseFloat(rootStyle.getPropertyValue('--cp-caption-padding-block')) * 2 + 2;
         const text = document.getElementById('caption-text');
         const firstWord = document.createRange();
         firstWord.setStart(text.firstElementChild.firstChild, 0);
@@ -573,11 +578,11 @@ try {
           freeFloating: getComputedStyle(document.querySelector('.app-main')).backgroundColor === 'rgba(0, 0, 0, 0)' && getComputedStyle(document.querySelector('.app-main')).boxShadow === 'none',
           captionFits: captions.length === 2 && captions.every(caption => caption.top >= 12 && caption.bottom < dock.top && caption.left >= surface.left && caption.right <= surface.right),
           captionCentered: Math.abs((region.left + region.right - dock.left - dock.right) / 2) < 1,
-          captionStacked: Math.abs(captions[1].top - captions[0].bottom - 6) < 1,
-          speakerOffset: Math.abs(captions[0].left - captions[1].left - 12) < 1,
+          captionStacked: Math.abs(captions[1].top - captions[0].bottom - stackGap) < 1,
+          speakerOffset: Math.abs(captions[0].left - captions[1].left - speakerOffset) < 1,
           speakerColors: getComputedStyle(document.getElementById('user-closed-caption')).backgroundImage !== getComputedStyle(document.getElementById('closed-caption')).backgroundImage,
           titlesHidden: [...document.querySelectorAll('.caption-speaker')].every(label => getComputedStyle(label).position === 'absolute' && label.getBoundingClientRect().height <= 1),
-          compactCaption: captions.every(caption => caption.height <= Math.min(126, innerHeight * .16) + 19),
+          compactCaption: captions.every(caption => caption.height <= Math.min(126, innerHeight * .16) + captionPadding),
           captionScrollable: text.scrollHeight > text.clientHeight && text.clientHeight <= Math.min(126, innerHeight * .16) + 1 && getComputedStyle(text).overflowY === 'auto',
           captionStartVisible: firstWordBounds.left >= text.getBoundingClientRect().left && firstWordBounds.right <= text.getBoundingClientRect().right,
           modalCorrect: document.getElementById('view-dialog').matches(':modal') === (innerWidth > 760 && document.body.dataset.view !== 'home'),

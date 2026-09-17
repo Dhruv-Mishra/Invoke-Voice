@@ -60,12 +60,12 @@ export function createConversationUI(document) {
     const text = content.parentElement;
     const caption = text.closest('.closed-caption');
     const captionStyle = document.defaultView.getComputedStyle(caption);
-    const button = caption.querySelector('button');
+    const textStyle = document.defaultView.getComputedStyle(text);
     const chromeWidth = parseFloat(captionStyle.paddingLeft) + parseFloat(captionStyle.paddingRight)
       + parseFloat(captionStyle.borderLeftWidth) + parseFloat(captionStyle.borderRightWidth)
-      + parseFloat(captionStyle.columnGap) + button.getBoundingClientRect().width;
+      + parseFloat(textStyle.paddingLeft) + parseFloat(textStyle.paddingRight);
     const minimumWidth = parseFloat(captionStyle.minWidth);
-    const maximumWidth = region.getBoundingClientRect().width - parseFloat(captionStyle.getPropertyValue('--cp-caption-offset'));
+    const maximumWidth = region.getBoundingClientRect().width - parseFloat(captionStyle.getPropertyValue('--cp-caption-speaker-offset'));
     content.style.whiteSpace = 'nowrap';
     const intrinsicWidth = content.scrollWidth;
     content.style.whiteSpace = '';

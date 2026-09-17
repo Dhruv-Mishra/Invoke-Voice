@@ -246,15 +246,15 @@ section.conversation-pane { height: min(640px, calc(100dvh - 48px)); min-height:
 .chat-input-bar { background: var(--cp-panel); padding: 14px 18px; }
 .chat-input-bar input { min-width: 0; font-size: 15px; }
 .chat-input-bar textarea { flex: 1; min-width: 0; min-height: 48px; max-height: 160px; font-size: 16px; line-height: 1.5; resize: vertical; }
-.caption-region { position: fixed; left: var(--voice-center); bottom: calc(var(--voice-bottom) + var(--voice-height) + 12px); transform: translateX(-50%); width: min(var(--cp-caption-width), calc(100vw - var(--sidebar-width) - var(--home-side-width) - var(--home-gap) - 48px)); display: grid; gap: var(--cp-caption-gap); pointer-events: none; z-index: 30; }
+.caption-region { position: fixed; left: var(--voice-center); bottom: calc(var(--voice-bottom) + var(--voice-height) + 12px); transform: translateX(-50%); width: min(var(--cp-caption-width), calc(100vw - var(--sidebar-width) - var(--home-side-width) - var(--home-gap) - 48px)); display: grid; gap: var(--cp-caption-stack-gap); pointer-events: none; z-index: 30; }
 .caption-region:not(:has(.closed-caption:not([hidden]))) { display: none; }
-.closed-caption { min-width: var(--cp-caption-min-width); max-width: calc(100% - var(--cp-caption-offset)); width: var(--cp-caption-min-width); justify-self: start; display: grid; grid-template-columns: minmax(0, 1fr) 32px; align-items: start; gap: var(--cp-caption-gap); padding: 8px 12px; border: 1px solid var(--cp-sheen); border-radius: var(--control-radius); color: var(--cp-caption-text); background: var(--cp-caption-assistant-bg); box-shadow: var(--cp-glass-shadow); pointer-events: auto; opacity: 1; transition: width var(--cp-caption-grow-duration) ease, opacity var(--cp-caption-fade-duration) ease; animation: caption-enter 160ms ease-out; }
+.closed-caption { position: relative; min-width: var(--cp-caption-min-width); max-width: calc(100% - var(--cp-caption-speaker-offset)); width: var(--cp-caption-min-width); justify-self: start; padding: var(--cp-caption-padding-block) var(--cp-caption-padding-inline); border: 1px solid var(--cp-sheen); border-radius: var(--control-radius); color: var(--cp-caption-text); background: var(--cp-caption-assistant-bg); box-shadow: var(--cp-glass-shadow); pointer-events: auto; opacity: 1; transition: width var(--cp-caption-grow-duration) ease, opacity var(--cp-caption-fade-duration) ease; animation: caption-enter 160ms ease-out; }
 .closed-caption[data-fading='true'] { opacity: 0; }
 .closed-caption[data-role='user'] { justify-self: end; background: var(--cp-caption-user-bg); }
 .closed-caption[data-role='user'] .caption-text { text-align: right; }
-.caption-text { grid-column: 1; grid-row: 1; align-self: center; min-width: 0; height: auto; max-height: var(--cp-caption-max-height); margin: 0; overflow-y: auto; overscroll-behavior: contain; overflow-wrap: anywhere; text-align: left; font-size: 14px; line-height: 1.5; scrollbar-gutter: stable; transition: height var(--cp-caption-grow-duration) ease; }
+.caption-text { min-width: 0; height: auto; max-height: var(--cp-caption-max-height); margin: 0; padding-right: var(--cp-caption-dismiss-space); overflow-y: auto; overscroll-behavior: contain; overflow-wrap: anywhere; text-align: left; font-size: 14px; line-height: 1.45; scrollbar-gutter: stable; transition: height var(--cp-caption-grow-duration) ease; }
 .caption-content { display: block; }
-.closed-caption .btn { grid-column: 2; grid-row: 1; background: transparent; border-color: transparent; }
+.closed-caption .btn { position: absolute; top: 50%; right: 2px; width: var(--cp-caption-control-size); min-width: var(--cp-caption-control-size); height: var(--cp-caption-control-size); min-height: var(--cp-caption-control-size); padding: 0; transform: translateY(-50%); background: transparent; border-color: transparent; }
 body:has(#conversation-dialog[open]) .closed-caption { visibility: hidden; }
 
 .voice-strip {
@@ -363,8 +363,7 @@ body:has(#conversation-dialog[open]) .closed-caption { visibility: hidden; }
   .config-grid { grid-template-columns: minmax(0, 1fr); }
   .setting-row { flex-wrap: wrap; gap: 10px; }
   .caption-region { width: calc(100vw - 24px); }
-  .closed-caption { grid-template-columns: minmax(0, 1fr) 44px; }
-  .closed-caption .btn { min-width: 44px; min-height: 44px; }
+  .closed-caption { --cp-caption-dismiss-space: 40px; --cp-caption-control-size: 44px; }
   .tool-runner { padding: 18px 14px; }
 }
 html[data-motion='reduce'] *, html[data-motion='reduce'] *::before, html[data-motion='reduce'] *::after {

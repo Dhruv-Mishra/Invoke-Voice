@@ -75,6 +75,12 @@ async function json(url, body) {
 
 async function voiceTurn(env, name, messages, outcome) {
   const originalFetch = globalThis.fetch;
+  const document = name.startsWith('document-');
+  const status = {
+    taskId: 'synthetic-task', title: document ? 'Onboarding document' : 'Synthetic login fix', state: 'result_ready',
+    result: document ? 'The document draft is ready for review.' : 'The synthetic login fix is complete and its tests passed.',
+    actions: ['send_work_message', 'open_work', 'delete_work'],
+  };
   const rounds = [];
   const pending = [];
   const calls = [];
@@ -108,8 +114,13 @@ async function voiceTurn(env, name, messages, outcome) {
     for await (const event of streamReply({ provider: 'local', profile: 'voice', env, messages, requestId: `synthetic-${name}`, signal: deadline,
       callTool: async (tool, args) => {
         calls.push({ tool, args, atMs: rounded(performance.now() - started) });
-        if (tool === 'list_work') return outcome === 'empty' ? { tasks: [] } : outcome === 'error' ? { error: 'Synthetic status service unavailable.' } : { tasks: [{ id: 'synthetic-task', title: 'Synthetic login fix', state: 'result_ready' }] };
-        if (tool === 'get_work_status') return { taskId: 'synthetic-task', state: 'result_ready', result: 'The synthetic login fix is complete and its tests passed.', actions: { canResume: true, canOpen: true, canDelete: true } };
+        if (tool === 'list_work') {
+          if (outcome === 'empty') return args.query === undefined ? { tasks: [] } : { tasks: [], hasMore: false };
+          if (outcome === 'error') return { error: 'Synthetic status service unavailable.' };
+          if (outcome === 'ambiguous') return { tasks: [status, { ...status, taskId: 'synthetic-other', title: 'Policy document', result: 'The policy draft is ready for review.' }], hasMore: false };
+          return args.query === undefined ? { tasks: [{ id: status.taskId, title: status.title, state: status.state }] } : { tasks: [status], hasMore: false };
+        }
+        if (tool === 'get_work_status') return args.taskId === status.taskId ? status : { error: 'Unknown synthetic task.' };
         return { error: 'Benchmark refuses all work mutations.' };
       },
     })) {
@@ -125,11 +136,14 @@ async function voiceTurn(env, name, messages, outcome) {
   }
   const listIndex = calls.findIndex(call => call.tool === 'list_work');
   const statusIndex = calls.findIndex(call => call.tool === 'get_work_status' && call.args.taskId === 'synthetic-task');
+  const queried = calls.some(call => call.tool === 'list_work' && typeof call.args.query === 'string' && call.args.query.trim());
   const passiveReadContract = listIndex >= 0 && calls.every(call => ['list_work', 'get_work_status'].includes(call.tool)) &&
-    (outcome === 'status' ? statusIndex > listIndex : calls.every(call => call.tool === 'list_work'));
+    (outcome === 'status' ? queried || statusIndex > listIndex : calls.every(call => call.tool === 'list_work'));
+  const spokenContract = !/synthetic-(task|other)|list_work|get_work_status|start_work|send_work_message|result_ready|<think>|```/i.test(text);
+  const searchContract = !document || (queried && (outcome === 'status' ? calls.length === 1 : /\?/.test(text)));
   const completed = !error && Boolean(text.trim()) && rounds.every(round => round.finishReason === 'stop' || round.finishReason === 'tool_calls');
-  const result = { kind: 'llm-turn', case: env.BENCH_CASE, name, wallMs: rounded(performance.now() - started), firstTextMs, completed, passiveReadContract, text, calls, rounds, ...(error ? { error } : {}) };
-  if (!completed || !passiveReadContract) process.exitCode = 1;
+  const result = { kind: 'llm-turn', case: env.BENCH_CASE, name, wallMs: rounded(performance.now() - started), firstTextMs, completed, passiveReadContract, spokenContract, searchContract, text, calls, rounds, ...(error ? { error } : {}) };
+  if (!completed || !passiveReadContract || !spokenContract || !searchContract) process.exitCode = 1;
   output(result);
   return result;
 }
@@ -187,6 +201,10 @@ async function benchLlm(baseEnv, selected) {
       await voiceTurn(env, 'denial-followup', [messages[1], { role: 'assistant', content: 'I cannot access your tasks.' }, { role: 'user', content: 'You do have access. Check the current work and tell me its status; do not start or resume anything.' }], 'status');
       await voiceTurn(env, 'empty', [messages[1]], 'empty');
       await voiceTurn(env, 'error', [messages[1]], 'error');
+      const documentQuestion = [{ role: 'user', content: "What's the status of the document work?" }];
+      await voiceTurn(env, 'document-unique', documentQuestion, 'status');
+      await voiceTurn(env, 'document-ambiguous', documentQuestion, 'ambiguous');
+      await voiceTurn(env, 'document-missing', documentQuestion, 'empty');
     } catch (error) {
       output({ kind: 'llm-error', case: candidate.name, error: error.message });
       process.exitCode = 1;

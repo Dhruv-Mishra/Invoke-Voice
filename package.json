@@ -34,6 +34,7 @@
     "dompurify": "^3.4.15",
     "lucide": "^1.42.0",
     "marked": "^18.0.12",
+    "minisearch": "^7.2.0",
     "proper-lockfile": "4.1.2",
     "semver": "7.7.3",
     "vue": "^3.5.21",

@@ -13,9 +13,58 @@ test('exports the canonical LLM tool schemas', () => {
   assert.equal(supervisorInstructions, contractSupervisorInstructions);
   assert.deepEqual(tools.map(tool => tool.function.name), ['list_work', 'start_work', 'send_work_message', 'get_work_status', 'open_work', 'delete_work', 'invoke_vscode']);
   assert.equal(Object.hasOwn(tools[0].function.parameters, 'required'), false);
+  assert.equal(tools[0].function.parameters.properties.query.type, 'string');
+  assert.ok(supervisorInstructions.length < 1350);
+  assert.ok(JSON.stringify(tools).length + supervisorInstructions.length < 4200);
   assert.deepEqual(tools.find(tool => tool.function.name === 'start_work').function.parameters.properties.backend.enum, ['copilot', 'agency']);
   assert.equal(tools.find(tool => tool.function.name === 'start_work').function.parameters.properties.context.enum.includes('long_context'), true);
   assert.deepEqual(tools.find(tool => tool.function.name === 'start_work').function.parameters.required, ['objective']);
+});
+
+test('searches all saved work with bounded fresh status and no mutations', async () => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-supervisor-search-'));
+  const clock = Date.now();
+  try {
+    const supervisor = new Supervisor({ dataDir, bridge: {}, now: () => clock });
+    const areaId = supervisor.resolveArea().id;
+    const addTask = (id, title, extra = {}) => supervisor.state.tasks.push({
+      id, title, objective: title, areaId, state: 'result_ready', createdAt: clock,
+      observations: [], turns: [], ...extra,
+    });
+    addTask('document', 'Draft onboarding document', { result: 'Draft ready for review.', sessionLog: 'private.log', worktree: 'private/path' });
+    for (let index = 0; index < 30; index += 1) addTask(`other-${index}`, `Fix compiler ${index}`);
+    assert.equal((await supervisor.callTool('list_work')).tasks.some(task => task.id === 'document'), false);
+    const before = JSON.stringify(supervisor.state);
+    const found = await supervisor.callTool('list_work', { query: "What's the status of the document work?" });
+    assert.equal(found.hasMore, false);
+    assert.equal(found.tasks.length, 1);
+    assert.equal(found.tasks[0].taskId, 'document');
+    assert.equal(found.tasks[0].result, 'Draft ready for review.');
+    assert.ok(found.tasks[0].actions.includes('send_work_message'));
+    assert.equal(Object.hasOwn(found.tasks[0], 'sessionLog'), false);
+    assert.equal(Object.hasOwn(found.tasks[0], 'worktree'), false);
+    assert.equal(JSON.stringify(supervisor.state), before);
+    assert.equal((await supervisor.callTool('list_work', { query: 'documant' })).tasks[0].taskId, 'document');
+    assert.deepEqual(await supervisor.callTool('list_work', { query: 'invoice document' }), { tasks: [], hasMore: false });
+    assert.deepEqual(await supervisor.callTool('list_work', { query: 'the work' }), { tasks: [], hasMore: false });
+    addTask('other-document', 'Review policy document', { state: 'running', lastObservedAt: clock - 180000 });
+    const ambiguous = await supervisor.callTool('list_work', { query: 'document' });
+    assert.equal(ambiguous.tasks.length, 2);
+    assert.equal(ambiguous.tasks.find(task => task.taskId === 'other-document').state, 'unknown');
+    assert.equal(ambiguous.tasks.find(task => task.taskId === 'other-document').stale, true);
+    assert.equal((await supervisor.callTool('list_work', { query: 'onboarding document' })).tasks.length, 1);
+    addTask('follow-up', 'Prepare release', { turns: [{ message: 'Include the migration checklist', createdAt: clock }] });
+    assert.equal((await supervisor.callTool('list_work', { query: 'migration checklist' })).tasks[0].taskId, 'follow-up');
+    const limited = await supervisor.callTool('list_work', { query: 'compiler' });
+    assert.equal(limited.tasks.length, 3);
+    assert.equal(limited.hasMore, true);
+    for (const query of ['', ' ', null, 123, 'x'.repeat(201)]) await assert.rejects(supervisor.callTool('list_work', { query }), /Invalid task query/);
+    supervisor.save();
+    const restored = new Supervisor({ dataDir, bridge: {} });
+    assert.equal((await restored.callTool('list_work', { query: 'onboarding' })).tasks[0].taskId, 'document');
+    supervisor.deleteTask('document');
+    assert.deepEqual(await supervisor.callTool('list_work', { query: 'onboarding' }), { tasks: [], hasMore: false });
+  } finally { rmSync(dataDir, { recursive: true, force: true }); }
 });
 
 test('deletes stale inactive work while protecting active work', async () => {

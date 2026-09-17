@@ -76,6 +76,16 @@ export function compactToolResult(result, limit = 6000) {
     .filter(key => value[key] !== undefined)
     .map(key => [key, value[key]]));
   if (Array.isArray(value.tasks)) {
+    if (typeof value.hasMore === 'boolean') {
+      return {
+        ...truth, hasMore: value.hasMore, truncated: true,
+        tasks: value.tasks.map(task => ({
+          ...compactToolResult(task, Math.max(128, Math.floor(limit / value.tasks.length) - 64)),
+          title: task.title,
+          ...(task.area !== undefined ? { area: task.area } : {}),
+        })),
+      };
+    }
     const compact = { ...truth, tasks: [], truncated: true };
     for (const task of [...value.tasks].reverse()) {
       const record = Object.fromEntries(['id', 'taskId', 'state', 'status', 'stale', 'actions', 'error', 'areaId', 'title']

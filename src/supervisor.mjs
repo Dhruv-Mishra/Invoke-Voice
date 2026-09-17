@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, renameSync, realpathSync } from 'node:fs';
 import path from 'node:path';
+import MiniSearch from 'minisearch';
 import { DEFAULT_WORK_AREA, defaultWorkspacePath } from './vscode-bridge.mjs';
 import { supervisorTools, tools, supervisorInstructions } from './supervisor/contract.mjs';
 
@@ -11,6 +12,7 @@ const CONTEXTS = ['default', 'long_context'];
 const BACKENDS = ['copilot', 'agency'];
 const TERMINAL_STATES = new Set(['result_ready', 'agent_failed', 'agent_stopped', 'completed', 'failed']);
 const RESUMABLE_STATES = new Set([...TERMINAL_STATES, 'needs_input']);
+const SEARCH_STOP_WORDS = new Set('a an and are can could do for how i in is it me my of on please s status task tasks tell that the this to was what whats which work you'.split(' '));
 
 function requiredText(value, label, limit = 12000) {
   if (typeof value !== 'string' || !value.trim() || value.length > limit) throw new Error(`Invalid ${label}`);
@@ -224,8 +226,45 @@ export class Supervisor extends EventEmitter {
     };
   }
 
+  searchWork(query) {
+    const text = requiredText(query, 'task query', 200);
+    const areas = new Map(this.state.areas.map(area => [area.id, [area.name, ...area.aliases].join(' ')]));
+    const index = new MiniSearch({
+      fields: ['title', 'objective', 'messages', 'area'],
+      processTerm: term => {
+        const normalized = term.toLowerCase();
+        return SEARCH_STOP_WORDS.has(normalized) ? null : normalized;
+      },
+      searchOptions: { combineWith: 'AND', prefix: true, fuzzy: 0.2, boost: { title: 3, objective: 2 } },
+    });
+    index.addAll(this.state.tasks.map(task => ({
+      id: task.id,
+      title: task.title || '',
+      objective: task.objective || '',
+      messages: task.turns.map(turn => turn.message || '').join(' '),
+      area: areas.get(task.areaId) || '',
+    })));
+    const matches = index.search(text);
+    return {
+      tasks: matches.slice(0, 3).map(match => {
+        const task = this.task(match.id);
+        const status = this.toolStatus(task.id);
+        return {
+          ...status,
+          title: String(task.title || task.objective || 'Untitled task').slice(0, 90),
+          area: this.state.areas.find(area => area.id === task.areaId)?.name,
+          ...(status.update ? { update: status.update.slice(0, 240) } : {}),
+          ...(status.result ? { result: status.result.slice(0, 360), ...(status.result.length > 360 ? { resultTruncated: true } : {}) } : {}),
+          ...(status.error ? { error: status.error.slice(0, 240), ...(status.error.length > 240 ? { errorTruncated: true } : {}) } : {}),
+        };
+      }),
+      hasMore: matches.length > 3,
+    };
+  }
+
   async callTool(name, args = {}, context = {}) {
     if (!tools.some(tool => tool.function.name === name)) throw new Error('Unknown tool');
+    if (name === 'list_work' && args.query !== undefined) return this.searchWork(args.query);
     if (name === 'list_work') return { defaultAreaId: this.state.settings.defaultAreaId, areas: this.state.areas.map(({ id, name, aliases }) => ({ id, name, aliases })), tasks: this.state.tasks.slice(-25).map(task => { const status = this.status(task.id); return { id: status.id, title: status.title, areaId: status.areaId, backend: status.backend, state: status.state }; }) };
     if (name === 'send_work_message') {
       const task = this.task(requiredText(args.taskId, 'task ID', 200));

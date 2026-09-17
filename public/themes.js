@@ -22,7 +22,7 @@ const defaultTokens = {
   '--cp-border-strong': '#b8b8be',
   '--cp-panel': 'rgba(255, 255, 255, 0.72)',
   '--cp-panel-strong': 'rgba(250, 250, 252, 0.97)',
-  '--cp-sidebar': 'rgba(245, 245, 247, 0.92)',
+  '--cp-sidebar': 'rgba(245, 245, 247, 0.46)',
   '--cp-sheen': 'rgba(255, 255, 255, 0.70)',
   '--cp-overlay': 'rgba(29, 29, 31, 0.16)',
   '--cp-highlight': 'rgba(29, 29, 31, 0.12)',
@@ -85,6 +85,11 @@ const defaultTokens = {
   '--cp-sprite-ink': '#202124',
   '--cp-sprite-ring': '#68d7ee',
   '--cp-control-stroke': '1.75',
+  '--cp-dock-radius': '28px',
+  '--cp-dock-core-radius': '50%',
+  '--cp-dock-accent': '#0066cc',
+  '--cp-dock-fg': '#ffffff',
+  '--cp-dock-shadow': '0 12px 40px rgba(29,29,31,0.16)',
 };
 
 const themeDefaults = Object.freeze({
@@ -142,10 +147,11 @@ export const themes = Object.freeze([
       '--cp-bg': '#101414', '--cp-bg-elevated': '#1a2020', '--cp-surface': '#202727', '--cp-surface-soft': '#293231',
       '--cp-text': '#eef5f2', '--cp-text-muted': '#b7c7c2', '--cp-text-soft': '#aabcb6', '--cp-accent': '#7fdfec', '--cp-accent-hover': '#b2eef5', '--cp-accent-fg': '#102629',
       '--cp-accent-soft': 'rgba(127,223,236,0.12)', '--cp-link': '#9ae5ef', '--cp-success': '#98d7aa', '--cp-warning': '#edc983', '--cp-danger': '#ff9c92',
-      '--cp-border': 'rgba(190,225,216,0.18)', '--cp-border-strong': '#607b73', '--cp-panel': 'rgba(25,35,34,0.8)', '--cp-panel-strong': 'rgba(26,32,32,0.97)', '--cp-sidebar': 'rgba(16,24,23,0.92)',
+      '--cp-border': 'rgba(190,225,216,0.18)', '--cp-border-strong': '#607b73', '--cp-panel': 'rgba(25,35,34,0.8)', '--cp-panel-strong': 'rgba(26,32,32,0.97)', '--cp-sidebar': 'rgba(16,24,23,0.52)',
       '--cp-sheen': 'rgba(182,232,226,0.24)', '--cp-overlay': 'rgba(7,14,13,0.7)', '--cp-highlight': 'rgba(7,14,13,0.55)', '--cp-wave': '#7fdfec', '--cp-listening-hue': '#7fdfec', '--cp-mic-glow': 'rgba(127,223,236,0.18)', '--cp-voice-glass': 'rgba(20,32,31,0.92)',
       '--cp-caption-assistant-bg': 'rgba(26,32,32,0.96)', '--cp-caption-assistant-bg-solid': '#1a2020', '--cp-caption-user-bg': 'rgba(32,57,58,0.96)', '--cp-caption-user-bg-solid': '#20393a', '--cp-caption-text': '#eef5f2',
       '--cp-font-display': 'Bahnschrift, "Segoe UI Variable Display", "Segoe UI", sans-serif', '--cp-wallpaper-blend': 'normal', '--cp-wallpaper-opacity': '1', '--cp-glass-blur': '12px', '--cp-control-stroke': '1.5',
+      '--cp-dock-radius': '18px', '--cp-dock-core-radius': '18px', '--cp-dock-accent': '#7fdfec', '--cp-dock-fg': '#102629', '--cp-dock-shadow': '0 12px 40px rgba(0,0,0,0.28)',
     },
   },
   { id: 'baymax', label: 'Baymax', kind: 'companion', sprite: media.companion, background: media.sanctuary,
@@ -158,8 +164,9 @@ export const themes = Object.freeze([
     tokens: {
       '--cp-bg': '#eef2f1', '--cp-bg-elevated': '#fafcfb', '--cp-surface-soft': '#e8efec', '--cp-text': '#263b36', '--cp-text-muted': '#566d65', '--cp-text-soft': '#61776e',
       '--cp-accent': '#b3384b', '--cp-accent-hover': '#98263a', '--cp-accent-soft': 'rgba(179,56,75,0.08)', '--cp-link': '#287164', '--cp-success': '#287164', '--cp-border': 'rgba(38,59,54,0.13)', '--cp-border-strong': '#a7b9b0',
-      '--cp-panel': 'rgba(255,255,255,0.8)', '--cp-sidebar': 'rgba(241,246,243,0.92)', '--cp-voice-glass': 'rgba(255,255,255,0.92)', '--cp-wave': '#b3384b', '--cp-listening-hue': '#b3384b', '--cp-mic-glow': 'rgba(179,56,75,0.12)',
+      '--cp-panel': 'rgba(255,255,255,0.8)', '--cp-sidebar': 'rgba(241,246,243,0.46)', '--cp-voice-glass': 'rgba(255,255,255,0.92)', '--cp-wave': '#b3384b', '--cp-listening-hue': '#b3384b', '--cp-mic-glow': 'rgba(179,56,75,0.12)',
       '--cp-caption-user-bg': 'rgba(249,234,236,0.96)', '--cp-caption-user-bg-solid': '#f9eaec', '--cp-caption-text': '#263b36', '--cp-control-stroke': '2', '--cp-wallpaper-blend': 'normal', '--cp-wallpaper-opacity': '1',
+      '--cp-dock-radius': '48px', '--cp-dock-core-radius': '50%', '--cp-dock-accent': '#b3384b', '--cp-dock-fg': '#ffffff',
     },
   },
 ].map(defineTheme));
@@ -173,7 +180,8 @@ export function resolveTheme(id, { wallpaper, sprite } = {}) {
   const selectedWallpaper = theme.wallpapers.find(candidate => candidate.id === wallpaper) || theme.wallpapers[0];
   const selectedSprite = theme.sprites.find(candidate => candidate.id === sprite) || theme.sprites[0];
   const surfaceTheme = selectedWallpaper.id === 'black' || (theme.id === 'baymax' && selectedWallpaper.id === 'sanctuary') ? themes[1] : selectedWallpaper.id === 'white' ? themes[0] : theme;
-  return { ...theme, tokens: { ...surfaceTheme.tokens, '--cp-font-display': theme.tokens['--cp-font-display'] }, preferences: { ...theme.preferences, colorScheme: surfaceTheme.preferences.colorScheme }, background: selectedWallpaper.source, sprite: selectedSprite.source, wallpaperId: selectedWallpaper.id, spriteId: selectedSprite.id };
+  const identityTokens = Object.fromEntries(Object.entries(theme.tokens).filter(([key]) => key.startsWith('--cp-dock-') || key === '--cp-font-display'));
+  return { ...theme, tokens: { ...surfaceTheme.tokens, ...identityTokens }, preferences: { ...theme.preferences, colorScheme: surfaceTheme.preferences.colorScheme }, background: selectedWallpaper.source, sprite: selectedSprite.source, wallpaperId: selectedWallpaper.id, spriteId: selectedSprite.id };
 }
 
 export function motionPreference(value) {

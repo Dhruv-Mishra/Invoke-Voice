@@ -20,6 +20,12 @@ let audioContext = null;
 let mediaStream = null;
 let workletNode = null;
 let playbackContext = null;
+let playbackAnalyser = null;
+let meterFrame = null;
+let capturedLevel = 0;
+let capturedLevelAt = 0;
+let displayedLevel = 0;
+const meterSamples = new Float32Array(256);
 let activeSources = [];
 let nextPlayTime = 0;
 let isQuietMode = false;
@@ -53,7 +59,6 @@ const USER_SPEAKING_COOLDOWN_MS = 2000;
 let currentChatAbortController = null;
 let currentChatToken = 0;
 let stateLoadRevision = 0;
-let modelSelectionExplicit = false;
 let settingsDirty = false;
 
 // DOM Elements
@@ -67,11 +72,12 @@ const pipelinePreferenceKey = 'voice-supervisor-pipeline-v1';
 function readPipelinePreference() {
   try { return JSON.parse(localStorage.getItem(pipelinePreferenceKey)) || null; } catch { return null; }
 }
-const modelInput = document.getElementById('model-input');
-const modelLabel = document.getElementById('model-label');
+const modelName = document.getElementById('model-input');
 const voiceModeSelect = document.getElementById('voice-mode-select');
 const allowCloudOpt = document.getElementById('allow-cloud-opt');
 const muteMicOpt = document.getElementById('mute-mic-opt');
+const dockMuteBtn = document.getElementById('dock-mute-btn');
+const voiceDock = document.querySelector('.voice-strip');
 const pttModeOpt = document.getElementById('ptt-mode-opt');
 const quietModeBtn = document.getElementById('quiet-mode-btn');
 const quietBadge = document.getElementById('quiet-badge');
@@ -200,6 +206,7 @@ function setAgentState(state) {
   document.querySelector('.voice-strip').dataset.state = next;
   const active = isVoiceStarting || Boolean(voiceSocket);
   document.body.dataset.voiceActive = String(active);
+  syncVoiceMeter();
   const microphoneLabel = active ? 'Disconnect microphone' : micToggleBtn.disabled ? `Microphone unavailable: ${routeStatusBadge.textContent}` : 'Connect microphone';
   micToggleBtn.title = microphoneLabel;
   micToggleBtn.setAttribute('aria-label', microphoneLabel);
@@ -210,7 +217,7 @@ function setAgentState(state) {
   assistantToggle.setAttribute('aria-label', microphoneLabel);
   assistantToggle.setAttribute('aria-pressed', String(active));
   document.getElementById('voice-route-status').textContent = routeStatusBadge.textContent;
-  window.dispatchEvent(new CustomEvent('voice-supervisor:agent-state', { detail: { state: next } }));
+  window.dispatchEvent(new CustomEvent('voice-supervisor:agent-state', { detail: { state: next, active } }));
 }
 
 function showToolActivity() {
@@ -535,17 +542,10 @@ function updateRouteReadiness() {
     setAgentState('idle');
   }
 
-  const mode = voiceModeSelect?.value;
-  const vm = appConfig?.voiceModes?.find(v => v.id === mode);
-  const isIntegrated = isIntegratedVoiceMode(mode);
-  if (modelLabel) {
-    modelLabel.textContent = 'Model';
-  }
-  if (isIntegrated && vm?.model) {
-    modelInput.title = `Text chat model (${providerSelect.value}). Realtime voice uses env model: ${vm.model}`;
-  } else {
-    modelInput.title = 'Model identifier for text chat and local/cascade voice LLM';
-  }
+}
+
+function selectedTextModel() {
+  return appConfig?.providers?.find(provider => provider.id === providerSelect.value)?.model || '';
 }
 
 function syncPipelineControls() {
@@ -556,6 +556,9 @@ function syncPipelineControls() {
   document.getElementById('dedicated-pipeline').hidden = native;
   document.getElementById('cloud-consent-row').hidden = native || [sttProvider.value, providerSelect.value, ttsProvider.value].every(provider => provider === 'local');
   const configuredValue = (key, fallback) => appConfig?.configuration?.fields?.find(field => field.key === key)?.value || fallback;
+  const model = selectedTextModel();
+  modelName.value = ({ 'ling-local': 'Ling', 'gpt-5.6-sol': 'GPT-5.6 Sol', 'gemini-3.8-flash': 'Gemini 3.8 Flash' })[model] || model;
+  modelName.title = model;
   document.getElementById('native-model-name').textContent = appConfig?.voiceModes?.find(mode => mode.id === nativeProvider.value)?.model || '';
   document.getElementById('stt-model-name').textContent = sttProvider.value === 'local' ? appConfig?.local?.sttLabel || 'Local speech recognition' : sttProvider.value === 'openai' ? configuredValue('OPENAI_STT_MODEL', 'gpt-4o-mini-transcribe') : configuredValue('GEMINI_STT_MODEL', 'gemini-3.8-flash');
   document.getElementById('tts-model-name').textContent = ttsProvider.value === 'local' ? 'Kokoro' : ttsProvider.value === 'openai' ? configuredValue('OPENAI_TTS_MODEL', 'gpt-4o-mini-tts') : configuredValue('GEMINI_TTS_MODEL', 'gemini-2.5-flash-preview-tts');
@@ -590,7 +593,7 @@ function notifyReset(reason) {
 
 // Provider / Mode Switch Reset Handler
 function handleRouteSwitch(reason) {
-  try { localStorage.setItem(pipelinePreferenceKey, JSON.stringify({ provider: providerSelect.value, voiceMode: voiceModeSelect.value, sttProvider: sttProvider.value, ttsProvider: ttsProvider.value, nativeProvider: nativeProvider.value, model: modelInput.value, modelExplicit: modelSelectionExplicit })); } catch {}
+  try { localStorage.setItem(pipelinePreferenceKey, JSON.stringify({ provider: providerSelect.value, voiceMode: voiceModeSelect.value, sttProvider: sttProvider.value, ttsProvider: ttsProvider.value, nativeProvider: nativeProvider.value })); } catch {}
   if (currentChatAbortController) {
     currentChatAbortController.abort();
     currentChatAbortController = null;
@@ -612,6 +615,9 @@ function handleRouteSwitch(reason) {
 function getPlaybackContext() {
   if (!playbackContext) {
     playbackContext = new (window.AudioContext || window.webkitAudioContext)();
+    playbackAnalyser = playbackContext.createAnalyser();
+    playbackAnalyser.fftSize = meterSamples.length;
+    playbackAnalyser.connect(playbackContext.destination);
   }
   return playbackContext;
 }
@@ -668,7 +674,7 @@ function scheduleAudioBuffer(buffer, token, responseId) {
   const source = ctx.createBufferSource();
   source.buffer = buffer;
   source.voiceResponseId = responseId;
-  source.connect(ctx.destination);
+  source.connect(playbackAnalyser);
   source.start(nextPlayTime);
   setAgentState('speaking');
   activeSources.push(source);
@@ -695,6 +701,8 @@ function clearPlayback() {
     try { src.stop(); src.disconnect(); } catch (_) {}
   }
   activeSources = [];
+  displayedLevel = 0;
+  voiceDock.style.setProperty('--cp-voice-level', '0');
   if (playbackContext) {
     nextPlayTime = playbackContext.currentTime;
   }
@@ -807,7 +815,7 @@ async function startVoiceSession() {
 
   const mode = voiceModeSelect.value;
   const provider = providerSelect.value;
-  const textModel = modelInput.value.trim();
+  const textModel = selectedTextModel();
   const allowCloud = allowCloudOpt.checked;
   const isIntegrated = isIntegratedVoiceMode(mode);
   const vm = appConfig.voiceModes?.find(v => v.id === mode);
@@ -868,6 +876,8 @@ async function startVoiceSession() {
       if (sessionToken !== currentSessionToken) return;
       const msg = event.data;
       if (msg.type === 'level') {
+        capturedLevel = shouldForwardAudio() ? msg.peak : 0;
+        capturedLevelAt = performance.now();
         if (msg.peak > USER_SPEAKING_THRESHOLD && shouldForwardAudio()) {
           lastUserSpeechTime = Date.now();
         }
@@ -1056,9 +1066,42 @@ muteMicOpt.addEventListener('change', () => {
     endPttHold();
   }
   isMuted = muteMicOpt.checked;
+  dockMuteBtn.setAttribute('aria-pressed', String(isMuted));
+  dockMuteBtn.setAttribute('aria-label', isMuted ? 'Unmute microphone' : 'Mute microphone');
+  dockMuteBtn.title = isMuted ? 'Unmute microphone' : 'Mute microphone';
+  voiceDock.dataset.muted = String(isMuted);
+  capturedLevel = 0;
   for (const track of mediaStream?.getAudioTracks() || []) track.enabled = !isMuted;
   workletNode?.port.postMessage({ type: 'reset' });
 });
+
+dockMuteBtn.addEventListener('click', () => {
+  muteMicOpt.checked = !muteMicOpt.checked;
+  muteMicOpt.dispatchEvent(new Event('change', { bubbles: true }));
+});
+
+function syncVoiceMeter() {
+  cancelAnimationFrame(meterFrame);
+  meterFrame = null;
+  const active = isVoiceStarting || Boolean(voiceSocket);
+  if (!active || document.hidden) {
+    capturedLevel = displayedLevel = 0;
+    voiceDock.style.setProperty('--cp-voice-level', '0');
+    return;
+  }
+  const draw = () => {
+    let peak = !isMuted && performance.now() - capturedLevelAt < 200 ? capturedLevel : 0;
+    if (playbackAnalyser && activeSources.length) {
+      playbackAnalyser.getFloatTimeDomainData(meterSamples);
+      for (const sample of meterSamples) peak = Math.max(peak, Math.abs(sample));
+    }
+    displayedLevel = Math.max(Math.min(1, peak * 3), displayedLevel * .82);
+    voiceDock.style.setProperty('--cp-voice-level', displayedLevel.toFixed(3));
+    meterFrame = requestAnimationFrame(draw);
+  };
+  meterFrame = requestAnimationFrame(draw);
+}
+document.addEventListener('visibilitychange', syncVoiceMeter);
 
 pttModeOpt.addEventListener('change', () => {
   isPttMode = pttModeOpt.checked;
@@ -1556,7 +1599,7 @@ if (window.voiceSupervisorUpdates && applicationUpdate && applicationUpdateBtn) 
 
 // REST: Config and State Loading
 async function loadConfig(preserveSelection = false) {
-  const selection = preserveSelection ? { provider: providerSelect.value, voiceMode: voiceModeSelect.value, sttProvider: sttProvider.value, ttsProvider: ttsProvider.value, nativeProvider: nativeProvider.value, model: modelInput.value, modelExplicit: modelSelectionExplicit } : readPipelinePreference();
+  const selection = preserveSelection ? { provider: providerSelect.value, voiceMode: voiceModeSelect.value, sttProvider: sttProvider.value, ttsProvider: ttsProvider.value, nativeProvider: nativeProvider.value } : readPipelinePreference();
   try {
     const res = await fetch('/api/config');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1590,14 +1633,6 @@ async function loadConfig(preserveSelection = false) {
     for (const [control, saved] of [[sttProvider, selection?.sttProvider], [ttsProvider, selection?.ttsProvider], [nativeProvider, selection?.nativeProvider]]) {
       if ([...control.options].some(option => option.value === saved)) control.value = saved;
     }
-    const currentProv = appConfig.providers?.find(p => p.id === providerSelect.value);
-    if (selection?.modelExplicit) {
-      modelInput.value = selection.model;
-    } else if (currentProv?.model) {
-      modelInput.value = currentProv.model;
-    }
-    modelSelectionExplicit = selection?.modelExplicit === true;
-
     populateSettingsOptions();
     populateTaskModalOptions();
     populateIntegrationsTable();
@@ -2557,7 +2592,7 @@ async function sendChatMessage() {
   conversation.push({ role: 'user', content: text });
 
   const provider = providerSelect.value;
-  const model = modelInput.value.trim();
+  const model = selectedTextModel();
 
   // Abort previous in-flight chat request
   if (currentChatAbortController) {
@@ -2682,11 +2717,6 @@ window.addEventListener('voice-supervisor:themed-chat', () => {
 
 // Route controls event listeners
 providerSelect.addEventListener('change', () => {
-  const currentProv = appConfig?.providers?.find(p => p.id === providerSelect.value);
-  if (currentProv?.model) {
-    modelInput.value = currentProv.model;
-  }
-  modelSelectionExplicit = false;
   handleRouteSwitch('provider change');
 });
 
@@ -2705,11 +2735,6 @@ nativeProvider.addEventListener('change', () => {
 sttProvider.addEventListener('change', () => handleRouteSwitch('speech recognition change'));
 ttsProvider.addEventListener('change', () => handleRouteSwitch('speech synthesis change'));
 document.addEventListener('change', () => refreshPillbars());
-
-modelInput.addEventListener('change', () => {
-  modelSelectionExplicit = true;
-  handleRouteSwitch('model change');
-});
 
 let routeConfigOpener = null;
 function openRouteConfig(opener) {

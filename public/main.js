@@ -4,7 +4,7 @@ import { marked } from 'marked';
 import {
   Activity, AppWindow, AudioLines, BellOff, CalendarDays, Check, CheckSquare, ChevronLeft, ChevronRight, CircleDashed, ClipboardCheck, createIcons, Edit2, Folder,
   ExternalLink, File, FileText, FlaskConical, FolderKanban, HardDriveDownload, House, KeyRound, Keyboard,
-  LayoutDashboard, MessageSquare, MessageSquarePlus, Mic, PanelLeftClose, Palette, Play, Plus,
+  LayoutDashboard, MessageSquare, MessageSquarePlus, Mic, MicOff, PanelLeftClose, Palette, Play, Plus,
   PlusCircle, Radio, RefreshCw, Save, ScanSearch, Send, Settings,
   SlidersHorizontal, Sparkles, Square, Trash2, X, Heart, MessagesSquare, Orbit, Radar, Terminal, Volume2, Zap,
 } from 'lucide';
@@ -16,7 +16,7 @@ window.DOMPurify = DOMPurify;
 window.marked = marked;
 const appIcons = { Activity, AppWindow, Folder, AudioLines, Check, ChevronLeft, ChevronRight, ClipboardCheck, Heart, MessagesSquare, Orbit, Radar, Terminal, Volume2, Zap, BellOff, CalendarDays, CheckSquare, CircleDashed, Edit2, ExternalLink,
   File, FileText, FlaskConical, FolderKanban, HardDriveDownload, House, KeyRound, Keyboard, LayoutDashboard,
-  MessageSquare, MessageSquarePlus, Mic, PanelLeftClose, Palette, Play, Plus, PlusCircle, Radio, RefreshCw,
+  MessageSquare, MessageSquarePlus, Mic, MicOff, PanelLeftClose, Palette, Play, Plus, PlusCircle, Radio, RefreshCw,
   Save, ScanSearch, Send, Settings, SlidersHorizontal, Sparkles, Square, Trash2, X };
 window.lucide = { createIcons: () => {
   for (const [selector, name] of Object.entries({ '#home-tab': theme.value.icons.home, '#workspace-tab': theme.value.icons.tasks, '#settings-tab': theme.value.icons.settings, '#mic-toggle-btn': theme.value.icons.microphone })) {
@@ -92,6 +92,7 @@ if (savedTheme === 'opal') {
 }
 window.getThemeSessionOptions = () => ({ theme: theme.value.id, themePersona: personaEnabled, themeVoice: themeVoiceEnabled });
 const state = ref('idle');
+const voiceActive = ref(false);
 let soundsEnabled = savedSounds === 'true' ? true : savedSounds === 'false' ? false : null;
 let interactionAudio = null;
 let soundTimeout;
@@ -157,6 +158,7 @@ function onSoundPreference(event) {
 
 function onState(event) {
   state.value = stateCopy[event.detail?.state] ? event.detail.state : 'idle';
+  voiceActive.value = event.detail?.active === true;
 }
 
 function onTheme(event) {
@@ -241,7 +243,7 @@ const VoiceHome = {
       h('section', { class: 'assistant-stage', 'aria-label': 'Voice assistant' }, [
         h('div', { class: 'assistant-artwork' }, [
           h('button', { id: 'assistant-toggle-btn', class: 'assistant-toggle', type: 'button', 'aria-label': 'Connect microphone', disabled: true }, [
-            h(VoiceSprite, { state: state.value, source: theme.value.sprite, animations: theme.value.animations, kind: theme.value.kind, variant: theme.value.spriteId }),
+            h(VoiceSprite, { state: state.value, active: voiceActive.value, source: theme.value.sprite, animations: theme.value.animations, kind: theme.value.kind, variant: theme.value.spriteId }),
           ]),
           h('button', { class: 'assistant-appearance btn btn-icon', type: 'button', popovertarget: 'appearance-popover', title: 'Change appearance', 'aria-label': 'Change appearance' }, [icon('palette')]),
         ]),

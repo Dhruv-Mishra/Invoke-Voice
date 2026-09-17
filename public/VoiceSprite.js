@@ -1,4 +1,4 @@
-import { h } from 'vue';
+import { h, ref, watch } from 'vue';
 
 export const defaultAnimations = Object.freeze({
   idle: 'sprite-float',
@@ -12,18 +12,24 @@ export default {
   name: 'VoiceSprite',
   props: {
     state: { type: String, default: 'idle' },
+    active: { type: Boolean, default: false },
     source: { type: String, required: true },
     animations: { type: Object, default: () => defaultAnimations },
     kind: { type: String, default: 'copilot' },
     variant: { type: String, default: 'default' },
   },
   setup(props) {
+    const transition = ref('');
+    watch(() => props.active, active => { transition.value = active ? 'invoke' : 'release'; });
     return () => h('div', {
       id: 'agent-sprite',
       class: 'voice-sprite',
       'data-state': props.state,
       'data-kind': props.kind,
       'data-variant': props.variant,
+      'data-active': String(props.active),
+      'data-transition': transition.value,
+      onAnimationend: event => { if (event.target === event.currentTarget) transition.value = ''; },
       'aria-label': `Agent ${props.state}`,
       role: 'img',
     }, props.kind === 'companion' ? [h('div', {

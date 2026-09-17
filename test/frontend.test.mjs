@@ -182,6 +182,10 @@ test('themes resolve bounded variants and preserve the default', () => {
     assert.deepEqual(theme.wallpapers.slice(2).map(wallpaper => wallpaper.id), ['white', 'black']);
     assert.equal(resolveTheme(theme.id, { wallpaper: 'black' }).preferences.colorScheme, 'dark');
     assert.equal(resolveTheme(theme.id, { wallpaper: 'white' }).preferences.colorScheme, 'light');
+    for (const wallpaper of ['white', 'black']) {
+      assert.equal(resolveTheme(theme.id, { wallpaper }).tokens['--cp-dock-radius'], theme.tokens['--cp-dock-radius']);
+      assert.equal(resolveTheme(theme.id, { wallpaper }).tokens['--cp-dock-accent'], theme.tokens['--cp-dock-accent']);
+    }
     assert.ok(theme.sounds.bootup && theme.sounds.action);
     for (const variant of [...theme.wallpapers, ...theme.sprites]) assert.ok(existsSync(new URL(variant.source)));
     for (const source of Object.values(theme.sounds)) if (source) assert.ok(existsSync(new URL(source)));

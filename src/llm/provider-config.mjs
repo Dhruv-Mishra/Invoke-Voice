@@ -23,7 +23,7 @@ export function providerProfiles(env = process.env) {
     {
       id: 'openai',
       label: 'OpenAI',
-      model: env.OPENAI_MODEL || 'gpt-4.1-mini',
+      model: env.OPENAI_MODEL || 'gpt-5.6-sol',
       configured: Boolean(env.OPENAI_API_KEY),
     },
     {
@@ -51,7 +51,7 @@ export function resolveEndpoint(provider, model, env = process.env) {
       return {
         url: `${base}/chat/completions`,
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${env.OPENAI_API_KEY}` },
-        model: model || env.OPENAI_MODEL || 'gpt-4.1-mini',
+        model: model || env.OPENAI_MODEL || 'gpt-5.6-sol',
       };
     }
     case 'anthropic': {

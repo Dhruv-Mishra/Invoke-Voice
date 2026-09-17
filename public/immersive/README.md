@@ -4,7 +4,7 @@ All media is bundled locally. No third-party asset requests occur while using th
 
 ## Artwork
 
-The active `copilot-background-1/2.webp`, `jarvis-background-1/2.webp` and `baymax-background-1/2.webp` files derive from user-supplied originals in `voice_app_assets`. These assets have no accompanying license; verify distribution rights before shipping externally. `white-background.webp` and `black-background.webp` are generated neutral gradients. All eight backgrounds are 1600x900, square-pixel WebP, quality 84, compression level 6, YUV420. Copilot background 2 and both Baymax images are naturally reframed above their lower-right generation marks, without patches or blur. Originals remain unchanged.
+The active `copilot-background-1/2.webp`, `jarvis-background-1/2.webp` and `baymax-background-1/2.webp` files derive from user-supplied originals in `voice_app_assets`. These assets have no accompanying license; verify distribution rights before shipping externally. `white-background.webp` and `black-background.webp` are generated neutral gradients. All eight backgrounds are 1600x900, square-pixel WebP, quality 84, compression level 6, YUV420. Copilot background 2 and both Baymax images use a localized FFmpeg `delogo` repair over their lower-right generation marks. Aspect fitting crops equally around the original center only where necessary for 16:9; no top-biased reframing is used. Originals remain unchanged. At display time, one centered, full-viewport background continues behind the translucent navigation; non-16:9 viewports use centered cover fitting.
 
 Sprite and retained legacy artwork provenance:
 

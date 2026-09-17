@@ -412,6 +412,8 @@ try {
   setup.supported = true;
 
   console.log('Browser fixture: desktop modal and resize');
+  resizeWindow(1440, 960);
+  await waitFor(() => innerWidth === 1440 && document.getElementById('view-dialog').matches(':modal'));
   await evaluate(() => { window.fixtureHome = document.getElementById('agent-sprite'); window.fixtureSettings = document.getElementById('settings-view'); });
   assert.equal(await evaluate(() => document.getElementById('view-dialog').matches(':modal') && !document.getElementById('voice-personality-app').hidden), true);
   assert.equal(await evaluate(() => {
@@ -468,7 +470,9 @@ try {
     await pointerClick('#task-dialog-close');
     await visit('settings');
     await pointerClick('#settings-route-btn');
-    assert.equal(await checkEditableInputs('#route-config-dialog'), 1);
+    assert.equal(await checkEditableInputs('#route-config-dialog'), 0);
+    assert.equal(await evaluate(() => document.querySelector('output#model-input')?.value), 'fixture');
+    assert.deepEqual(await evaluate(() => ['stt-provider', 'provider-select', 'tts-provider'].map(id => [...document.getElementById(id).options].map(option => option.value))), Array.from({ length: 3 }, () => ['local', 'openai', 'gemini']));
     await pointerClick('#route-config-close');
     await pointerClick('#config-section > summary');
     assert.equal(await checkEditableInputs('#config-fields'), 3);
@@ -594,6 +598,40 @@ try {
   assert.notEqual(await evaluate(() => getComputedStyle(document.querySelector('.sprite-image')).animationName), 'none');
   await browser.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
 
+  for (const [id, invocation] of [['alpine', 'sprite-invoke'], ['jarvis', 'reactor-invoke'], ['baymax', 'companion-invoke']]) {
+    await evaluate(theme => window.dispatchEvent(new CustomEvent('voice-supervisor:theme', { detail: { id: theme } })), id);
+    const motion = await evaluate(async () => {
+      await new Promise(requestAnimationFrame);
+      const sprite = document.getElementById('agent-sprite');
+      const artwork = sprite.querySelector('.companion-sprite') || sprite.querySelector('.sprite-image');
+      const animation = artwork.getAnimations()[0];
+      const iterations = animation.effect.getTiming().iterations;
+      animation.pause();
+      animation.currentTime = 0;
+      const start = getComputedStyle(artwork).transform;
+      animation.currentTime = Number(animation.effect.getTiming().duration) / 2;
+      const middle = getComputedStyle(artwork).transform;
+      animation.play();
+      return { looping: iterations === Infinity, moving: start !== middle };
+    });
+    assert.deepEqual(motion, { looping: true, moving: true });
+    for (const active of [true, false]) {
+      const transition = await evaluate(async active => {
+        const image = document.querySelector('#agent-sprite .sprite-image');
+        window.dispatchEvent(new CustomEvent('voice-supervisor:agent-state', { detail: { state: 'idle', active } }));
+        await new Promise(requestAnimationFrame);
+        const sprite = document.getElementById('agent-sprite');
+        const animation = sprite.getAnimations()[0];
+        const result = { name: animation.animationName, direction: animation.effect.getTiming().direction, iterations: animation.effect.getTiming().iterations };
+        await animation.finished;
+        await new Promise(requestAnimationFrame);
+        return { ...result, finished: sprite.dataset.transition === '', stableImage: image === sprite.querySelector('.sprite-image') };
+      }, active);
+      assert.deepEqual(transition, { name: invocation, direction: active ? 'normal' : 'reverse', iterations: 1, finished: true, stableImage: true });
+    }
+  }
+  await evaluate(() => window.dispatchEvent(new CustomEvent('voice-supervisor:theme', { detail: { id: 'jarvis' } })));
+
   const stableEventConnections = eventConnections;
   await waitFor(() => document.querySelectorAll('.history-entry').length === 2);
   await click('.history-entry');
@@ -646,6 +684,12 @@ try {
   assert.equal(await evaluate(() => document.getElementById('voice-mode-select').value), 'gemini-live');
   await screenshot('native-pipeline-desktop');
   await pointerClick('[data-for="pipeline-mode"] button[value="dedicated"]');
+  await pointerClick('[data-for="provider-select"] button[value="openai"]');
+  assert.equal(await evaluate(() => document.getElementById('model-input').value), 'openai-fixture');
+  await pointerClick('[data-for="provider-select"] button[value="gemini"]');
+  assert.equal(await evaluate(() => document.getElementById('model-input').value), 'google-fixture');
+  await pointerClick('[data-for="provider-select"] button[value="local"]');
+  assert.equal(await evaluate(() => document.getElementById('model-input').value), 'fixture');
   await pointerClick('[data-for="stt-provider"] button[value="gemini"]');
   await pointerClick('[data-for="tts-provider"] button[value="openai"]');
   assert.equal(await evaluate(() => document.getElementById('provider-select').value), 'local');
@@ -673,7 +717,19 @@ try {
   console.log('Browser fixture: checking voice');
   await waitFor(() => document.getElementById('agent-sprite').dataset.state === 'listening');
   assert.deepEqual([voiceStartRequest.sttProvider, voiceStartRequest.ttsProvider], ['local', 'local']);
+  assert.equal(voiceStartRequest.model, 'fixture');
+  assert.equal(await evaluate(() => document.getElementById('agent-sprite').dataset.active), 'true');
+  await pointerClick('#dock-mute-btn');
+  assert.equal(await evaluate(() => document.getElementById('mute-mic-opt').checked && document.getElementById('dock-mute-btn').getAttribute('aria-pressed') === 'true'), true);
+  await pointerClick('#dock-mute-btn');
+  assert.equal(await evaluate(() => document.getElementById('mute-mic-opt').checked), false);
   assert.equal(await evaluate(() => /jarvis-bootup/.test(window.fixtureCues.at(-1)?.source)), true);
+  const meterAudio = Buffer.alloc(24000 * 2);
+  for (let sample = 0; sample < 24000; sample++) meterAudio.writeInt16LE(Math.round(Math.sin(sample * 2 * Math.PI * 220 / 24000) * 4096), sample * 2);
+  await voice({ type: 'audio', data: meterAudio.toString('base64'), mimeType: 'audio/pcm', sampleRate: 24000, responseId: 'meter-fixture' });
+  await waitFor(() => Number(document.querySelector('.voice-strip').style.getPropertyValue('--cp-voice-level')) > .1);
+  await voice({ type: 'interrupted' });
+  assert.equal(await evaluate(() => Number(document.querySelector('.voice-strip').style.getPropertyValue('--cp-voice-level'))), 0);
   assert.equal(await evaluate(() => document.querySelectorAll('.voice-bars, #mic-canvas').length), 0);
   assert.equal(await evaluate(() => getComputedStyle(document.querySelector('.sprite-image')).visibility), 'visible');
   await evaluate(() => { window.fixtureSpriteImage = document.querySelector('.sprite-image'); });
@@ -754,6 +810,14 @@ try {
   await click('#mic-toggle-btn');
   assert.equal(await evaluate(() => document.getElementById('closed-caption').hidden), true);
   assert.equal(await evaluate(() => document.getElementById('mic-toggle-btn').getAttribute('aria-pressed')), 'false');
+  assert.equal(await evaluate(() => document.querySelector('.voice-strip').style.getPropertyValue('--cp-voice-level')), '0');
+  assert.equal(await evaluate(() => document.getElementById('agent-sprite').dataset.active), 'false');
+  assert.equal(await evaluate(() => {
+    const wallpaper = getComputedStyle(document.documentElement, '::before');
+    const sidebar = getComputedStyle(document.querySelector('.top-bar'));
+    const alpha = Number(sidebar.backgroundColor.match(/[\d.]+/g).at(-1));
+    return getComputedStyle(document.body).backgroundColor === 'rgba(0, 0, 0, 0)' && wallpaper.left === '0px' && wallpaper.right === '0px' && wallpaper.zIndex === '-1' && alpha < .6;
+  }), true);
   assert.equal(await evaluate(() => document.body.dataset.voiceActive === 'false'
     && !document.body.hasAttribute('data-voice-activity')
     && Number(getComputedStyle(document.body, '::before').opacity) === 0), true);

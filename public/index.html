@@ -612,21 +612,27 @@
       <section class="settings-section">
         <h2 id="avatar-label" class="settings-section-title">Theme</h2>
         <div class="appearance-options" role="group" aria-labelledby="avatar-label"></div>
+        <fieldset class="settings-group appearance-settings"><legend>Appearance</legend>
         <div class="setting-row"><label for="wallpaper-strength">Wallpaper strength</label><div class="theme-range"><input id="wallpaper-strength" type="range" min="0" max="100" step="5"><output id="wallpaper-strength-value" for="wallpaper-strength"></output></div></div>
         <div class="setting-row setting-choice"><label for="motion-preference">Motion</label><select id="motion-preference" data-pillbar><option value="system">System</option><option value="reduce">Reduced</option><option value="full">Full</option></select></div>
         <label class="form-row-checkbox toggle-control setting-row" for="transparency-preference">
           <input type="checkbox" id="transparency-preference" checked>
           <span class="toggle-track" aria-hidden="true"></span><span>Transparency</span>
         </label>
+        </fieldset>
+        <fieldset class="settings-group"><legend>Sound</legend>
         <label class="form-row-checkbox toggle-control setting-row" for="theme-sounds">
           <input type="checkbox" id="theme-sounds" data-theme-sounds>
           <span class="toggle-track" aria-hidden="true"></span><span>Interaction sounds</span>
         </label>
         <div class="setting-row"><label for="theme-volume">Sound level</label><div class="theme-range"><input id="theme-volume" type="range" min="0" max="100" step="5"><output id="theme-volume-value" for="theme-volume"></output><button id="theme-sound-preview" class="btn btn-icon" type="button" title="Preview theme sound" aria-label="Preview theme sound"><i data-lucide="volume-2" aria-hidden="true"></i></button></div></div>
+        </fieldset>
+        <fieldset class="settings-group"><legend>Session defaults</legend>
         <label class="form-row-checkbox toggle-control setting-row" for="theme-persona"><input type="checkbox" id="theme-persona" checked><span class="toggle-track" aria-hidden="true"></span><span>Theme persona for new sessions</span></label>
         <label class="form-row-checkbox toggle-control setting-row" for="theme-voice"><input type="checkbox" id="theme-voice" checked><span class="toggle-track" aria-hidden="true"></span><span>Theme voice for new calls</span></label>
         <div class="utility-toolbar"><button id="theme-new-chat" class="btn" type="button"><i data-lucide="message-square-plus" aria-hidden="true"></i>New themed chat</button></div>
-        <details class="theme-credits"><summary>Asset credits</summary><p>Companion: <a href="https://github.com/microsoft/fluentui-emoji" target="_blank" rel="noopener noreferrer">Microsoft Fluent Emoji</a> (<a id="theme-art-license" target="_blank" rel="noopener noreferrer">MIT license</a>), adapted with original expressions. Sounds: <a href="https://kenney.nl/assets/interface-sounds" target="_blank" rel="noopener noreferrer">Kenney</a> (CC0). Wallpapers: <a href="https://unsplash.com" target="_blank" rel="noopener noreferrer">Unsplash</a>. Character-inspired themes are unofficial; voices are provider presets, not character voice clones.</p></details>
+        </fieldset>
+        <details class="theme-credits"><summary>Asset credits</summary><p>Companion: <a href="https://github.com/microsoft/fluentui-emoji" target="_blank" rel="noopener noreferrer">Microsoft Fluent Emoji</a> (<a id="theme-art-license" target="_blank" rel="noopener noreferrer">MIT license</a>), adapted with original expressions. Active wallpapers and sounds: user-supplied media. Character-inspired themes are unofficial; voices are provider presets, not character voice clones.</p></details>
       </section>
       <section class="settings-section" id="application-update" hidden>
         <h2 class="settings-section-title"><i data-lucide="hard-drive-download" aria-hidden="true"></i>Application</h2>
@@ -965,8 +971,7 @@
         <section class="pipeline-section" id="llm-pipeline">
           <label class="control-label" for="provider-select">LLM</label>
           <select id="provider-select" data-pillbar data-provider-icons aria-label="LLM Provider"></select>
-          <label class="sr-only" id="model-label" for="model-input">Model</label>
-          <input type="text" id="model-input" aria-label="Text or cascade model identifier" placeholder="Text model">
+          <output class="pipeline-model" id="model-input" aria-label="Language model"></output>
         </section>
         <section class="pipeline-section">
           <label class="control-label" for="tts-provider">Text to speech</label>
@@ -986,9 +991,11 @@
 
   <div class="voice-strip" role="region" aria-label="Voice controls">
     <button type="button" class="dock-utility" id="voice-options-btn" aria-label="Voice options" title="Voice options" aria-expanded="false" aria-controls="voice-options"><i data-lucide="sliders-horizontal"></i></button>
+    <button type="button" class="dock-utility" id="dock-mute-btn" aria-label="Mute microphone" title="Mute microphone" aria-pressed="false"><i data-lucide="mic-off"></i></button>
     <button class="btn btn-accent" id="mic-toggle-btn" type="button" aria-label="Connect or Disconnect Microphone" title="Connect microphone">
       <i data-lucide="mic"></i><span id="mic-btn-label">Connect Mic</span>
     </button>
+    <button class="dock-utility" id="interrupt-btn" type="button" disabled aria-label="Interrupt speech" title="Stop assistant speech"><i data-lucide="square"></i></button>
     <button type="button" class="dock-utility" id="open-chat-btn" aria-label="Open conversation" title="Type a message" aria-haspopup="dialog" aria-controls="conversation-dialog"><i data-lucide="keyboard"></i></button>
     <div class="voice-options" id="voice-options" hidden>
     <h2>Voice options</h2>
@@ -1010,9 +1017,6 @@
       </button>
       <button class="btn" id="ptt-btn" type="button" disabled aria-label="Hold to talk or commit speech" title="Commit speech or hold to talk in PTT mode">
         <i data-lucide="radio"></i><span id="ptt-btn-label">Commit</span>
-      </button>
-      <button class="btn btn-danger btn-icon" id="interrupt-btn" type="button" disabled aria-label="Interrupt speech" title="Stop assistant speech">
-        <i data-lucide="square"></i>
       </button>
     </div>
     </div>

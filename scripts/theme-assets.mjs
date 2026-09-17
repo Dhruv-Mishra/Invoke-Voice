@@ -29,13 +29,16 @@ for (const [name, start, end] of [['white', 255, 239], ['black', 8, 29]]) {
     '-frames:v', '1', '-c:v', 'libwebp', '-quality', '84', '-compression_level', '6', '-pix_fmt', 'yuv420p',
     path.join(destination, `${name}-background.webp`)], { stdio: 'inherit' });
 }
-for (const [filename, name, reframe] of images) {
+for (const [filename, name, repairCorner] of images) {
+  const input = path.join(source, filename);
+  const { streams: [dimensions] } = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height', '-of', 'json', input], { encoding: 'utf8' }));
+  const corner = { x: Math.floor(dimensions.width * 0.885), y: Math.floor(dimensions.height * 0.805), width: Math.ceil(dimensions.width * 0.055), height: Math.ceil(dimensions.height * 0.09) };
   const filters = [
-    ...(reframe ? ['crop=iw:ih*0.8:0:0'] : []),
+    ...(repairCorner ? [`delogo=x=${corner.x}:y=${corner.y}:w=${corner.width}:h=${corner.height}`] : []),
     'scale=1600:900:force_original_aspect_ratio=increase:flags=lanczos',
-    'crop=1600:900', 'setsar=1',
+    'crop=1600:900:(iw-1600)/2:(ih-900)/2', 'setsar=1',
   ];
-  execFileSync('ffmpeg', ['-v', 'error', '-y', '-i', path.join(source, filename),
+  execFileSync('ffmpeg', ['-v', 'error', '-y', '-i', input,
     '-map_metadata', '-1', '-vf', filters.join(','), '-frames:v', '1',
     '-c:v', 'libwebp', '-quality', '84', '-compression_level', '6', '-pix_fmt', 'yuv420p',
     path.join(destination, `${name}.webp`)], { stdio: 'inherit' });

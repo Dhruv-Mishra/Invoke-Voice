@@ -268,9 +268,9 @@
 
     /* Buttons, Badges, & Inputs */
     .btn {
-      min-height: 36px; padding: 6px 12px; border: 1px solid var(--cp-border); border-radius: 6px; background: var(--cp-surface);
-      max-width: 100%; color: var(--cp-text); font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; display: inline-flex;
-      align-items: center; justify-content: center; gap: 6px; transition: background 120ms ease, border-color 120ms ease; white-space: normal; overflow-wrap: anywhere;
+      min-height: 44px; padding: 10px 16px; border: 1px solid var(--cp-border); border-radius: var(--cp-radius-control); background: var(--cp-surface);
+      max-width: 100%; color: var(--cp-text); font: inherit; font-size: var(--cp-type-sm); font-weight: 400; cursor: pointer; display: inline-flex;
+      align-items: center; justify-content: center; gap: 8px; white-space: normal; overflow-wrap: anywhere;
     }
     .btn:hover:not(:disabled) { background: var(--cp-surface-soft); border-color: var(--cp-border-strong); }
     .btn:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -278,14 +278,14 @@
     .btn-accent:hover:not(:disabled) { background: var(--cp-accent-hover); border-color: var(--cp-accent-hover); }
     .btn-danger { background: var(--cp-surface); color: var(--cp-danger); border-color: var(--cp-danger); }
     .btn-danger:hover:not(:disabled) { background: var(--cp-surface-soft); }
-    .btn-icon { width: 36px; min-width: 36px; padding: 0; justify-content: center; }
+    .btn-icon { width: 44px; min-width: 44px; height: 44px; padding: 0; justify-content: center; background: transparent; border-color: transparent; }
     #quiet-mode-btn { width: auto; min-width: 36px; padding: 0 8px; gap: 4px; }
-    .btn svg, .view-tab svg, .item-row svg, .task-card svg { width: 14px; height: 14px; flex-shrink: 0; vertical-align: middle; }
-    .btn-icon svg { width: 16px; height: 16px; }
+    .btn svg, .view-tab svg, .item-row svg, .task-card svg { width: 18px; height: 18px; flex-shrink: 0; vertical-align: middle; stroke-width: 1.75; }
+    .btn-icon svg { width: 18px; height: 18px; }
 
     .badge {
-      display: inline-flex; align-items: center; min-height: 22px; padding: 2px 7px; border: 1px solid var(--cp-border);
-      border-radius: 6px; background: var(--cp-surface-soft); color: var(--cp-text); font-size: 11px; font-weight: 600; line-height: 1; white-space: nowrap;
+      display: inline-flex; align-items: center; min-height: 24px; padding: 3px 8px; border: 0;
+      border-radius: 4px; background: var(--cp-surface-soft); color: var(--cp-text-muted); font-size: var(--cp-type-xs); font-weight: 400; line-height: 1.5; white-space: nowrap;
     }
     .badge-success { background: var(--cp-surface); color: var(--cp-success); border-color: var(--cp-success); }
     .badge-warning { background: var(--cp-surface); color: var(--cp-warning); border-color: var(--cp-warning); }
@@ -294,7 +294,7 @@
 
     input:is([type="text"], [type="url"], [type="number"], [type="password"]), textarea, select {
       min-width: 0; max-width: 100%; min-height: 40px; padding: 8px 10px; border: 1px solid var(--cp-border);
-      border-radius: 6px; background: var(--cp-surface); color: var(--cp-text); font: inherit; font-size: 13px; transition: border-color 120ms ease;
+      border-radius: var(--cp-radius-control); background: var(--cp-surface); color: var(--cp-text); font: inherit; font-size: var(--cp-type-base); transition: border-color var(--cp-duration-fast) ease;
     }
     textarea { resize: vertical; }
     input:is([type="text"], [type="url"], [type="number"], [type="password"]):hover:not(:disabled), textarea:hover:not(:disabled), select:hover:not(:disabled) { border-color: var(--cp-border-strong); }
@@ -391,20 +391,22 @@
     }
     dialog::backdrop { background: var(--cp-overlay); }
     .dialog-header { font-size: 18px; font-weight: 600; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid var(--cp-border); display: flex; justify-content: space-between; align-items: center; gap: 12px; }
-    .dialog-header .btn { min-height: 36px; width: 36px; flex-shrink: 0; padding: 0; justify-content: center; border-radius: 6px; }
+    .dialog-header .btn { min-height: 44px; width: 44px; flex-shrink: 0; padding: 0; justify-content: center; border-radius: var(--cp-radius-control); }
     .dialog-actions { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--cp-border); }
     .form-group { min-width: 0; display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
     .form-group:last-child { margin-bottom: 0; }
     .form-row-checkbox { display: flex; align-items: center; gap: 10px; min-height: 32px; margin-bottom: 0; font-size: 13px; }
-    label.control-label { font-size: 12px; color: var(--cp-text); font-weight: 600; text-transform: none; letter-spacing: 0; }
+    label.control-label { font-size: var(--cp-type-sm); color: var(--cp-text-muted); font-weight: 400; text-transform: none; letter-spacing: 0; }
 
     .advanced-disclosure { margin: 12px 0; padding: 12px 0; border-block: 1px solid var(--cp-border); background: transparent; }
     .advanced-disclosure summary { cursor: pointer; font-weight: 600; font-size: 13px; color: var(--cp-text-muted); letter-spacing: 0; user-select: none; }
     .advanced-disclosure .form-group { margin-top: 8px; }
 
-    .detail-content { display: flex; flex-direction: column; gap: 8px; max-height: 60vh; overflow-y: auto; font-size: 12px; padding-right: 4px; }
+    .detail-content { display: flex; flex-direction: column; gap: 16px; max-height: 60vh; overflow-y: auto; font-size: var(--cp-type-base); padding-right: 4px; }
     .detail-content p { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
-    .detail-content strong { color: var(--cp-text-muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+    .detail-content strong { color: var(--cp-text-muted); font-size: inherit; font-weight: 600; letter-spacing: 0; }
+    .detail-content .md-content p { display: block; }
+    .detail-content .md-content strong { color: inherit; }
     .detail-content h4 { font-size: 12px; font-weight: 650; color: var(--cp-text); margin-top: 4px; }
     .detail-observations { display: flex; flex-direction: column; gap: 6px; }
 
@@ -422,14 +424,14 @@
     .settings-form { display: flex; flex-direction: column; gap: 16px; }
     .settings-section { background: var(--cp-surface); border: 1px solid var(--cp-border); border-radius: 8px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
     .settings-section-title { font-size: 11px; font-weight: 700; color: var(--cp-text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
-    .field-hint { font-size: 11px; color: var(--cp-text-muted); margin-top: 2px; }
+    .field-hint { font-size: var(--cp-type-xs); color: var(--cp-text-muted); margin-top: 2px; }
     .settings-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 12px; }
     .settings-feedback { font-size: 12px; color: var(--cp-success); }
     .settings-feedback.error { color: var(--cp-danger); }
     .integrations-table-wrapper { overflow-x: auto; }
     .integrations-table { width: 100%; border-collapse: collapse; font-size: 12px; }
     .integrations-table th, .integrations-table td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--cp-border); }
-    .integrations-table th { font-size: 11px; font-weight: 600; color: var(--cp-text-muted); text-transform: uppercase; letter-spacing: 0.04em; background: var(--cp-surface-soft); }
+    .integrations-table th { font-size: var(--cp-type-xs); font-weight: 600; color: var(--cp-text-muted); letter-spacing: 0; background: transparent; }
     .integrations-table tr:last-child td { border-bottom: none; }
 
     /* Responsive Stack */
@@ -467,7 +469,10 @@
     </div>
   </dialog>
   <header class="top-bar">
-    <div class="sidebar-brand"><i data-lucide="sparkles" aria-hidden="true"></i><span>Supervisor</span></div>
+    <div class="sidebar-heading">
+      <div class="sidebar-brand"><i data-lucide="sparkles" aria-hidden="true"></i><span>Supervisor</span></div>
+      <button class="btn btn-icon" id="sidebar-toggle" type="button" aria-label="Collapse sidebar" title="Collapse sidebar" aria-expanded="true" aria-controls="sidebar-history"><i data-lucide="panel-left-close" aria-hidden="true"></i></button>
+    </div>
     <nav class="view-tabs" role="tablist" aria-label="Supervisor views">
       <button class="view-tab" id="home-tab" type="button" role="tab" title="Home" aria-selected="true" aria-controls="voice-personality-app" data-view="home">
         <i data-lucide="house"></i><span>Home</span>
@@ -485,12 +490,12 @@
         <i data-lucide="settings"></i><span>Settings</span>
       </button>
     </nav>
-    <section class="sidebar-history" aria-labelledby="history-title">
-      <div class="history-header"><h2 id="history-title">Task history</h2><button class="btn btn-icon" id="history-compose-btn" type="button" title="New task" aria-label="New task"><i data-lucide="plus"></i></button></div>
+    <section class="sidebar-history" id="sidebar-history" aria-labelledby="history-title">
+      <div class="history-header"><h2 id="history-title">Recent work</h2><button class="btn btn-icon" id="history-compose-btn" type="button" title="New task" aria-label="New task"><i data-lucide="plus"></i></button></div>
       <p class="history-empty" id="history-empty">No tasks yet</p>
       <div id="chat-history" class="history-list" role="list" aria-label="Task history"></div>
     </section>
-    <div class="sidebar-footer"><span>Voice Work Supervisor</span></div>
+    <div class="sidebar-footer"><i data-lucide="hard-drive-download" aria-hidden="true"></i><span>On this device</span></div>
     <div class="header-status">
       <span class="badge" id="route-status-badge">Checking...</span>
       <button class="btn" id="route-config-btn" type="button" aria-haspopup="dialog" aria-controls="route-config-dialog" title="Configure provider, model, and voice route">
@@ -500,6 +505,9 @@
     </div>
   </header>
 
+  <div id="appearance-popover" popover="auto" aria-label="Assistant appearance">
+    <div class="appearance-options" role="group" aria-label="Assistant appearance"></div>
+  </div>
   <div class="app-main">
   <div class="page-views">
   <main id="voice-personality-app" role="tabpanel" aria-labelledby="home-tab"></main>
@@ -512,7 +520,7 @@
   <div class="application-body" id="workspace-view" role="tabpanel" aria-labelledby="workspace-tab" hidden>
     <main class="center-pane">
       <details class="areas-disclosure" id="areas-disclosure">
-        <summary class="areas-summary">Work Areas</summary>
+        <summary class="areas-summary">Work areas</summary>
         <div class="areas-toolbar">
           <button class="btn" id="btn-new-area" type="button" aria-label="Register Work Area">
             <i data-lucide="plus"></i>
@@ -529,7 +537,7 @@
         <div class="task-header-actions">
           <button class="btn btn-accent" id="btn-new-task" type="button" aria-label="Dispatch New Task">
             <i data-lucide="plus-circle"></i>
-            <span>New Task</span>
+            <span>New task</span>
           </button>
           <button class="btn btn-icon" id="btn-refresh-tasks" type="button" aria-label="Refresh Status" title="Refresh tasks">
             <i data-lucide="refresh-cw"></i>
@@ -550,14 +558,13 @@
     <div class="calendar-empty">
       <i data-lucide="calendar-days"></i>
       <h2>No calendar connected</h2>
-      <p>Calendar access isn't available in this workspace yet.</p>
       <button type="button" class="btn" data-open-view="settings"><i data-lucide="settings"></i>View integrations</button>
     </div>
   </section>
 
   <section class="standalone-view" id="files-view" role="tabpanel" aria-labelledby="files-tab" hidden>
     <div class="page-header">
-      <div><h1>Files</h1><p>Documents &amp; work areas</p></div>
+      <div><h1>Files</h1></div>
       <button type="button" class="btn btn-accent" id="import-document-btn"><i data-lucide="plus"></i>Open document</button>
     </div>
     <input type="file" id="document-input" accept=".txt,.md,.json,.csv,.log" hidden>
@@ -583,13 +590,13 @@
           <span class="badge" id="tool-kind-badge">Function</span>
         </div>
         <form class="tool-form" id="tool-form"></form>
-        <div class="tool-output">
-          <div class="tool-output-header">
+        <details class="tool-output advanced-disclosure">
+          <summary class="tool-output-header">
             <span class="section-title">Request &amp; Result</span>
             <span class="badge" id="tool-run-status">Idle</span>
-          </div>
+          </summary>
           <pre id="tool-result" aria-live="polite">Select a tool to inspect its arguments.</pre>
-        </div>
+        </details>
       </div>
     </div>
   </section>
@@ -629,7 +636,7 @@
       </section>
 
       <details class="settings-section config-section" id="config-section">
-        <summary class="settings-section-title"><i data-lucide="key-round" aria-hidden="true"></i>Config</summary>
+        <summary class="settings-section-title"><i data-lucide="key-round" aria-hidden="true"></i>Providers &amp; keys</summary>
         <p class="field-hint">Keys and provider options are stored only on this device. Blank key fields keep the saved value.</p>
         <form id="config-form">
           <div id="config-fields" class="config-fields"></div>
@@ -642,7 +649,7 @@
 
       <section class="settings-section local-setup" id="local-setup" aria-labelledby="setup-title">
         <div class="setup-heading"><h2 class="settings-section-title" id="setup-title"><i data-lucide="hard-drive-download" aria-hidden="true"></i>Local voice</h2><span class="badge" id="setup-status">Not checked</span></div>
-        <p class="setup-estimate">Approximately 5-6 GB of downloads, plus Python dependencies. Allow at least 12 GB of free disk space for the persistent cache and installed runtimes; Python dependencies may require more.</p>
+        <p class="setup-estimate">5-6 GB download, plus Python dependencies. At least 12 GB free space required; dependencies may need more.</p>
         <p id="setup-message" role="status" aria-live="polite">Setup status is available when Settings is open.</p>
         <p id="setup-warning" class="setup-warning" role="status" hidden></p>
         <p id="setup-error" role="alert" hidden></p>
@@ -654,18 +661,21 @@
           <progress id="setup-progress" aria-label="Local voice download progress"></progress>
           <p id="setup-progress-label"></p>
         </div>
+        <details class="advanced-disclosure" id="setup-technical-details">
+        <summary>Components &amp; storage</summary>
         <dl class="setup-locations">
           <div><dt>Platform</dt><dd id="setup-platform">Not checked</dd></div>
           <div><dt>Persistent download cache</dt><dd id="setup-cache" class="mono">Not checked</dd></div>
           <div><dt>Runtime location</dt><dd id="setup-runtime" class="mono">Not checked</dd></div>
         </dl>
         <ul id="setup-components" class="setup-components" aria-label="Local voice components and download sources"></ul>
+        </details>
         <label class="setup-consent toggle-control" id="setup-consent-label" for="setup-consent">
           <input type="checkbox" id="setup-consent"><span class="toggle-track" aria-hidden="true"></span><span>I agree to download and install local voice components and Python dependencies on this device.</span>
         </label>
         <div class="utility-toolbar">
           <button class="btn btn-accent" type="button" id="setup-install-btn" disabled><i data-lucide="hard-drive-download" aria-hidden="true"></i><span id="setup-install-label">Install local voice</span></button>
-          <button class="btn" type="button" id="setup-refresh-btn"><i data-lucide="refresh-cw" aria-hidden="true"></i>Refresh status</button>
+          <button class="btn btn-icon" type="button" id="setup-refresh-btn" title="Refresh status" aria-label="Refresh status"><i data-lucide="refresh-cw" aria-hidden="true"></i></button>
         </div>
         <details id="setup-log-details" hidden><summary>Setup log</summary><pre id="setup-log"></pre></details>
       </section>
@@ -674,54 +684,48 @@
         <section class="settings-section settings-defaults">
           <h2 class="settings-section-title"><i data-lucide="folder-kanban" aria-hidden="true"></i>Coding defaults</h2>
           <div class="form-group">
-            <label class="control-label" for="settings-default-area">Default Work Area</label>
+            <label class="control-label" for="settings-default-area">Work area</label>
             <select id="settings-default-area" aria-label="Default Work Area"></select>
-            <span class="field-hint">Used automatically when a task is dispatched without specifying an area.</span>
           </div>
           <div class="form-group">
-            <label class="control-label" for="settings-default-backend">Default Coding Backend</label>
+            <label class="control-label" for="settings-default-backend">Coding agent</label>
             <select id="settings-default-backend" aria-label="Default Coding Backend"></select>
-            <span class="field-hint">Execution backend for automated coding tasks (Copilot CLI or Agency).</span>
           </div>
           <div class="form-group">
-            <label class="control-label" for="settings-copilot-model">Default Copilot Model</label>
+            <label class="control-label" for="settings-copilot-model">Model</label>
             <select id="settings-copilot-model" aria-label="Default Copilot Model"></select>
-            <span class="field-hint">Model used for coding agent work dispatches by default.</span>
           </div>
           <div class="form-group">
-            <label class="control-label" for="settings-copilot-context">Context Tier</label>
+            <label class="control-label" for="settings-copilot-context">Context</label>
             <select id="settings-copilot-context" aria-label="Context Tier"></select>
-            <span class="field-hint">Short default context or long context up to 1M tokens.</span>
           </div>
         </section>
 
         <section class="settings-section">
           <h2 class="settings-section-title"><i data-lucide="message-square" aria-hidden="true"></i>Notifications</h2>
-          <span class="field-hint">Select which task events trigger notifications.</span>
           <label class="form-row-checkbox toggle-control" for="settings-notify-completed">
             <input type="checkbox" id="settings-notify-completed">
-            <span class="toggle-track" aria-hidden="true"></span><span>Task completed (result ready)</span>
+            <span class="toggle-track" aria-hidden="true"></span><span>Completed</span>
           </label>
           <label class="form-row-checkbox toggle-control" for="settings-notify-needs-input">
             <input type="checkbox" id="settings-notify-needs-input">
-            <span class="toggle-track" aria-hidden="true"></span><span>Task needs input</span>
+            <span class="toggle-track" aria-hidden="true"></span><span>Needs attention</span>
           </label>
           <label class="form-row-checkbox toggle-control" for="settings-notify-failed">
             <input type="checkbox" id="settings-notify-failed">
-            <span class="toggle-track" aria-hidden="true"></span><span>Task failed / error</span>
+            <span class="toggle-track" aria-hidden="true"></span><span>Failed</span>
           </label>
         </section>
 
         <section class="settings-section">
           <h2 class="settings-section-title"><i data-lucide="send" aria-hidden="true"></i>Delivery</h2>
-          <span class="field-hint">Choose how notifications are delivered when triggered.</span>
           <label class="form-row-checkbox toggle-control" for="settings-browser-notifications">
             <input type="checkbox" id="settings-browser-notifications">
-            <span class="toggle-track" aria-hidden="true"></span><span>Browser notifications (desktop toasts)</span>
+            <span class="toggle-track" aria-hidden="true"></span><span>Desktop notifications</span>
           </label>
           <label class="form-row-checkbox toggle-control" for="settings-voice-notifications">
             <input type="checkbox" id="settings-voice-notifications">
-            <span class="toggle-track" aria-hidden="true"></span><span>Voice notifications (spoken when idle)</span>
+            <span class="toggle-track" aria-hidden="true"></span><span>Spoken notifications</span>
           </label>
         </section>
 
@@ -729,14 +733,13 @@
           <span id="settings-feedback" class="settings-feedback" role="status" aria-live="polite"></span>
           <button type="submit" class="btn btn-accent" id="settings-save-btn">
             <i data-lucide="save"></i>
-            <span>Save Settings</span>
+            <span>Save changes</span>
           </button>
         </div>
       </form>
 
-      <section class="settings-section">
-        <h2 class="settings-section-title"><i data-lucide="plus-circle" aria-hidden="true"></i>Integrations</h2>
-        <span class="field-hint">Configured MCP tools and integrations.</span>
+      <details class="settings-section config-section">
+        <summary class="settings-section-title"><i data-lucide="plus-circle" aria-hidden="true"></i>Integrations</summary>
         <div class="integrations-table-wrapper">
           <table class="integrations-table" aria-label="MCP Integrations">
             <thead>
@@ -751,7 +754,7 @@
             </tbody>
           </table>
         </div>
-      </section>
+      </details>
     </div>
   </section>
   </div>
@@ -848,7 +851,7 @@
   <dialog id="new-task-dialog" aria-labelledby="new-task-dialog-title">
     <form id="new-task-form" method="dialog">
       <div class="dialog-header">
-        <span id="new-task-dialog-title">Dispatch New Task</span>
+        <span id="new-task-dialog-title">New task</span>
         <button type="button" class="btn btn-icon" id="task-dialog-close" aria-label="Close dialog" title="Close dialog"><i data-lucide="x"></i></button>
       </div>
       <div class="form-group">
@@ -860,11 +863,11 @@
         <select id="task-backend-select" aria-label="Select Coding Backend"></select>
       </div>
       <div class="form-group">
-        <label class="control-label" for="task-objective-input">Objective &amp; Constraints *</label>
+        <label class="control-label" for="task-objective-input">What needs to be done?</label>
         <textarea id="task-objective-input" required rows="4" placeholder="Describe the goal clearly..."></textarea>
       </div>
-      <details class="advanced-disclosure" open>
-        <summary>Advanced Options</summary>
+      <details class="advanced-disclosure">
+        <summary>Model &amp; agent options</summary>
         <div class="form-group">
           <label class="control-label" for="task-model-select">Copilot Model</label>
           <select id="task-model-select" aria-label="Copilot Model"></select>
@@ -880,14 +883,14 @@
       </details>
       <div class="dialog-actions">
         <button type="button" class="btn" id="task-cancel-btn">Cancel</button>
-        <button type="submit" class="btn btn-accent" id="task-dispatch-btn">Dispatch</button>
+        <button type="submit" class="btn btn-accent" id="task-dispatch-btn">Start task</button>
       </div>
     </form>
   </dialog>
 
   <dialog id="task-detail-dialog" aria-labelledby="detail-dialog-title">
     <div class="dialog-header">
-      <span id="detail-dialog-title">Task Details</span>
+      <span id="detail-dialog-title">Task</span>
       <button type="button" class="btn btn-icon" id="detail-dialog-close" aria-label="Close dialog" title="Close dialog"><i data-lucide="x"></i></button>
     </div>
     <div id="detail-content" class="detail-content"></div>
@@ -898,11 +901,11 @@
       </button>
       <button type="button" class="btn btn-accent" id="detail-continue-task-btn" style="display: none;">
         <i data-lucide="message-square-plus"></i>
-        <span>Continue Thread</span>
+        <span>Continue</span>
       </button>
-      <button type="button" class="btn btn-accent" id="detail-open-worktree-btn" style="display: none;">
+      <button type="button" class="btn" id="detail-open-worktree-btn" style="display: none;">
         <i data-lucide="external-link"></i>
-        <span>Open Worktree</span>
+        <span>Open in editor</span>
       </button>
       <button type="button" class="btn" id="detail-close-btn">Close</button>
     </div>
@@ -933,7 +936,7 @@
   <dialog id="route-config-dialog" aria-labelledby="route-config-title">
     <form id="route-config-form" method="dialog">
       <div class="dialog-header">
-        <span id="route-config-title">Route configuration</span>
+        <span id="route-config-title">Voice &amp; model</span>
         <button type="button" class="btn btn-icon" id="route-config-close" aria-label="Close dialog" title="Close dialog"><i data-lucide="x"></i></button>
       </div>
       <div class="form-group">

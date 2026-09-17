@@ -193,6 +193,11 @@ function setAgentState(state) {
   micToggleBtn.title = microphoneLabel;
   micToggleBtn.setAttribute('aria-label', microphoneLabel);
   micToggleBtn.setAttribute('aria-pressed', String(active));
+  const assistantToggle = document.getElementById('assistant-toggle-btn');
+  assistantToggle.disabled = micToggleBtn.disabled;
+  assistantToggle.title = microphoneLabel;
+  assistantToggle.setAttribute('aria-label', microphoneLabel);
+  assistantToggle.setAttribute('aria-pressed', String(active));
   document.getElementById('voice-route-status').textContent = routeStatusBadge.textContent;
   window.dispatchEvent(new CustomEvent('voice-supervisor:agent-state', { detail: { state: next } }));
 }
@@ -381,6 +386,7 @@ function openConversation(text) {
 const conversationUI = createConversationUI(document);
 const voiceCaptions = createVoiceCaptionBridge({ conversationUI, partialTranscript, appendMessage });
 document.getElementById('history-compose-btn').addEventListener('click', () => btnNewTask.click());
+document.getElementById('assistant-toggle-btn').addEventListener('click', () => micToggleBtn.click());
 document.getElementById('open-chat-btn').addEventListener('click', () => openConversation());
 document.getElementById('close-chat-btn').addEventListener('click', () => conversationDialog.close());
 window.addEventListener('voice-supervisor:compose', event => openConversation(event.detail?.text));
@@ -531,9 +537,15 @@ function updateRouteReadiness() {
 
 // Conversation rendering
 function appendMessage(role, text, options = {}) {
-  const bubble = document.createElement('div');
+  const bubble = document.createElement(role === 'tool' ? 'details' : 'div');
   bubble.className = `chat-bubble ${role}`;
-  if ((role === 'assistant' || role === 'tool') && !options.plain) {
+  if (role === 'tool') {
+    const summary = document.createElement('summary');
+    summary.textContent = 'Tool activity';
+    const output = document.createElement('pre');
+    output.textContent = text;
+    bubble.append(summary, output);
+  } else if (role === 'assistant' && !options.plain) {
     renderSafeMarkdown(bubble, text);
   } else {
     bubble.textContent = text;
@@ -1950,10 +1962,7 @@ function renderTasks() {
     const title = document.createElement('span');
     title.className = 'empty-title';
     title.textContent = 'No tasks in flight';
-    const detail = document.createElement('span');
-    detail.className = 'empty-detail';
-    detail.textContent = 'Agent sessions and progress appear here.';
-    empty.append(icon, title, detail);
+    empty.append(icon, title);
     tasksList.appendChild(empty);
     return;
   }
@@ -1969,24 +1978,19 @@ function renderTasks() {
     header.className = 'task-header';
 
     const titleGroup = document.createElement('div');
-    titleGroup.style.display = 'flex';
-    titleGroup.style.alignItems = 'center';
-    titleGroup.style.gap = '8px';
+    titleGroup.className = 'task-title-group';
 
-    const titleSpan = document.createElement('span');
+    const titleSpan = document.createElement('button');
+    titleSpan.type = 'button';
     titleSpan.className = 'task-title';
+    titleSpan.setAttribute('aria-haspopup', 'dialog');
+    titleSpan.addEventListener('click', () => showTaskDetail(task));
     titleSpan.textContent = task.title || task.objective || 'Task';
     titleGroup.appendChild(titleSpan);
 
-    const backendBadge = document.createElement('span');
-    backendBadge.className = 'badge';
-    backendBadge.textContent = backendLabel(task.backend);
-    backendBadge.title = `Backend: ${task.backend || 'copilot'}`;
-    titleGroup.appendChild(backendBadge);
-
     const stateBadge = document.createElement('span');
     stateBadge.className = `badge badge-${['completed', 'result_ready'].includes(task.state) ? 'success' : ['failed', 'agent_failed'].includes(task.state) ? 'danger' : 'accent'}`;
-    stateBadge.textContent = task.state || 'unknown';
+    stateBadge.textContent = (task.state || 'unknown').replaceAll('_', ' ');
     titleGroup.appendChild(stateBadge);
 
     if (isStale) {
@@ -2076,23 +2080,13 @@ function renderTasks() {
       summary.style.color = 'var(--cp-danger)';
     } else if (task.observations && task.observations.length > 0) {
       const lastObs = task.observations[task.observations.length - 1];
-      const label = document.createElement('span');
-      label.className = 'task-summary-label';
-      label.textContent = lastObs.kind || 'observation';
-      const content = document.createElement('div');
-      renderSafeMarkdown(content, lastObs.summary || 'Update observed');
-      summary.append(label, content);
+      renderSafeMarkdown(summary, lastObs.summary || 'Progress updated');
     } else if (task.result && typeof task.result === 'object') {
-      summary.textContent = `Result: ${JSON.stringify(task.result)}`;
+      summary.textContent = 'Result ready';
     } else if (task.result) {
-      const label = document.createElement('span');
-      label.className = 'task-summary-label';
-      label.textContent = 'result';
-      const content = document.createElement('div');
-      renderSafeMarkdown(content, task.result);
-      summary.append(label, content);
+      renderSafeMarkdown(summary, task.result);
     } else {
-      summary.textContent = 'Awaiting initial observer event...';
+      summary.textContent = 'Waiting for an update';
     }
     card.appendChild(summary);
 
@@ -2102,19 +2096,12 @@ function renderTasks() {
 
     const area = appState.areas?.find(a => a.id === task.areaId);
     const areaInfo = document.createElement('span');
-    areaInfo.textContent = `Area: ${area ? area.name : (task.areaId || 'None')}`;
+    areaInfo.textContent = area ? area.name : (task.areaId || 'My workspace');
     footer.appendChild(areaInfo);
 
     const backendInfo = document.createElement('span');
-    backendInfo.textContent = `Backend: ${backendLabel(task.backend)}`;
+    backendInfo.textContent = backendLabel(task.backend);
     footer.appendChild(backendInfo);
-
-    if (task.worktree) {
-      const wtInfo = document.createElement('span');
-      wtInfo.className = 'mono';
-      wtInfo.textContent = task.worktree;
-      footer.appendChild(wtInfo);
-    }
 
     const timeInfo = document.createElement('span');
     const timeVal = task.lastObservedAt || task.createdAt;
@@ -2137,7 +2124,7 @@ function renderTasks() {
 function showTaskDetail(task) {
   detailContent.replaceChildren();
 
-  const addField = (label, val, isMono = false) => {
+  const addField = (label, val, isMono = false, parent = detailContent) => {
     const p = document.createElement('p');
     const b = document.createElement('strong');
     b.textContent = `${label}: `;
@@ -2146,19 +2133,15 @@ function showTaskDetail(task) {
     if (isMono) s.className = 'mono';
     s.textContent = val || 'None';
     p.appendChild(s);
-    detailContent.appendChild(p);
+    parent.appendChild(p);
   };
 
-  addField('Title', task.title);
-  addField('Backend', backendLabel(task.backend));
-  addField('State', task.state);
-  addField('Stale', task.stale ? 'Yes' : 'No');
-  if (task.capabilities && typeof task.capabilities === 'object') {
-    const caps = Object.entries(task.capabilities)
-      .map(([k, v]) => `${k}: ${v}`)
-      .join(', ');
-    addField('Capabilities', caps);
-  }
+  const title = document.createElement('h2');
+  title.className = 'task-detail-title';
+  title.textContent = task.title || task.objective || 'Task';
+  detailContent.appendChild(title);
+  addField('Status', (task.state || 'unknown').replaceAll('_', ' '));
+  if (task.stale) addField('Attention', 'Status may be out of date');
   if (task.error) addField('Error', task.error);
   if (task.result) {
     const resultBlock = document.createElement('div');
@@ -2178,40 +2161,31 @@ function showTaskDetail(task) {
   const advanced = document.createElement('details');
   advanced.className = 'advanced-disclosure';
   const advancedSummary = document.createElement('summary');
-  advancedSummary.textContent = 'Advanced';
+  advancedSummary.textContent = 'Technical details';
   advanced.appendChild(advancedSummary);
   const advancedBody = document.createElement('div');
-  const addAdvanced = (label, val, isMono = false) => {
-    const p = document.createElement('p');
-    const b = document.createElement('strong');
-    b.textContent = `${label}: `;
-    p.appendChild(b);
-    const s = document.createElement('span');
-    if (isMono) s.className = 'mono';
-    s.textContent = val || 'None';
-    p.appendChild(s);
-    advancedBody.appendChild(p);
-  };
-  addAdvanced('Task ID', task.id, true);
-  addAdvanced('Backend', task.backend || 'copilot');
-  addAdvanced('Model', task.model);
-  addAdvanced('Context', task.context);
-  addAdvanced('Worktree', task.worktree, true);
-  addAdvanced('Session ID', task.sessionId, true);
-  addAdvanced('Created At', task.createdAt ? new Date(task.createdAt).toLocaleString() : '');
-  addAdvanced('Last Observed', task.lastObservedAt ? new Date(task.lastObservedAt).toLocaleString() : '');
+  for (const [label, value, mono] of [
+    ['Task ID', task.id, true], ['Backend', backendLabel(task.backend)],
+    ['Model', task.model], ['Context', task.context], ['Worktree', task.worktree, true],
+    ['Session ID', task.sessionId, true],
+    ['Created', task.createdAt ? new Date(task.createdAt).toLocaleString() : ''],
+    ['Last updated', task.lastObservedAt ? new Date(task.lastObservedAt).toLocaleString() : ''],
+    ['Capabilities', task.capabilities ? JSON.stringify(task.capabilities) : '', true],
+  ]) addField(label, value, mono, advancedBody);
   advanced.appendChild(advancedBody);
   detailContent.appendChild(advanced);
 
-  const obsHeader = document.createElement('h4');
-  obsHeader.textContent = 'Recent Observations';
-  detailContent.appendChild(obsHeader);
+  const observations = document.createElement('details');
+  observations.className = 'advanced-disclosure';
+  const obsHeader = document.createElement('summary');
+  obsHeader.textContent = `Activity log (${task.observations?.length || 0})`;
+  observations.appendChild(obsHeader);
+  detailContent.appendChild(observations);
 
   if (!task.observations || task.observations.length === 0) {
     const noObs = document.createElement('p');
-    noObs.style.fontStyle = 'italic';
-    noObs.textContent = 'No observations recorded.';
-    detailContent.appendChild(noObs);
+    noObs.textContent = 'No activity yet';
+    observations.appendChild(noObs);
   } else {
     const obsList = document.createElement('div');
     obsList.className = 'detail-observations';
@@ -2223,12 +2197,12 @@ function showTaskDetail(task) {
       t.className = 'mono';
       t.textContent = `[${time}] ${obs.kind || 'event'}: `;
       const desc = document.createElement('div');
-      renderSafeMarkdown(desc, obs.summary || '');
+      desc.textContent = obs.summary || '';
       item.appendChild(t);
       item.appendChild(desc);
       obsList.appendChild(item);
     });
-    detailContent.appendChild(obsList);
+    observations.appendChild(obsList);
   }
 
   if (detailDeleteTaskBtn) {

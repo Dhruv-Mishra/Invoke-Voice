@@ -4,7 +4,7 @@ import { marked } from 'marked';
 import {
   BellOff, CalendarDays, CheckSquare, CircleDashed, createIcons, Edit2,
   ExternalLink, File, FileText, FlaskConical, FolderKanban, HardDriveDownload, House, KeyRound, Keyboard,
-  LayoutDashboard, MessageSquare, MessageSquarePlus, Mic, Play, Plus,
+  LayoutDashboard, MessageSquare, MessageSquarePlus, Mic, PanelLeftClose, Palette, Play, Plus,
   PlusCircle, Radio, RefreshCw, Save, ScanSearch, Send, Settings,
   SlidersHorizontal, Sparkles, Square, Trash2, X,
 } from 'lucide';
@@ -16,24 +16,22 @@ window.DOMPurify = DOMPurify;
 window.marked = marked;
 const appIcons = { BellOff, CalendarDays, CheckSquare, CircleDashed, Edit2, ExternalLink,
   File, FileText, FlaskConical, FolderKanban, HardDriveDownload, House, KeyRound, Keyboard, LayoutDashboard,
-  MessageSquare, MessageSquarePlus, Mic, Play, Plus, PlusCircle, Radio, RefreshCw,
+  MessageSquare, MessageSquarePlus, Mic, PanelLeftClose, Palette, Play, Plus, PlusCircle, Radio, RefreshCw,
   Save, ScanSearch, Send, Settings, SlidersHorizontal, Sparkles, Square, Trash2, X };
 window.lucide = { createIcons: () => createIcons({ icons: appIcons }) };
 for (const input of document.querySelectorAll('.toggle-control input[type="checkbox"]')) input.setAttribute('role', 'switch');
 
 const stateCopy = {
-  idle: ['Ready when you are', 'A little less effort. A little more possibility.'],
-  connecting: ['Connecting...', 'Getting your voice ready.'],
-  listening: ['Listening...', "Speak naturally — I'm here to help."],
-  thinking: ['Thinking...', 'A moment to bring it all together.'],
-  speaking: ['Speaking...', 'Here\'s what I found.'],
+  idle: 'Ready when you are',
+  connecting: 'Connecting',
+  listening: 'Listening',
+  thinking: 'Thinking',
+  speaking: 'Speaking',
 };
 const suggestions = [
-  ['plus-circle', 'Start a coding task', 'Start a coding task in my default work area: '],
-  ['scan-search', 'How is my work progressing?', 'Give me the status of my current coding tasks.'],
-  ['message-square', 'Continue a task', 'Help me continue an existing coding task.'],
-  ['external-link', 'Open my completed work', 'Open my most recently completed work.'],
-  ['folder-kanban', 'What needs my attention?', 'Which tasks need my input or have failed?'],
+  ['plus', 'New task', 'Start a coding task in my default work area: '],
+  ['scan-search', 'Check progress', 'Give me the status of my current coding tasks.'],
+  ['message-square', 'Continue work', 'Help me continue an existing coding task.'],
 ];
 
 function icon(name) { return h('i', { 'data-lucide': name, 'aria-hidden': 'true' }); }
@@ -148,21 +146,22 @@ function onTheme(event) {
 }
 
 function renderThemeOptions() {
-  const options = document.querySelector('.appearance-options');
-  if (!options) return;
-  options.replaceChildren(...themes.map(item => {
+  for (const options of document.querySelectorAll('.appearance-options')) options.replaceChildren(...themes.map(item => {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'appearance-option';
     button.dataset.appearance = item.id;
+    button.setAttribute('aria-label', item.label);
+    button.title = item.label;
     button.setAttribute('aria-pressed', String(item.id === theme.value.id));
-    button.addEventListener('click', () => window.dispatchEvent(new CustomEvent('voice-supervisor:theme', { detail: { id: item.id } })));
+    button.addEventListener('click', () => {
+      window.dispatchEvent(new CustomEvent('voice-supervisor:theme', { detail: { id: item.id } }));
+      options.closest('[popover]')?.hidePopover();
+    });
     const image = document.createElement('img');
     image.src = item.sprite;
     image.alt = '';
-    const label = document.createElement('span');
-    label.textContent = item.label;
-    button.append(image, label);
+    button.append(image);
     return button;
   }));
 }
@@ -172,14 +171,17 @@ const VoiceHome = {
   setup() {
     return () => h('div', { class: 'home-composition' }, [
       h('section', { class: 'assistant-stage', 'aria-label': 'Voice assistant' }, [
-        h(VoiceSprite, { state: state.value, source: theme.value.sprite, animations: theme.value.animations }),
+        h('div', { class: 'assistant-artwork' }, [
+          h('button', { id: 'assistant-toggle-btn', class: 'assistant-toggle', type: 'button', 'aria-label': 'Connect microphone', disabled: true }, [
+            h(VoiceSprite, { state: state.value, source: theme.value.sprite, animations: theme.value.animations }),
+          ]),
+          h('button', { class: 'assistant-appearance btn btn-icon', type: 'button', popovertarget: 'appearance-popover', title: 'Change appearance', 'aria-label': 'Change appearance' }, [icon('palette')]),
+        ]),
         h('div', { class: 'presence-copy', role: 'status', 'aria-live': 'polite' }, [
-          h('h1', stateCopy[state.value][0]),
-          h('p', stateCopy[state.value][1]),
+          h('h1', { key: state.value }, stateCopy[state.value]),
         ]),
       ]),
-      h('aside', { class: 'suggestions', 'aria-labelledby': 'suggestions-title' }, [
-        h('h2', { id: 'suggestions-title' }, 'Try saying:'),
+      h('nav', { class: 'suggestions', 'aria-label': 'Quick actions' }, [
         ...suggestions.map(([glyph, label, prompt]) => h('button', {
           class: 'suggestion', type: 'button', 'data-theme-sound': 'action',
           onClick: () => window.dispatchEvent(new CustomEvent('voice-supervisor:compose', { detail: { text: prompt } })),
@@ -199,6 +201,19 @@ const homeApp = createApp(VoiceHome);
 homeApp.mount('#voice-personality-app');
 const listeners = new AbortController();
 const listenerOptions = { signal: listeners.signal };
+const sidebarToggle = document.getElementById('sidebar-toggle');
+function setSidebar(collapsed) {
+  document.documentElement.dataset.sidebar = collapsed ? 'collapsed' : 'expanded';
+  sidebarToggle.setAttribute('aria-expanded', String(!collapsed));
+  sidebarToggle.setAttribute('aria-label', collapsed ? 'Expand sidebar' : 'Collapse sidebar');
+  sidebarToggle.title = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+}
+setSidebar(readPreference('voice-supervisor-sidebar-v1') === 'collapsed');
+sidebarToggle.addEventListener('click', () => {
+  const collapsed = document.documentElement.dataset.sidebar !== 'collapsed';
+  setSidebar(collapsed);
+  savePreference('voice-supervisor-sidebar-v1', collapsed ? 'collapsed' : 'expanded');
+}, listenerOptions);
 const transparencyInput = document.getElementById('transparency-preference');
 transparencyInput.checked = transparencyEnabled;
 transparencyInput.addEventListener('change', () => {

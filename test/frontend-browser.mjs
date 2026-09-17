@@ -59,7 +59,11 @@ const click = selector => evaluate(value => {
   button.focus();
   button.click();
 }, selector);
-const settle = () => evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+const settle = () => evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+  .then(() => Promise.all(document.getAnimations()
+    .filter(animation => animation.playState === 'running' && !animation.pending
+      && animation.effect.target?.checkVisibility() && Number.isFinite(animation.effect.getComputedTiming().endTime))
+    .map(animation => animation.finished.catch(() => {})))));
 const visit = async view => {
   if (await evaluate(() => document.getElementById('view-dialog').matches(':modal'))) await click('#close-view-btn');
   await click(`#${view}-tab`);
@@ -238,7 +242,9 @@ try {
   console.log('Browser fixture: route ready');
 
   assert.equal(await evaluate(() => document.querySelectorAll('.appearance-options input').length), 0);
-  assert.equal(await evaluate(() => document.querySelector('.top-bar').getBoundingClientRect().width), 288);
+  assert.equal(await evaluate(() => document.querySelector('.top-bar').getBoundingClientRect().width), 248);
+  assert.equal(await evaluate(() => [...document.querySelectorAll('.appearance-option')].every(button =>
+    !button.textContent.trim() && button.getAttribute('aria-label') && button.title && button.querySelector('img'))), true);
   await waitFor(() => document.getElementById('local-setup-prompt').open);
   assert.equal(setupReads, 1);
   assert.equal(setupWrites, 0);
@@ -249,7 +255,7 @@ try {
   assert.equal(settingsWrites, 1);
   await waitFor(() => document.getElementById('setup-status').textContent === 'idle');
   assert.deepEqual(await evaluate(() => [...document.querySelectorAll('#config-fields input')].map(control => [control.type, getComputedStyle(control).borderRadius, control.value])), [
-    ['url', '10px', 'https://example.test'], ['number', '10px', '8'], ['password', '10px', ''],
+    ['url', '8px', 'https://example.test'], ['number', '8px', '8'], ['password', '8px', ''],
   ]);
   const toggles = await evaluate(() => [...document.querySelectorAll('#settings-view .toggle-control input:not(:disabled)')]
     .map(input => ({ id: input.id, checked: input.checked })));
@@ -348,7 +354,10 @@ try {
   }), true);
   await evaluate(() => document.getElementById('settings-save-btn').focus());
   await press('Tab');
+  assert.equal(await evaluate(() => document.activeElement === document.querySelector('#settings-view > .settings-container > details:last-child > summary')), true);
+  await press('Tab');
   assert.equal(await evaluate(() => document.activeElement.id), 'close-view-btn');
+  await press('Tab', 8);
   await press('Tab', 8);
   assert.equal(await evaluate(() => document.activeElement.id), 'settings-save-btn');
   await evaluate(() => document.getElementById('home-tab').focus());
@@ -400,9 +409,9 @@ try {
   browser.setContentSize(1440, 960);
   await settle();
   await visit('settings');
-  await click('button[data-appearance="jarvis"]');
-  assert.equal(await evaluate(() => document.querySelector('button[data-appearance="jarvis"]').getAttribute('aria-pressed')), 'true');
-  assert.equal(await evaluate(() => document.querySelectorAll('button[data-appearance][aria-pressed="true"]').length), 1);
+  await click('#settings-view button[data-appearance="jarvis"]');
+  assert.equal(await evaluate(() => document.querySelector('#settings-view button[data-appearance="jarvis"]').getAttribute('aria-pressed')), 'true');
+  assert.equal(await evaluate(() => document.querySelectorAll('button[data-appearance][aria-pressed="true"]').length), 2);
   assert.equal(await evaluate(() => document.documentElement.hasAttribute('aria-pressed')), false);
   await pointerClick('.toggle-control[for="transparency-preference"] .toggle-track');
   assert.equal(await evaluate(() => document.documentElement.dataset.transparency), 'off');
@@ -414,11 +423,26 @@ try {
   assert.equal(await evaluate(() => document.documentElement.dataset.appearance), 'jarvis');
   assert.equal(await evaluate(() => document.documentElement.dataset.transparency), 'off');
   assert.equal(await evaluate(() => document.getElementById('transparency-preference').checked), false);
-  assert.equal(await evaluate(() => [...document.querySelectorAll('.suggestions, .voice-strip, .top-bar')].every(element => {
+  assert.equal(await evaluate(() => [...document.querySelectorAll('.voice-strip, .top-bar')].every(element => {
     const style = getComputedStyle(element);
     return style.backdropFilter === 'none' && !style.backgroundColor.startsWith('rgba');
   })), true);
   assert.equal(await evaluate(() => getComputedStyle(document.querySelector('.sprite-image')).animationName), 'none');
+  await pointerClick('#sidebar-toggle');
+  assert.equal(await evaluate(() => document.querySelector('.top-bar').getBoundingClientRect().width), 76);
+  assert.equal(await evaluate(() => document.getElementById('sidebar-toggle').getAttribute('aria-expanded')), 'false');
+  await browser.loadURL(url);
+  await waitFor(() => document.getElementById('route-status-badge').textContent.includes('Ready'));
+  assert.equal(await evaluate(() => document.documentElement.dataset.sidebar), 'collapsed');
+  await pointerClick('#sidebar-toggle');
+  assert.equal(await evaluate(() => document.querySelector('.top-bar').getBoundingClientRect().width), 248);
+  await pointerClick('.assistant-appearance');
+  assert.equal(await evaluate(() => document.getElementById('appearance-popover').matches(':popover-open')), true);
+  await press('Escape');
+  assert.equal(await evaluate(() => document.activeElement.classList.contains('assistant-appearance')), true);
+  await pointerClick('.assistant-appearance');
+  await pointerClick('#appearance-popover [data-appearance="jarvis"]');
+  assert.equal(await evaluate(() => document.getElementById('appearance-popover').matches(':popover-open')), false);
   await choose('#motion-preference', 'system');
   await browser.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
   assert.equal(await evaluate(() => getComputedStyle(document.querySelector('.sprite-image')).animationName), 'none');
@@ -430,6 +454,9 @@ try {
   await waitFor(() => document.querySelectorAll('.history-entry').length === 2);
   await click('.history-entry');
   assert.equal(await evaluate(() => document.getElementById('task-detail-dialog').open && document.getElementById('detail-content').textContent.includes('coding task')), true);
+  assert.equal(await evaluate(() => [...document.querySelectorAll('#detail-content details')].every(details => !details.open)), true);
+  await pointerClick('#detail-content details:last-child summary');
+  assert.equal(await evaluate(() => document.querySelector('#detail-content details:last-child').open), true);
   await click('#detail-dialog-close');
   await pointerClick('.history-entry[data-task-id="finished-task"]');
   await pointerClick('#detail-continue-task-btn');
@@ -438,6 +465,7 @@ try {
   await click('#history-compose-btn');
   await waitFor(() => document.getElementById('new-task-dialog').open);
   assert.equal(await evaluate(() => document.getElementById('new-task-dialog').open), true);
+  assert.equal(await evaluate(() => document.querySelector('#new-task-dialog details').open), false);
   await click('#task-dialog-close');
   await click('#open-chat-btn');
   console.log('Browser fixture: checking typed chat');
@@ -447,8 +475,12 @@ try {
   assert.equal(await evaluate(() => document.getElementById('caption-announcement').textContent), '');
   assert.equal(chatRequest.provider, 'local');
   assert.deepEqual(chatRequest.messages, [{ role: 'user', content: '<img src=x onerror=alert(1)> hello' }]);
-  chatResponse.end(`data: ${JSON.stringify({ type: 'text', text: ' **complete**' })}\n\ndata: {"type":"done"}\n\n`);
+  chatResponse.end(`data: ${JSON.stringify({ type: 'tool', name: 'list_work', result: { text: '<img src=x onerror=alert(1)>' } })}\n\ndata: ${JSON.stringify({ type: 'text', text: ' **complete**' })}\n\ndata: {"type":"done"}\n\n`);
   await waitFor(() => document.querySelector('.chat-bubble.assistant strong')?.textContent === 'complete');
+  assert.equal(await evaluate(() => {
+    const activity = document.querySelector('.chat-bubble.tool');
+    return activity.tagName === 'DETAILS' && !activity.open && activity.querySelector('pre').textContent.includes('<img') && !activity.querySelector('img');
+  }), true);
   assert.equal(await evaluate(() => document.querySelectorAll('.chat-bubble.user img, .history-entry img, #caption-text img').length), 0);
   assert.equal(await evaluate(() => document.querySelector('.chat-bubble.assistant strong').textContent), 'complete');
   await click('#close-chat-btn');
@@ -470,7 +502,7 @@ try {
   assert.equal(await evaluate(() => document.getElementById('quiet-mode-btn').getAttribute('aria-pressed')), 'true');
   await pointerClick('#quiet-mode-btn');
 
-  await click('#mic-toggle-btn');
+  await click('#assistant-toggle-btn');
   console.log('Browser fixture: checking voice');
   await waitFor(() => document.getElementById('agent-sprite').dataset.state === 'listening');
   assert.equal(await evaluate(() => document.querySelectorAll('.voice-bars, #mic-canvas').length), 0);
@@ -486,16 +518,16 @@ try {
     window.fixtureShortCaptionHeight = bounds.height;
     return bounds.toJSON();
   });
-  assert.ok(shortCaption.height <= 40, `Expected a compact single-line caption, received ${shortCaption.height}px`);
+  assert.ok(shortCaption.height <= 50, `Expected a compact single-line caption, received ${shortCaption.height}px`);
   await voice({ type: 'transcript', role: 'user', text: 'Voice partial grows smoothly as each recognized word arrives', partial: true });
   await waitFor(() => document.getElementById('user-closed-caption').getBoundingClientRect().height > window.fixtureShortCaptionHeight);
   const growingCaption = await evaluate(() => document.getElementById('user-closed-caption').getBoundingClientRect().toJSON());
   assert.equal(growingCaption.width, shortCaption.width);
   assert.ok(growingCaption.height > shortCaption.height);
   assert.equal(await evaluate(() => {
-    const user = getComputedStyle(document.getElementById('user-closed-caption')).backgroundImage;
-    const assistant = getComputedStyle(document.getElementById('closed-caption')).backgroundImage;
-    return user.includes('linear-gradient') && assistant.includes('linear-gradient') && user !== assistant;
+    const user = getComputedStyle(document.getElementById('user-closed-caption'));
+    const assistant = getComputedStyle(document.getElementById('closed-caption'));
+    return user.backgroundImage === 'none' && assistant.backgroundImage === 'none' && user.backgroundColor !== assistant.backgroundColor;
   }), true);
   assert.equal(await evaluate(() => document.querySelectorAll('.history-entry').length), 2);
   await voice({ type: 'transcript', role: 'user', text: 'Voice final', partial: false });
@@ -525,7 +557,7 @@ try {
   Object.assign(fixtureTasks[1], { state: 'completed', result: '## Working changes' });
   eventResponse.write(`data: ${JSON.stringify({ type: 'state', state: { areas: [], tasks: fixtureTasks, settings: {} } })}\n\n`);
   await waitFor(() => document.querySelector('.history-entry[data-task-id="active-task"]').dataset.state === 'completed');
-  await click('button[data-appearance="opal"]');
+  await click('#settings-view button[data-appearance="opal"]');
   assert.equal(await evaluate(() => document.documentElement.dataset.transparency), 'off');
   await choose('#motion-preference', 'reduce');
   assert.equal(voiceConnections, 1);
@@ -539,7 +571,7 @@ try {
   assert.equal(await evaluate(() => [...document.querySelectorAll('.closed-caption')].every(caption => caption.hidden)), true);
   assert.equal(await evaluate(() => document.querySelector('.caption-region').getBoundingClientRect().height < 1), true);
   await voice({ type: 'transcript', role: 'assistant', text: 'Last reply', partial: false });
-  await click('button[data-appearance="alpine"]');
+  await click('#settings-view button[data-appearance="alpine"]');
   await pointerClick('.toggle-control[for="transparency-preference"] .toggle-track');
   assert.equal(await evaluate(() => document.documentElement.dataset.transparency), 'on');
   await click('#close-view-btn');
@@ -594,14 +626,14 @@ try {
           captionCentered: Math.abs((region.left + region.right - dock.left - dock.right) / 2) < 1,
           captionStacked: Math.abs(captions[1].top - captions[0].bottom - stackGap) < 1,
           captionCardsCentered: Math.abs((captions[0].left + captions[0].right) - (captions[1].left + captions[1].right)) < 1,
-          speakerColors: getComputedStyle(document.getElementById('user-closed-caption')).backgroundImage !== getComputedStyle(document.getElementById('closed-caption')).backgroundImage,
+          speakerColors: getComputedStyle(document.getElementById('user-closed-caption')).backgroundColor !== getComputedStyle(document.getElementById('closed-caption')).backgroundColor,
           premiumCaptionStyle: captions.every((_, index) => {
             const caption = document.querySelectorAll('.closed-caption:not([hidden])')[index];
             const style = getComputedStyle(caption);
             const textStyle = getComputedStyle(caption.querySelector('.caption-text'));
-            return Number.parseFloat(style.borderRadius) >= 14
-              && style.paddingTop === style.paddingRight && style.paddingTop === style.paddingBottom && style.paddingTop === style.paddingLeft
-              && style.backdropFilter !== 'none' && Number.parseInt(textStyle.fontWeight, 10) >= 500;
+            return Number.parseFloat(style.borderRadius) === 12
+              && style.paddingTop === style.paddingBottom && style.paddingRight === style.paddingLeft
+              && style.backdropFilter !== 'none' && Number.parseInt(textStyle.fontWeight, 10) === 400;
           }),
           titlesHidden: [...document.querySelectorAll('.caption-speaker')].every(label => getComputedStyle(label).position === 'absolute' && label.getBoundingClientRect().height <= 1),
           compactCaption: captions.every(caption => caption.height <= Math.min(126, innerHeight * .16) + captionPadding),

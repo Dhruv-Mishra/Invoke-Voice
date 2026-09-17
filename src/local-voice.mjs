@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { streamReply } from './llm.mjs';
+import { themeVoicePreset } from './theme-session.mjs';
 import { localThreadDefault } from './runtime-config.mjs';
 import { localSttProvider, stackPaths } from '../scripts/models.mjs';
 import desktopLaunch from '../scripts/desktop-launch.cjs';
@@ -316,7 +317,8 @@ function spokenSummary(value) {
   return sentences.slice(0, 2).join(' ').trim().slice(0, 360) || 'The action finished.';
 }
 
-export async function createLocalVoice({ send, callTool, provider = 'local', model, allowCloud = false, env = process.env }) {
+export async function createLocalVoice({ send, callTool, provider = 'local', model, allowCloud = false, persona = '', voiceTheme = '', env = process.env }) {
+  const voicePreset = themeVoicePreset(voiceTheme);
   if (provider !== 'local' && !allowCloud) throw new Error('Enable hybrid consent to send local speech transcripts to a cloud LLM');
   const config = localConfiguration(env);
   if (!config.sttConfigured) throw new Error(`Install ${config.sttLabel} and its runtime from Settings > Local voice.`);
@@ -390,7 +392,7 @@ export async function createLocalVoice({ send, callTool, provider = 'local', mod
   function phrase(text, token, responseId) {
     if (!text.trim() || closed || token !== turn) return;
     if (phrases.length >= 12) throw new Error('Speech queue is full; shorten the response');
-    phrases.push({ id: `${sessionId}:${token}:${randomUUID()}`, text: text.trim().slice(0, 500), token, responseId });
+    phrases.push({ id: `${sessionId}:${token}:${randomUUID()}`, text: text.trim().slice(0, 500), token, responseId, ...(voicePreset ? { voice: voicePreset.kokoro, speed: voicePreset.speed, pitch: voicePreset.pitch } : {}) });
     pump();
   }
   function finishResponse(responseId) {
@@ -444,7 +446,7 @@ export async function createLocalVoice({ send, callTool, provider = 'local', mod
     };
     send({ type: 'state', state: 'thinking' });
     try {
-      for await (const event of streamReply({ provider, model, messages, callTool, signal, requestId: `${sessionId}:${token}`, env, profile: 'voice' })) {
+      for await (const event of streamReply({ provider, model, messages, callTool, signal, requestId: `${sessionId}:${token}`, env, profile: 'voice', persona })) {
         if (closed || signal.aborted || turn !== token) return;
         if (event.type === 'tool') send(event);
         if (event.type !== 'text') continue;

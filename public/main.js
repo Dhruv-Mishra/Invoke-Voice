@@ -1,24 +1,35 @@
-import { createApp, h, ref } from 'vue';
+import { createApp, h, reactive, ref } from 'vue';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 import {
-  BellOff, CalendarDays, CheckSquare, CircleDashed, createIcons, Edit2,
+  Activity, AudioLines, BellOff, CalendarDays, Check, CheckSquare, ChevronLeft, ChevronRight, CircleDashed, ClipboardCheck, createIcons, Edit2,
   ExternalLink, File, FileText, FlaskConical, FolderKanban, HardDriveDownload, House, KeyRound, Keyboard,
   LayoutDashboard, MessageSquare, MessageSquarePlus, Mic, PanelLeftClose, Palette, Play, Plus,
   PlusCircle, Radio, RefreshCw, Save, ScanSearch, Send, Settings,
-  SlidersHorizontal, Sparkles, Square, Trash2, X,
+  SlidersHorizontal, Sparkles, Square, Trash2, X, Heart, MessagesSquare, Orbit, Radar, Terminal, Volume2, Zap,
 } from 'lucide';
 import VoiceSprite from './VoiceSprite.js';
-import { applyTheme, motionPreference, themes } from './themes.js';
+import { applyTheme, motionPreference, resolveTheme, themes } from './themes.js';
 import './theme.css';
 
 window.DOMPurify = DOMPurify;
 window.marked = marked;
-const appIcons = { BellOff, CalendarDays, CheckSquare, CircleDashed, Edit2, ExternalLink,
+const appIcons = { Activity, AudioLines, Check, ChevronLeft, ChevronRight, ClipboardCheck, Heart, MessagesSquare, Orbit, Radar, Terminal, Volume2, Zap, BellOff, CalendarDays, CheckSquare, CircleDashed, Edit2, ExternalLink,
   File, FileText, FlaskConical, FolderKanban, HardDriveDownload, House, KeyRound, Keyboard, LayoutDashboard,
   MessageSquare, MessageSquarePlus, Mic, PanelLeftClose, Palette, Play, Plus, PlusCircle, Radio, RefreshCw,
   Save, ScanSearch, Send, Settings, SlidersHorizontal, Sparkles, Square, Trash2, X };
-window.lucide = { createIcons: () => createIcons({ icons: appIcons }) };
+window.lucide = { createIcons: () => {
+  for (const [selector, name] of Object.entries({ '#home-tab': theme.value.icons.home, '#workspace-tab': theme.value.icons.tasks, '#settings-tab': theme.value.icons.settings, '#mic-toggle-btn': theme.value.icons.microphone })) {
+    const glyph = document.querySelector(`${selector} [data-lucide]`);
+    if (glyph && glyph.dataset.lucide !== name) {
+      const replacement = document.createElement('i');
+      replacement.dataset.lucide = name;
+      replacement.setAttribute('aria-hidden', 'true');
+      glyph.replaceWith(replacement);
+    }
+  }
+  createIcons({ icons: appIcons });
+} };
 for (const input of document.querySelectorAll('.toggle-control input[type="checkbox"]')) input.setAttribute('role', 'switch');
 
 const stateCopy = {
@@ -34,7 +45,10 @@ const suggestions = [
   ['message-square', 'Continue work', 'Help me continue an existing coding task.'],
 ];
 
-function icon(name) { return h('i', { 'data-lucide': name, 'aria-hidden': 'true' }); }
+function icon(name) {
+  const key = name.split('-').map(part => part[0].toUpperCase() + part.slice(1)).join('');
+  return h('svg', { viewBox: '0 0 24 24', width: 24, height: 24, fill: 'none', stroke: 'currentColor', 'stroke-width': 1.75, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true' }, appIcons[key].map(([tag, attributes]) => h(tag, attributes)));
+}
 
 function readPreference(key) {
   try { return localStorage.getItem(key); } catch { return null; }
@@ -48,10 +62,35 @@ const themeKey = 'voice-supervisor-theme-v2';
 const soundsKey = 'voice-supervisor-sounds-v1';
 const motionKey = 'voice-supervisor-motion-v1';
 const transparencyKey = 'voice-supervisor-transparency-v1';
+const variantsKey = 'voice-supervisor-theme-variants-v1';
+const volumeKey = 'voice-supervisor-sound-volume-v1';
+const strengthKey = 'voice-supervisor-wallpaper-strength-v1';
+const personaKey = 'voice-supervisor-theme-persona-v1';
+const voiceKey = 'voice-supervisor-theme-voice-v1';
+let variants;
+try { variants = JSON.parse(readPreference(variantsKey)) || {}; } catch { variants = {}; }
+if (typeof variants !== 'object' || Array.isArray(variants)) variants = {};
+variants = reactive(variants);
+function readPercent(key, fallback) {
+  const saved = readPreference(key);
+  const value = saved === null ? fallback : Number(saved);
+  return Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : fallback;
+}
+let soundVolume = readPercent(volumeKey, 20);
+let wallpaperStrength = readPercent(strengthKey, 100);
+let personaEnabled = readPreference(personaKey) !== 'false';
+let themeVoiceEnabled = readPreference(voiceKey) !== 'false';
 let transparencyEnabled = readPreference(transparencyKey) !== 'false';
 const savedTheme = readPreference(themeKey);
 const savedSounds = readPreference(soundsKey);
-const theme = ref(themes.find(item => item.id === savedTheme) || themes[0]);
+const theme = ref(resolveTheme(savedTheme, variants[savedTheme] || {}));
+if (savedTheme === 'opal') {
+  variants.alpine = { wallpaper: theme.value.wallpaperId, sprite: 'opal' };
+  delete variants.opal;
+  savePreference(themeKey, theme.value.id);
+  savePreference(variantsKey, JSON.stringify(variants));
+}
+window.getThemeSessionOptions = () => ({ theme: theme.value.id, themePersona: personaEnabled, themeVoice: themeVoiceEnabled });
 const state = ref('idle');
 let soundsEnabled = savedSounds === 'true' ? true : savedSounds === 'false' ? false : null;
 let interactionAudio = null;
@@ -91,17 +130,17 @@ function voiceBusy() {
   return state.value !== 'idle' || document.getElementById('mic-toggle-btn')?.getAttribute('aria-pressed') === 'true';
 }
 
-function playSound(kind) {
-  if (!(soundsEnabled ?? theme.value.preferences.soundsEnabled) || voiceBusy()
+function playSound(kind, preview = false) {
+  if ((!preview && !(soundsEnabled ?? theme.value.preferences.soundsEnabled)) || voiceBusy()
     || document.hidden || !document.hasFocus() || interactionAudio) return;
   const source = soundSource(kind);
-  const volume = Math.max(0, Math.min(1, Number(theme.value.preferences.soundVolume) || 0));
+  const volume = soundVolume / 100 * theme.value.preferences.soundVolume / 0.2;
   if (!source || !volume) return;
   const audio = new Audio();
   interactionAudio = audio;
   const finish = () => { if (interactionAudio === audio) stopSound(); };
   audio.preload = 'none';
-  audio.volume = volume;
+  audio.volume = Math.min(1, volume);
   audio.onended = finish;
   audio.onerror = finish;
   soundTimeout = window.setTimeout(finish, 1500);
@@ -133,38 +172,77 @@ function onState(event) {
 }
 
 function onTheme(event) {
-  const next = themes.find(item => item.id === event.detail?.id);
-  if (!next) return;
+  const id = event.detail?.id;
+  if (!themes.some(item => item.id === id)) return;
+  const next = resolveTheme(id, variants[id] || {});
   stopSound();
   theme.value = next;
-  applyTheme(next, { transparency: transparencyEnabled });
-  for (const button of document.querySelectorAll('button[data-appearance]')) {
-    button.setAttribute('aria-pressed', String(button.dataset.appearance === next.id));
-  }
+  applyTheme(next, { transparency: transparencyEnabled, wallpaperStrength });
   syncSoundControls();
+  window.lucide.createIcons();
   savePreference(themeKey, next.id);
 }
 
-function renderThemeOptions() {
-  for (const options of document.querySelectorAll('.appearance-options')) options.replaceChildren(...themes.map(item => {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'appearance-option';
-    button.dataset.appearance = item.id;
-    button.setAttribute('aria-label', item.label);
-    button.title = item.label;
-    button.setAttribute('aria-pressed', String(item.id === theme.value.id));
-    button.addEventListener('click', () => {
-      window.dispatchEvent(new CustomEvent('voice-supervisor:theme', { detail: { id: item.id } }));
-      options.closest('[popover]')?.hidePopover();
-    });
-    const image = document.createElement('img');
-    image.src = item.sprite;
-    image.alt = '';
-    button.append(image);
-    return button;
-  }));
+function cycleThemeVariant(id, field, direction) {
+  const current = resolveTheme(id, variants[id] || {});
+  const choices = field === 'wallpaper' ? current.wallpapers : current.sprites;
+  const index = choices.findIndex(choice => choice.id === current[`${field}Id`]);
+  const next = choices[(index + direction + choices.length) % choices.length];
+  variants[id] = { ...(variants[id] || {}), [field]: next.id };
+  savePreference(variantsKey, JSON.stringify(variants));
+  if (theme.value.id === id) onTheme({ detail: { id } });
 }
+
+const ThemeCards = {
+  name: 'ThemeCards',
+  setup() {
+    return () => themes.map(item => {
+      const preview = resolveTheme(item.id, variants[item.id] || {});
+      const wallpaper = preview.wallpapers.find(choice => choice.id === preview.wallpaperId);
+      const sprite = preview.sprites.find(choice => choice.id === preview.spriteId);
+      const control = (action, glyph, label, field, direction) => h('button', {
+        class: `theme-card-control theme-card-${action}`, type: 'button',
+        'data-theme-control': action, 'data-theme-sound': 'action', 'aria-label': label, title: label,
+        onClick: () => cycleThemeVariant(item.id, field, direction),
+      }, [icon(glyph)]);
+      return h('div', {
+        key: item.id, class: 'theme-card', 'data-theme-card': item.id,
+        'data-wallpaper': preview.wallpaperId, 'data-sprite': preview.spriteId,
+        style: {
+          '--cp-preview-surface': preview.tokens['--cp-panel-strong'],
+          '--cp-preview-text': preview.tokens['--cp-text'],
+          '--cp-preview-ink': preview.tokens['--cp-sprite-ink'],
+        },
+      }, [
+        h('button', {
+          class: 'theme-card-select', type: 'button', 'data-appearance': item.id, 'data-theme-sound': 'action',
+          'aria-label': `${item.label} theme`, 'aria-pressed': theme.value.id === item.id,
+          title: `${item.label}: ${wallpaper.label}, ${sprite.label}`,
+          onClick: event => {
+            window.dispatchEvent(new CustomEvent('voice-supervisor:theme', { detail: { id: item.id } }));
+            event.currentTarget.closest('[popover]')?.hidePopover();
+          },
+        }, [
+          h('img', { class: 'theme-card-wallpaper', src: preview.background, alt: '', decoding: 'async' }),
+          h('span', { class: 'theme-card-shade', 'aria-hidden': 'true' }),
+          h('span', { class: 'theme-card-name' }, item.label),
+          h('span', { class: 'theme-card-check', 'aria-hidden': 'true' }, [icon('check')]),
+          h('span', { class: ['theme-card-sprite', { 'theme-card-face': item.kind === 'companion' }], 'aria-hidden': 'true' }, [
+            h('img', { src: preview.sprite, alt: '', decoding: 'async' }),
+            item.kind === 'companion' ? h('span', { class: 'theme-card-eyes' }) : null,
+          ]),
+        ]),
+        preview.wallpapers.length > 1 ? control('previous', 'chevron-left', `Previous ${item.label} wallpaper`, 'wallpaper', -1) : null,
+        preview.wallpapers.length > 1 ? control('next', 'chevron-right', `Next ${item.label} wallpaper`, 'wallpaper', 1) : null,
+        preview.sprites.length > 1 ? control('swap', 'refresh-cw', `Swap ${item.label} sprite`, 'sprite', 1) : null,
+        h('span', { class: 'theme-card-position', 'aria-hidden': 'true' }, preview.wallpapers.map(choice => h('span', {
+          key: choice.id, class: { current: choice.id === preview.wallpaperId },
+        }))),
+        h('span', { class: 'sr-only', role: 'status' }, `${item.label}: ${wallpaper.label}, ${sprite.label}`),
+      ]);
+    });
+  },
+};
 
 const VoiceHome = {
   name: 'VoiceHome',
@@ -173,7 +251,7 @@ const VoiceHome = {
       h('section', { class: 'assistant-stage', 'aria-label': 'Voice assistant' }, [
         h('div', { class: 'assistant-artwork' }, [
           h('button', { id: 'assistant-toggle-btn', class: 'assistant-toggle', type: 'button', 'aria-label': 'Connect microphone', disabled: true }, [
-            h(VoiceSprite, { state: state.value, source: theme.value.sprite, animations: theme.value.animations }),
+            h(VoiceSprite, { state: state.value, source: theme.value.sprite, animations: theme.value.animations, kind: theme.value.kind, variant: theme.value.spriteId }),
           ]),
           h('button', { class: 'assistant-appearance btn btn-icon', type: 'button', popovertarget: 'appearance-popover', title: 'Change appearance', 'aria-label': 'Change appearance' }, [icon('palette')]),
         ]),
@@ -182,17 +260,22 @@ const VoiceHome = {
         ]),
       ]),
       h('nav', { class: 'suggestions', 'aria-label': 'Quick actions' }, [
-        ...suggestions.map(([glyph, label, prompt]) => h('button', {
+        ...suggestions.map(([glyph, label, prompt], index) => h('button', {
           class: 'suggestion', type: 'button', 'data-theme-sound': 'action',
           onClick: () => window.dispatchEvent(new CustomEvent('voice-supervisor:compose', { detail: { text: prompt } })),
-        }, [icon(glyph), h('span', label)])),
+        }, [icon(theme.value.icons[['action', 'progress', 'continue'][index]] || glyph), h('span', label)])),
       ]),
     ]);
   },
 };
 
-applyTheme(theme.value, { transparency: transparencyEnabled });
-renderThemeOptions();
+applyTheme(theme.value, { transparency: transparencyEnabled, wallpaperStrength });
+const themeApps = [...document.querySelectorAll('.appearance-options')].map(options => {
+  const app = createApp(ThemeCards);
+  app.mount(options);
+  return app;
+});
+document.getElementById('theme-art-license').href = new URL('./immersive/fluent-license.txt', import.meta.url).href;
 syncSoundControls();
 const motionSelect = document.getElementById('motion-preference');
 motionSelect.value = motionPreference(readPreference(motionKey));
@@ -201,6 +284,31 @@ const homeApp = createApp(VoiceHome);
 homeApp.mount('#voice-personality-app');
 const listeners = new AbortController();
 const listenerOptions = { signal: listeners.signal };
+for (const [id, key, checked, update] of [
+  ['theme-persona', personaKey, personaEnabled, value => { personaEnabled = value; }],
+  ['theme-voice', voiceKey, themeVoiceEnabled, value => { themeVoiceEnabled = value; }],
+]) {
+  const input = document.getElementById(id);
+  input.checked = checked;
+  input.addEventListener('change', () => { update(input.checked); savePreference(key, String(input.checked)); }, listenerOptions);
+}
+for (const [id, key, initial, update] of [
+  ['theme-volume', volumeKey, soundVolume, value => { soundVolume = value; stopSound(); }],
+  ['wallpaper-strength', strengthKey, wallpaperStrength, value => { wallpaperStrength = value; applyTheme(theme.value, { transparency: transparencyEnabled, wallpaperStrength }); }],
+]) {
+  const input = document.getElementById(id);
+  const output = document.getElementById(`${id}-value`);
+  input.value = initial;
+  output.value = `${initial}%`;
+  input.addEventListener('input', () => {
+    const value = Number(input.value);
+    update(value);
+    output.value = `${value}%`;
+    savePreference(key, String(value));
+  }, listenerOptions);
+}
+document.getElementById('theme-sound-preview').addEventListener('click', () => { stopSound(); playSound('action', true); }, listenerOptions);
+document.getElementById('theme-new-chat').addEventListener('click', () => window.dispatchEvent(new Event('voice-supervisor:themed-chat')), listenerOptions);
 const sidebarToggle = document.getElementById('sidebar-toggle');
 function setSidebar(collapsed) {
   document.documentElement.dataset.sidebar = collapsed ? 'collapsed' : 'expanded';
@@ -219,7 +327,7 @@ transparencyInput.checked = transparencyEnabled;
 transparencyInput.addEventListener('change', () => {
   transparencyEnabled = transparencyInput.checked;
   savePreference(transparencyKey, String(transparencyEnabled));
-  applyTheme(theme.value, { transparency: transparencyEnabled });
+  applyTheme(theme.value, { transparency: transparencyEnabled, wallpaperStrength });
 }, listenerOptions);
 window.addEventListener('voice-supervisor:agent-state', onState, listenerOptions);
 window.addEventListener('voice-supervisor:theme', onTheme, listenerOptions);
@@ -231,11 +339,15 @@ motionSelect.addEventListener('change', () => {
   savePreference(motionKey, preference);
 }, listenerOptions);
 document.addEventListener('visibilitychange', stopSound, listenerOptions);
+const syncVisibility = () => { document.documentElement.dataset.pageVisible = document.hidden ? 'false' : 'true'; };
+syncVisibility();
+document.addEventListener('visibilitychange', syncVisibility, listenerOptions);
 window.addEventListener('blur', stopSound, listenerOptions);
 window.addEventListener('pagehide', stopSound, listenerOptions);
 if (import.meta.hot) import.meta.hot.dispose(() => {
   listeners.abort();
   stopSound();
+  for (const app of themeApps) app.unmount();
   homeApp.unmount();
 });
 await import('./app.js');

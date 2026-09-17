@@ -56,6 +56,10 @@ const config = {
 };
 
 const evaluate = (callback, ...args) => browser.webContents.executeJavaScript(`(${callback})(${args.map(value => JSON.stringify(value)).join(',')})`, true);
+const resizeWindow = (width, height) => {
+  if (browser.isMinimized()) browser.restore();
+  browser.setContentSize(width, height);
+};
 const click = selector => evaluate(value => {
   const button = document.querySelector(value);
   button.focus();
@@ -273,8 +277,9 @@ try {
 
   assert.equal(await evaluate(() => document.querySelectorAll('.appearance-options input').length), 0);
   assert.equal(await evaluate(() => document.querySelector('.top-bar').getBoundingClientRect().width), 248);
-  assert.equal(await evaluate(() => [...document.querySelectorAll('.appearance-option')].every(button =>
-    !button.textContent.trim() && button.getAttribute('aria-label') && button.title && button.querySelector('img'))), true);
+  assert.equal(await evaluate(() => document.querySelectorAll('.theme-card-select').length), 6);
+  assert.equal(await evaluate(() => [...document.querySelectorAll('.theme-card-select')].every(button =>
+    button.textContent.trim() && button.getAttribute('aria-label') && button.title && button.querySelectorAll('img').length === 2 && !button.querySelector('button'))), true);
   await waitFor(() => document.getElementById('local-setup-prompt').open);
   assert.equal(setupReads, 1);
   assert.equal(setupWrites, 0);
@@ -431,7 +436,8 @@ try {
   assert.equal(await evaluate(() => document.body.dataset.view), 'home');
   assert.equal(await evaluate(() => document.activeElement.id), 'settings-tab');
   await visit('settings');
-  browser.setContentSize(390, 844);
+  resizeWindow(390, 844);
+  await waitFor(() => innerWidth === 390 && !document.getElementById('view-dialog').matches(':modal'));
   await settle();
   assert.equal(await evaluate(() => document.getElementById('view-dialog').matches(':modal')), false);
   assert.equal(await evaluate(() => document.getElementById('view-dialog').getAttribute('role')), 'region');
@@ -440,7 +446,8 @@ try {
   await visit('files');
   assert.equal(await evaluate(() => document.body.dataset.view), 'files');
   await visit('settings');
-  browser.setContentSize(1440, 960);
+  resizeWindow(1440, 960);
+  await waitFor(() => innerWidth === 1440 && document.getElementById('view-dialog').matches(':modal'));
   await settle();
   assert.equal(await evaluate(() => document.getElementById('view-dialog').matches(':modal')), true);
   assert.equal(await evaluate(() => window.fixtureHome === document.getElementById('agent-sprite') && window.fixtureSettings === document.getElementById('settings-view')), true);
@@ -448,7 +455,7 @@ try {
   assert.equal(await evaluate(() => document.body.dataset.view === 'tool-lab' && document.activeElement.id === 'close-view-btn'), true);
   assert.equal(await checkEditableInputs('#tool-lab-view'), 2);
   for (const width of [820, 390]) {
-    browser.setContentSize(width, 844);
+    resizeWindow(width, 844);
     await visit('workspace');
     if (!await evaluate(() => document.getElementById('areas-disclosure').open)) await pointerClick('#areas-disclosure > summary');
     await pointerClick('#btn-new-area');
@@ -474,10 +481,71 @@ try {
     await press('Space');
     await assertPainted('.toggle-control[for="transparency-preference"]');
   }
-  browser.setContentSize(1440, 960);
+  resizeWindow(1440, 960);
   await settle();
   await visit('settings');
+  const themeEventConnections = eventConnections;
+  const themeBeforePreview = await evaluate(() => document.documentElement.dataset.appearance);
+  await pointerClick('#settings-view [data-theme-card="jarvis"] [data-theme-control="next"]');
+  assert.equal(await evaluate(() => document.documentElement.dataset.appearance), themeBeforePreview);
+  assert.equal(await evaluate(() => document.querySelector('#settings-view [data-theme-card="jarvis"]').dataset.wallpaper), 'skyline');
+  await pointerClick('#settings-view [data-theme-card="jarvis"] [data-theme-control="next"]');
+  assert.equal(await evaluate(() => document.querySelector('#settings-view [data-theme-card="jarvis"]').dataset.wallpaper), 'observatory');
+  await pointerClick('#settings-view [data-theme-card="jarvis"] [data-theme-control="previous"]');
+  assert.equal(await evaluate(() => document.querySelector('#settings-view [data-theme-card="jarvis"]').dataset.wallpaper), 'skyline');
+  await pointerClick('#settings-view [data-theme-card="jarvis"] [data-theme-control="previous"]');
+  assert.equal(await evaluate(() => {
+    const cards = [...document.querySelectorAll('#settings-view .theme-card')].map(card => card.getBoundingClientRect());
+    return cards.length === 3 && cards[0].right < cards[1].left && cards[1].right < cards[2].left;
+  }), true, 'theme cards must fit in distinct desktop columns');
+  await click('#settings-view button[data-appearance="baymax"]');
+  assert.equal(await evaluate(() => document.querySelectorAll('select#theme-sprite, select#theme-wallpaper, [data-appearance="opal"]').length), 0);
+  assert.equal(await evaluate(() => document.querySelectorAll('#settings-view [data-appearance]').length), 3);
+  assert.equal(await evaluate(() => document.querySelectorAll('[data-theme-card="baymax"] [data-theme-control="swap"]').length), 0);
+  assert.equal(await evaluate(() => {
+    const face = document.querySelector('#settings-view .theme-card-face img');
+    const bounds = face.getBoundingClientRect();
+    return bounds.width / bounds.height > 1.4 && getComputedStyle(face).objectFit === 'fill';
+  }), true, 'Baymax card must preview the oval face, not the circular source bitmap');
+  await pointerClick('#settings-view [data-theme-card="baymax"] [data-theme-control="next"]');
+  assert.equal(await evaluate(() => document.activeElement.matches('[data-theme-card="baymax"] [data-theme-control="next"]')), true);
+  assert.equal(await evaluate(() => document.querySelector('#settings-view [data-theme-card="baymax"]').dataset.wallpaper), 'garden');
+  await visit('home');
+  await waitFor(() => document.querySelector('#agent-sprite[data-kind="companion"] .sprite-image')?.complete);
+  assert.equal(await evaluate(() => document.querySelectorAll('#agent-sprite img').length), 1);
+  assert.equal(await evaluate(() => {
+    const head = document.querySelector('.companion-head').getBoundingClientRect();
+    const image = document.querySelector('.companion-head img').getBoundingClientRect();
+    const eyes = document.querySelector('.companion-eyes').getBoundingClientRect();
+    return Math.abs(head.left - image.left) < 1 && Math.abs(head.top - image.top) < 1
+      && eyes.left > image.left && eyes.right < image.right;
+  }), true, 'companion eyes must stay within the head artwork');
+  assert.equal(await evaluate(async () => {
+    const image = document.querySelector('.sprite-image');
+    await image.decode();
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 512;
+    const context = canvas.getContext('2d');
+    context.drawImage(image, 0, 0, 512, 512);
+    return context.getImageData(0, 0, 1, 1).data[3] === 0 && context.getImageData(256, 256, 1, 1).data[3] > 240;
+  }), true, 'sprite corners must have real transparency, not a checkerboard');
+  await visit('settings');
   await click('#settings-view button[data-appearance="jarvis"]');
+  await pointerClick('#settings-view [data-theme-card="jarvis"] [data-theme-control="swap"]');
+  await evaluate(() => document.querySelector('#settings-view [data-theme-card="jarvis"] [data-theme-control="next"]').focus());
+  await press('Space');
+  assert.equal(await evaluate(() => document.activeElement.matches('[data-theme-card="jarvis"] [data-theme-control="next"]')), true);
+  assert.equal(await evaluate(() => document.querySelector('#settings-view [data-theme-card="jarvis"]').dataset.wallpaper), 'skyline');
+  await click('#settings-view button[data-appearance="baymax"]');
+  assert.equal(await evaluate(() => document.querySelector('#settings-view [data-theme-card="baymax"]').dataset.sprite), 'face');
+  assert.equal(await evaluate(() => document.querySelector('#settings-view [data-theme-card="baymax"]').dataset.wallpaper), 'garden');
+  await click('#theme-new-chat');
+  assert.equal(await evaluate(() => document.getElementById('conversation-dialog').open && document.activeElement.id === 'chat-input'), true);
+  await click('#close-chat-btn');
+  await visit('settings');
+  await click('#settings-view button[data-appearance="jarvis"]');
+  assert.equal(eventConnections, themeEventConnections, 'theme changes must reuse the SSE connection');
+  assert.equal(await evaluate(() => document.querySelector('#workspace-tab svg').dataset.lucide), 'radar');
   assert.equal(await evaluate(() => document.querySelector('#settings-view button[data-appearance="jarvis"]').getAttribute('aria-pressed')), 'true');
   assert.equal(await evaluate(() => document.querySelectorAll('button[data-appearance][aria-pressed="true"]').length), 2);
   assert.equal(await evaluate(() => document.documentElement.hasAttribute('aria-pressed')), false);
@@ -489,6 +557,8 @@ try {
   assert.equal(await evaluate(() => document.getElementById('local-setup-prompt').open), false);
   assert.equal(await evaluate(() => document.documentElement.dataset.motion), 'reduce');
   assert.equal(await evaluate(() => document.documentElement.dataset.appearance), 'jarvis');
+  assert.equal(await evaluate(() => document.querySelector('#settings-view [data-theme-card="jarvis"]').dataset.sprite), 'palladium');
+  assert.equal(await evaluate(() => document.querySelector('#settings-view [data-theme-card="jarvis"]').dataset.wallpaper), 'skyline');
   assert.equal(await evaluate(() => document.documentElement.dataset.transparency), 'off');
   assert.equal(await evaluate(() => document.getElementById('transparency-preference').checked), false);
   assert.equal(await evaluate(() => [...document.querySelectorAll('.voice-strip, .top-bar')].every(element => {
@@ -509,6 +579,10 @@ try {
   await press('Escape');
   assert.equal(await evaluate(() => document.activeElement.classList.contains('assistant-appearance')), true);
   await pointerClick('.assistant-appearance');
+  await pointerClick('#appearance-popover [data-theme-card="alpine"] [data-theme-control="next"]');
+  assert.equal(await evaluate(() => document.getElementById('appearance-popover').matches(':popover-open')), true);
+  assert.equal(await evaluate(() => document.documentElement.dataset.appearance), 'jarvis');
+  assert.equal(await evaluate(() => document.querySelector('#settings-view [data-theme-card="alpine"]').dataset.wallpaper), 'garden');
   await pointerClick('#appearance-popover [data-appearance="jarvis"]');
   assert.equal(await evaluate(() => document.getElementById('appearance-popover').matches(':popover-open')), false);
   await choose('#motion-preference', 'system');
@@ -625,7 +699,12 @@ try {
   Object.assign(fixtureTasks[1], { state: 'completed', result: '## Working changes' });
   eventResponse.write(`data: ${JSON.stringify({ type: 'state', state: { areas: [], tasks: fixtureTasks, settings: {} } })}\n\n`);
   await waitFor(() => document.querySelector('.history-entry[data-task-id="active-task"]').dataset.state === 'completed');
-  await click('#settings-view button[data-appearance="opal"]');
+  await click('#settings-view button[data-appearance="alpine"]');
+  await click('#settings-view [data-theme-card="alpine"] [data-theme-control="swap"]');
+  await click('#settings-view button[data-appearance="baymax"]');
+  assert.equal(voiceConnections, 1, 'changing sprite structure must not reconnect an active call');
+  await click('#settings-view button[data-appearance="alpine"]');
+  assert.equal(await evaluate(() => document.querySelector('#settings-view [data-theme-card="alpine"]').dataset.sprite), 'opal');
   assert.equal(await evaluate(() => document.documentElement.dataset.transparency), 'off');
   await choose('#motion-preference', 'reduce');
   assert.equal(voiceConnections, 1);
@@ -656,7 +735,7 @@ try {
 
   for (const [width, height] of [[1440, 960], [820, 900], [390, 844], [320, 640], [900, 500]]) {
     console.log(`Browser fixture: checking ${width}x${height}`);
-    browser.setContentSize(width, height);
+    resizeWindow(width, height);
     for (const view of ['home', 'workspace', 'calendar', 'files', 'settings']) {
       console.log(`Browser fixture: ${view}`);
       await visit(view);
@@ -726,7 +805,7 @@ try {
       if ((width === 1440 || width === 390) && ['home', 'settings'].includes(view)) await screenshot(`${view}-${width}`);
     }
   }
-  assert.equal(await evaluate(() => [...document.querySelectorAll('.appearance-option img')].every(image => image.complete && image.naturalWidth > 0)), true);
+  assert.equal(await evaluate(() => [...document.querySelectorAll('.appearance-options img')].every(image => image.complete && image.naturalWidth > 0)), true);
   assert.equal(voiceConnections, 2);
   assert.equal(eventConnections, stableEventConnections);
   await visit('home');
@@ -745,6 +824,10 @@ try {
 } catch (error) {
   console.error(error.stack);
   console.error('Browser console:', JSON.stringify(errors));
+  if (browser && !browser.isDestroyed()) console.error('Browser viewport:', {
+    contentSize: browser.getContentSize(), maximized: browser.isMaximized(), minimized: browser.isMinimized(),
+    renderer: await evaluate(() => ({ width: innerWidth, height: innerHeight, desktop: matchMedia('(min-width: 761px)').matches })),
+  });
   if (browser && !browser.isDestroyed()) console.error(await evaluate(() => ({ state: document.getElementById('agent-sprite')?.dataset.state, route: document.getElementById('route-status-badge')?.textContent, view: document.body.dataset.view, promptOpen: document.getElementById('local-setup-prompt')?.open, viewOpen: document.getElementById('view-dialog')?.open, focus: document.activeElement?.id, setupStatus: document.getElementById('setup-status')?.textContent, setupError: document.getElementById('setup-error')?.textContent, consent: document.getElementById('setup-consent')?.checked, installDisabled: document.getElementById('setup-install-btn')?.disabled, messages: document.getElementById('chat-messages')?.textContent })));
   console.error({ setupReads, setupWrites, settingsWrites });
   process.exitCode = 1;

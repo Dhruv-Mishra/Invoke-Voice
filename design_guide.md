@@ -6,7 +6,7 @@ A quiet workspace, not a dashboard or a marketing page. Borrow Apple's restraint
 
 ## Ownership
 
-- [public/themes.js](public/themes.js): all `--cp-*` colors, type, spacing, radii, motion and assets. Appearance choices change artwork, not the interaction language.
+- [public/themes.js](public/themes.js): all `--cp-*` colors, type, spacing, radii, motion and assets. Immersive themes may vary the surface palette, Lucide icons, display font, sprite motion and short sound cues while preserving labels, navigation and control geometry. Copilot remains the original default.
 - [public/theme.css](public/theme.css): responsive layout and component presentation. Edit the owning rule instead of appending competing overrides.
 - [public/index.html](public/index.html): semantic structure, baseline controls and first-paint fallback. Preserve DOM IDs used by the application.
 - [public/main.js](public/main.js): reactive home and local appearance/sidebar preferences.
@@ -46,7 +46,8 @@ Use the existing `--cp-space-*` tokens, not one-off form padding or inline style
 - One clear primary action per surface. Utility actions use Lucide icons with accessible names and hover titles; commands may use icon + short text.
 - Use stable 44px utility targets. Never hide essential actions behind hover alone.
 - Use native `details` for advanced options, logs, provider settings and metadata; closed by default. Keep results, errors, consent and download costs visible.
-- Use native `popover` for transient appearance selection. Escape and outside click dismiss it. Image choices have names for assistive technology, not visible captions.
+- Use native `popover` for transient appearance selection. Escape and outside click dismiss it. Share the same theme cards with Settings.
+- Theme selection has a Theme heading and three rectangular, lightly elevated preview cards with actual wallpapers and centered sprites. Each card has a theme name, selected outline/check, side wallpaper arrows and a bottom sprite-swap icon when alternatives exist. Controls are 44px native buttons with hover titles; never nest buttons. Customizing an inactive card only changes its preview until selected. Cards stack on mobile. Opal belongs to Copilot's sprite choices. Baymax is face-only.
 - The assistant button delegates to the microphone action. Never implement another session lifecycle in the sprite or theme UI.
 - The sidebar collapses to a 76px rail on desktop and becomes bottom navigation on mobile. Persist its preference without hiding mobile navigation.
 - Settings use unframed sections and one label per control. Retain native selects and checkbox switches; the label and Space must both work.
@@ -60,5 +61,6 @@ Use the existing `--cp-space-*` tokens, not one-off form padding or inline style
 - `--cp-duration-fast`: 160ms for press/selection; `--cp-duration-enter`: 280ms for entry; `--cp-duration-layout`: 320ms for sidebar layout. Use `--cp-ease`.
 - Prefer opacity, small translation and a 0.96 press scale. Do not animate text size or change hit-target dimensions. Keep the dock, sprite and captions aligned during sidebar movement.
 - Respect `data-motion` and the device reduced-motion preference; keep status understandable without animation. Theme changes must not remount audio or reconnect SSE/WebSocket.
+- Remember wallpaper and sprite variants per theme. Use local alpha WebP artwork and still-image backgrounds; pause hidden sprite motion, never preload interface audio, and stop cues during microphone activity. Keep persona and voice opt-outs independent and apply them only at new-session boundaries.
 - Run `npm run build`, `node --test test/frontend.test.mjs`, then `npm test`.
 - Inspect Home, Settings, task detail and appearance at 1440px and 390px; also check 320px and short windows. Verify focus return, Escape, switches, assets, overflow and safe dock clearance.

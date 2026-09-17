@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { tools as supervisorTools, supervisorInstructions } from './supervisor/contract.mjs';
+import { themedInstructions } from './theme-session.mjs';
 import { assertLoopback, providerProfiles, resolveEndpoint } from './llm/provider-config.mjs';
 
 export { assertLoopback, providerProfiles, resolveEndpoint };
@@ -280,12 +281,13 @@ export async function* streamReply({
   requestId,
   env = process.env,
   profile = 'supervisor',
+  persona = '',
 }) {
   const config = resolveEndpoint(provider, model, env);
   const reasoningFilter = new ReasoningFilter();
   const executedCalls = new Map();
   const isAnthropic = provider === 'anthropic';
-  const instructions = profile === 'voice' ? voiceInstructions : supervisorInstructions;
+  const instructions = themedInstructions(profile === 'voice' ? voiceInstructions : supervisorInstructions, persona);
   const contextTokens = provider === 'local' ? localContextTokens(env) : null;
   let workingMessages = prepareMessages(messages, provider === 'local'
     ? { maxMessages: Infinity, maxChars: Infinity, maxTextChars: Infinity }

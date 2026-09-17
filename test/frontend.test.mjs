@@ -7,7 +7,7 @@ import path from 'node:path';
 import { createSSRApp, h } from 'vue';
 import { renderToString } from 'vue/server-renderer';
 import VoiceSprite, { defaultAnimations } from '../public/VoiceSprite.js';
-import { captionTiming, motionPreference, themes } from '../public/themes.js';
+import { captionTiming, motionPreference, resolveTheme, themes } from '../public/themes.js';
 import { createCaptionController } from '../public/captions/controller.js';
 import { shouldForwardCapturedAudio } from '../public/voice-session.js';
 import { createVoiceCaptionBridge } from '../public/captions/voice-bridge.js';
@@ -151,6 +151,35 @@ test('voice sprite renders each state with its animation and accessible label', 
     assert.ok(output.includes('src="/sprite.png"'));
     assert.equal(output.includes('class="voice-bars"'), false);
     assert.equal((output.match(/class="sprite-image"/g) || []).length, 1);
+  }
+});
+
+test('Baymax renders only the face even with a legacy body variant', async () => {
+  for (const variant of ['face', 'companion', 'default']) {
+    const output = await renderToString(createSSRApp({
+      render: () => h(VoiceSprite, { kind: 'companion', variant, source: '/face.webp' }),
+    }));
+    assert.equal((output.match(/<img/g) || []).length, 1);
+    assert.ok(output.includes('companion-head') && output.includes('companion-eyes'));
+    assert.doesNotMatch(output, /companion-(body|arm|foot|badge)/);
+  }
+});
+
+test('themes resolve bounded variants and preserve the default', () => {
+  assert.equal(resolveTheme('unknown').id, 'alpine');
+  assert.equal(resolveTheme('alpine').tokens['--cp-font'], themes[0].tokens['--cp-font']);
+  assert.equal(resolveTheme('jarvis', { sprite: 'palladium', wallpaper: 'skyline' }).spriteId, 'palladium');
+  assert.equal(resolveTheme('jarvis', { sprite: '../bad', wallpaper: 'garden' }).wallpaperId, 'observatory');
+  assert.equal(resolveTheme('baymax').kind, 'companion');
+  assert.deepEqual(themes.map(theme => theme.id), ['alpine', 'jarvis', 'baymax']);
+  assert.equal(resolveTheme('opal').id, 'alpine');
+  assert.equal(resolveTheme('opal', { wallpaper: 'garden' }).spriteId, 'opal');
+  assert.equal(resolveTheme('opal', { wallpaper: 'garden' }).wallpaperId, 'garden');
+  assert.equal(resolveTheme('baymax', { sprite: 'companion' }).spriteId, 'face');
+  assert.deepEqual(resolveTheme('baymax').sprites.map(sprite => sprite.id), ['face']);
+  for (const theme of themes) {
+    for (const variant of [...theme.wallpapers, ...theme.sprites]) assert.ok(existsSync(new URL(variant.source)));
+    for (const source of Object.values(theme.sounds)) if (source) assert.ok(existsSync(new URL(source)));
   }
 });
 

@@ -11,6 +11,7 @@ import { createLocalSetupController } from './setup/local-setup.js';
 let appConfig = null;
 let appState = { areas: [], tasks: [] };
 let conversation = []; // [{role, content}]
+let conversationTheme = null;
 
 // Voice session state
 let voiceSocket = null;
@@ -573,6 +574,7 @@ function handleRouteSwitch(reason) {
     stopVoiceSession();
   }
   conversation = [];
+  conversationTheme = null;
   chatMessages.replaceChildren();
   voiceCaptions.reset();
   notifyReset(reason);
@@ -769,6 +771,7 @@ function isAssistantSpeaking() {
 // Voice Session & AudioWorklet capture
 async function startVoiceSession() {
   if (isVoiceStarting || voiceSocket || isCapturing) return;
+  const themeOptions = window.getThemeSessionOptions?.() || {};
   const route = getSelectedRouteStatus();
   if (!route.configured) {
     alert('Selected route is not configured.');
@@ -880,7 +883,8 @@ async function startVoiceSession() {
         mode,
         provider,
         model: effectiveModel,
-        allowCloud: allowCloudOpt.checked
+        allowCloud: allowCloudOpt.checked,
+        ...themeOptions,
       }));
     };
 
@@ -2513,6 +2517,7 @@ async function sendChatMessage() {
   chatInput.value = '';
 
   appendMessage('user', text);
+  conversationTheme ||= window.getThemeSessionOptions?.() || {};
   conversation.push({ role: 'user', content: text });
 
   const provider = providerSelect.value;
@@ -2535,6 +2540,7 @@ async function sendChatMessage() {
         provider,
         model,
         messages: conversation,
+        ...conversationTheme,
         requestId: crypto.randomUUID()
       }),
       signal: abortController.signal
@@ -2625,9 +2631,16 @@ btnClearChat.addEventListener('click', () => {
   }
   currentChatToken++;
   conversation = [];
+  conversationTheme = null;
   chatMessages.replaceChildren();
   voiceCaptions.reset();
   sessionResetNotice.style.display = 'none';
+});
+
+window.addEventListener('voice-supervisor:themed-chat', () => {
+  btnClearChat.click();
+  activateView('home');
+  openConversation();
 });
 
 // Route controls event listeners

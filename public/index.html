@@ -507,6 +507,7 @@
   </header>
 
   <div id="appearance-popover" popover="auto" aria-label="Assistant appearance">
+    <h2 class="theme-picker-heading">Theme</h2>
     <div class="appearance-options" role="group" aria-label="Assistant appearance"></div>
   </div>
   <div class="app-main">
@@ -609,8 +610,9 @@
       </div>
 
       <section class="settings-section">
-        <h2 class="settings-section-title"><i data-lucide="sparkles" aria-hidden="true"></i>Appearance</h2>
-        <div class="setting-row"><span id="avatar-label">Assistant avatar</span><div class="appearance-options" role="group" aria-labelledby="avatar-label"></div></div>
+        <h2 id="avatar-label" class="settings-section-title">Theme</h2>
+        <div class="appearance-options" role="group" aria-labelledby="avatar-label"></div>
+        <div class="setting-row"><label for="wallpaper-strength">Wallpaper strength</label><div class="theme-range"><input id="wallpaper-strength" type="range" min="0" max="100" step="5"><output id="wallpaper-strength-value" for="wallpaper-strength"></output></div></div>
         <div class="setting-row"><label for="motion-preference">Motion</label><select id="motion-preference"><option value="system">Use device setting</option><option value="reduce">Reduced motion</option><option value="full">Full motion</option></select></div>
         <label class="form-row-checkbox toggle-control setting-row" for="transparency-preference">
           <input type="checkbox" id="transparency-preference" checked>
@@ -620,6 +622,11 @@
           <input type="checkbox" id="theme-sounds" data-theme-sounds>
           <span class="toggle-track" aria-hidden="true"></span><span>Interaction sounds</span>
         </label>
+        <div class="setting-row"><label for="theme-volume">Sound level</label><div class="theme-range"><input id="theme-volume" type="range" min="0" max="100" step="5"><output id="theme-volume-value" for="theme-volume"></output><button id="theme-sound-preview" class="btn btn-icon" type="button" title="Preview theme sound" aria-label="Preview theme sound"><i data-lucide="volume-2" aria-hidden="true"></i></button></div></div>
+        <label class="form-row-checkbox toggle-control setting-row" for="theme-persona"><input type="checkbox" id="theme-persona" checked><span class="toggle-track" aria-hidden="true"></span><span>Theme persona for new sessions</span></label>
+        <label class="form-row-checkbox toggle-control setting-row" for="theme-voice"><input type="checkbox" id="theme-voice" checked><span class="toggle-track" aria-hidden="true"></span><span>Theme voice for new calls</span></label>
+        <div class="utility-toolbar"><button id="theme-new-chat" class="btn" type="button"><i data-lucide="message-square-plus" aria-hidden="true"></i>New themed chat</button></div>
+        <details class="theme-credits"><summary>Asset credits</summary><p>Companion: <a href="https://github.com/microsoft/fluentui-emoji" target="_blank" rel="noopener noreferrer">Microsoft Fluent Emoji</a> (<a id="theme-art-license" target="_blank" rel="noopener noreferrer">MIT license</a>), adapted with original expressions. Sounds: <a href="https://kenney.nl/assets/interface-sounds" target="_blank" rel="noopener noreferrer">Kenney</a> (CC0). Wallpapers: <a href="https://unsplash.com" target="_blank" rel="noopener noreferrer">Unsplash</a>. Character-inspired themes are unofficial; voices are provider presets, not character voice clones.</p></details>
       </section>
       <section class="settings-section" id="application-update" hidden>
         <h2 class="settings-section-title"><i data-lucide="hard-drive-download" aria-hidden="true"></i>Application</h2>

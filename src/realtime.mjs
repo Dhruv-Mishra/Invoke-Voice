@@ -3,13 +3,16 @@ import WebSocket from 'ws';
 import { randomUUID } from 'node:crypto';
 import { tools, supervisorInstructions } from './supervisor/contract.mjs';
 import { compactToolResult } from './llm.mjs';
+import { themedInstructions, themeVoicePreset } from './theme-session.mjs';
 
 export const DEFAULT_GEMINI_LIVE_MODEL = 'gemini-3.8-live';
 
-export function geminiLiveConfig() {
+export function geminiLiveConfig({ persona = '', voiceTheme = '' } = {}) {
+  const voice = themeVoicePreset(voiceTheme);
   return {
     responseModalities: [Modality.AUDIO],
-    systemInstruction: supervisorInstructions,
+    systemInstruction: themedInstructions(supervisorInstructions, persona),
+    ...(voice ? { speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice.gemini } } } } : {}),
     inputAudioTranscription: {}, outputAudioTranscription: {},
     tools: [{ functionDeclarations: tools.map(({ function: tool }) => ({ name: tool.name, description: tool.description, parametersJsonSchema: tool.parameters, behavior: Behavior.NON_BLOCKING })) }],
   };
@@ -35,7 +38,7 @@ export function createTranscriptStream(send) {
   };
 }
 
-export async function createRealtimeVoice({ mode, send, callTool, env = process.env }) {
+export async function createRealtimeVoice({ mode, send, callTool, persona = '', voiceTheme = '', env = process.env }) {
   let closed = false;
   let mutedOutput = false;
   const sessionId = randomUUID();
@@ -64,7 +67,7 @@ export async function createRealtimeVoice({ mode, send, callTool, env = process.
     };
     session = await ai.live.connect({
       model: env.GEMINI_LIVE_MODEL || DEFAULT_GEMINI_LIVE_MODEL,
-      config: geminiLiveConfig(),
+      config: geminiLiveConfig({ persona, voiceTheme }),
       callbacks: {
         onmessage: message => {
           if (closed) return;
@@ -158,7 +161,7 @@ export async function createRealtimeVoice({ mode, send, callTool, env = process.
   });
   socket.on('error', () => send({ type: 'error', message: 'OpenAI Realtime connection error', fatal: true }));
   socket.on('close', () => { if (!closed) send({ type: 'error', message: 'OpenAI Realtime disconnected', fatal: true }); });
-  write({ type: 'session.update', session: { type: 'realtime', instructions: supervisorInstructions, output_modalities: ['audio'], tools: tools.map(({ function: tool }) => ({ type: 'function', ...tool })), audio: { input: { format: { type: 'audio/pcm', rate: 24000 }, transcription: { model: 'gpt-4o-mini-transcribe' }, turn_detection: { type: 'server_vad' } }, output: { format: { type: 'audio/pcm', rate: 24000 }, voice: 'marin' } } } });
+  write({ type: 'session.update', session: { type: 'realtime', instructions: themedInstructions(supervisorInstructions, persona), output_modalities: ['audio'], tools: tools.map(({ function: tool }) => ({ type: 'function', ...tool })), audio: { input: { format: { type: 'audio/pcm', rate: 24000 }, transcription: { model: 'gpt-4o-mini-transcribe' }, turn_detection: { type: 'server_vad' } }, output: { format: { type: 'audio/pcm', rate: 24000 }, voice: themeVoicePreset(voiceTheme)?.openai || 'marin' } } } });
   return {
     audio(data) {
       const input = Buffer.from(data, 'base64');

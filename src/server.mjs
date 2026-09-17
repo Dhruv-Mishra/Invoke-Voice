@@ -12,6 +12,7 @@ import { createRealtimeVoice, DEFAULT_GEMINI_LIVE_MODEL } from './realtime.mjs';
 import { createLocalVoice, localConfiguration, warmLocalVoice } from './local-voice.mjs';
 import { createLocalSetup } from './local-setup.mjs';
 import { createRuntimeConfig } from './runtime-config.mjs';
+import { sessionThemeOptions } from './theme-session.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const publicDir = path.join(root, 'public');
@@ -33,6 +34,8 @@ const MIME_TYPES = {
   '.woff2': 'font/woff2',
   '.woff': 'font/woff',
   '.wav': 'audio/wav',
+  '.ogg': 'audio/ogg',
+  '.txt': 'text/plain; charset=utf-8',
 };
 
 function getMimeType(filePath) {
@@ -215,7 +218,7 @@ export async function startSupervisor(options = {}) {
         });
         response.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' });
         try {
-          for await (const event of streamReply({ provider: input.provider, model: input.model, messages: input.messages, requestId: input.requestId || randomUUID(), signal: controller.signal, callTool: supervisor.callTool.bind(supervisor) })) sse(response, event);
+          for await (const event of streamReply({ provider: input.provider, model: input.model, messages: input.messages, ...sessionThemeOptions(input), requestId: input.requestId || randomUUID(), signal: controller.signal, callTool: supervisor.callTool.bind(supervisor) })) sse(response, event);
         } catch (error) { if (!controller.signal.aborted) sse(response, { type: 'error', message: error.message }); }
         finally {
           cleanupChat();
@@ -280,7 +283,7 @@ export async function startSupervisor(options = {}) {
           voiceOwner = socket;
           starting = true;
           cancelled = false;
-          const options = { mode: message.mode, provider: message.provider, model: message.model, allowCloud: message.allowCloud === true, send, callTool: supervisor.callTool.bind(supervisor) };
+          const options = { mode: message.mode, provider: message.provider, model: message.model, allowCloud: message.allowCloud === true, ...sessionThemeOptions(message), send, callTool: supervisor.callTool.bind(supervisor) };
           session = message.mode === 'local' ? await createLocalVoice(options) : await createRealtimeVoice(options);
           starting = false;
           if (cancelled || socket.readyState !== 1) { session.close(); if (voiceOwner === socket) voiceOwner = null; }
@@ -302,7 +305,13 @@ export async function startSupervisor(options = {}) {
   supervisor.on('change', state => { for (const client of clients) sse(client, { type: 'state', state }); });
   supervisor.on('notification', notification => { for (const client of clients) sse(client, { type: 'notification', notification }); });
   const observer = setInterval(() => {
-    for (const name of readdirSync(inbox).filter(name => name.endsWith('.json')).sort()) {
+    let names;
+    try { names = readdirSync(inbox); }
+    catch (error) {
+      if (error.code === 'ENOENT') return;
+      throw error;
+    }
+    for (const name of names.filter(name => name.endsWith('.json')).sort()) {
       const file = path.join(inbox, name);
       try { supervisor.observe(JSON.parse(readFileSync(file, 'utf8'))); unlinkSync(file); }
       catch { /* Leave unreadable observations for inspection. */ }

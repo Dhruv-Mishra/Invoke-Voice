@@ -78,6 +78,20 @@ The unified startup flow (`scripts/start.mjs`) handles lifecycle, modes, and cle
 | `--port <num>`, `-p <num>` | Any | Binds to custom port (defaults to `PORT` env or 4317). |
 | `--build` | Release | Forces frontend rebuild even if `dist/index.html` already exists. |
 
+## Immersive Themes
+
+Choose a card in **Settings > Theme** or use the palette button beside the assistant. Copilot keeps the original appearance and typography and remains the default; Copilot and Opal are sprite choices within that one theme. Saved Opal theme selections migrate automatically. Jarvis adds a reactor, technical icons, dark glass surfaces and short electronic cues. Baymax uses only the unofficial, character-inspired white face with animated eyes, quiet surfaces and softer cues; the body is not available.
+
+The three theme cards preview the actual wallpaper and centered sprite. Side arrows cycle wallpapers; the bottom swap icon cycles sprites where alternatives exist. Editing an inactive card updates its preview without changing the active theme. Click the card to apply it. Selected outlines, check marks, hover labels and native keyboard access work in both Settings and the appearance popover.
+
+Each theme remembers its own wallpaper and sprite selection. Wallpaper strength, sound level, transparency, motion, persona and voice preferences are stored locally. Interface sounds are optional, never loop, and stop during microphone activity. Reduced motion disables animation, and hidden pages pause it. No wallpaper videos, external font requests, live asset downloads or animation libraries are needed.
+
+Appearance changes never restart a call or erase a chat. Personas apply to new text conversations and voice calls; **New themed chat** explicitly clears the current text conversation. Theme voice changes apply to the next call. Each non-default persona adds just one sentence (under 90 characters) to the existing prompt, with no extra model request. Turning either toggle off retains the normal persona or configured voice independently.
+
+Gemini and OpenAI use their built-in voices, not character voice clones. Local Kokoro uses small pace/pitch variations of the installed voice. It can use `am_michael.pt` (Jarvis) or `am_fenrir.pt` (Baymax) if already present in the configured Kokoro directory; otherwise it keeps the installed voice and never downloads another model. Local timbre availability and physical speaker quality are separate from UI validation.
+
+Media is packaged locally: 512px transparent WebP sprites, 1600x1000 WebP wallpapers and short 24kHz mono Ogg cues. See [asset sources and licenses](public/immersive/README.md). The optional `node scripts/theme-assets.mjs` preparation command requires FFmpeg and network access; it is not part of app startup or normal builds.
+
 ## Local Voice
 
 Start the source app with `npm start`, then use the opt-in setup in Settings. Setup only accepts `POST /api/setup` with `{"consent":true}`; `GET /api/setup` is a local, non-network snapshot. Extra command, URL and path fields are rejected. `ready` means the installed runtimes passed startup checks in this server process, not just that files exist.

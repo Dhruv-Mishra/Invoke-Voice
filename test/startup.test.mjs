@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -11,6 +11,7 @@ import { createRuntimeConfig, localThreadDefault } from '../src/runtime-config.m
 import { voiceInstructions } from '../src/llm.mjs';
 import { tools } from '../src/supervisor/contract.mjs';
 import { startSupervisor } from '../src/server.mjs';
+import { Supervisor } from '../src/supervisor.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 
@@ -239,6 +240,31 @@ test('release mode serves built frontend assets with accurate MIME types and own
     assert.equal(traversal.status, 404);
   } finally {
     await supervisor.close();
+  }
+});
+
+test('inbox polling survives a missing directory and resumes after restoration', async context => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-supervisor-inbox-'));
+  const inbox = path.join(dataDir, 'inbox');
+  const supervisor = new Supervisor({ dataDir });
+  const observations = [];
+  context.mock.method(supervisor, 'observe', observation => observations.push(observation));
+  context.mock.timers.enable({ apis: ['setInterval'] });
+  const app = await startSupervisor({ dataDir, supervisor, port: 0, mode: 'release', prewarm: false });
+  try {
+    rmSync(inbox, { recursive: true });
+    context.mock.timers.tick(1500);
+    assert.deepEqual(observations, []);
+    assert.equal((await fetch(`${app.url}/api/config`)).status, 200);
+    mkdirSync(inbox);
+    writeFileSync(path.join(inbox, 'observation.json'), JSON.stringify({ taskId: 'fixture' }));
+    context.mock.timers.tick(750);
+    assert.deepEqual(observations, [{ taskId: 'fixture' }]);
+    assert.deepEqual(readdirSync(inbox), []);
+  } finally {
+    await app.close();
+    context.mock.timers.reset();
+    rmSync(dataDir, { recursive: true, force: true });
   }
 });
 

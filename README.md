@@ -84,13 +84,13 @@ Choose a card in **Settings > Theme** or use the palette button beside the assis
 
 The three theme cards preview the actual wallpaper and centered sprite. Side arrows cycle wallpapers; the bottom swap icon cycles sprites where alternatives exist. Editing an inactive card updates its preview without changing the active theme. Click the card to apply it. Selected outlines, check marks, hover labels and native keyboard access work in both Settings and the appearance popover.
 
-Each theme remembers its own wallpaper and sprite selection. Wallpaper strength, sound level, transparency, motion, persona and voice preferences are stored locally. Interface sounds are optional, never loop, and stop during microphone activity. Reduced motion disables animation, and hidden pages pause it. No wallpaper videos, external font requests, live asset downloads or animation libraries are needed.
+Each theme has four backgrounds: two supplied scenes plus plain white and black gradients. Each remembers its own wallpaper and sprite selection. Wallpaper strength, sound level, transparency, motion, persona and voice preferences are stored locally. Optional boot sounds play when connecting the microphone or switching themes; action sounds share the tool-activity edge pulse. Hands-free capture pauses during cues to prevent feedback. Reduced motion disables animation, and hidden pages pause it.
 
 Appearance changes never restart a call or erase a chat. Personas apply to new text conversations and voice calls; **New themed chat** explicitly clears the current text conversation. Theme voice changes apply to the next call. Each non-default persona adds just one sentence (under 90 characters) to the existing prompt, with no extra model request. Turning either toggle off retains the normal persona or configured voice independently.
 
 Gemini and OpenAI use their built-in voices, not character voice clones. Local Kokoro uses small pace/pitch variations of the installed voice. It can use `am_michael.pt` (Jarvis) or `am_fenrir.pt` (Baymax) if already present in the configured Kokoro directory; otherwise it keeps the installed voice and never downloads another model. Local timbre availability and physical speaker quality are separate from UI validation.
 
-Media is packaged locally: 512px transparent WebP sprites, 1600x1000 WebP wallpapers and short 24kHz mono Ogg cues. See [asset sources and licenses](public/immersive/README.md). The optional `node scripts/theme-assets.mjs` preparation command requires FFmpeg and network access; it is not part of app startup or normal builds.
+Media is packaged locally: 512px transparent WebP sprites, 1600x900 WebP wallpapers and 48kHz mono Ogg cues. See [asset sources and licenses](public/immersive/README.md). Run `node scripts/theme-assets.mjs` with FFmpeg installed to normalize the originals in `voice_app_assets`; preparation is offline and never runs during startup or normal builds.
 
 ## Local Voice
 
@@ -205,7 +205,9 @@ An optional embedding-only regression check uses synthetic tasks and blocks netw
 
 ## Hosted Providers
 
-Add relevant keys under **Settings > Config**, then choose a provider and voice route in the UI. Hosted text and realtime voice adapters read saved changes for new sessions immediately; Anthropic, Azure OpenAI, and custom OpenAI-compatible endpoints are text-only. Local transcripts reach hosted text only when **Allow Cloud Hybrid** is enabled. `.env` remains available for source automation.
+Add OpenAI or Google keys under **Settings > Config**, then open **Voice & model**. **Use Native Voice** selects OpenAI Realtime or Google Gemini Live. **Use Dedicated Models** independently selects Local, OpenAI or Google for speech recognition, the LLM and speech synthesis. Fixed choices use keyboard-accessible pillbars below their headings. The Browser icon denotes online processing; the Folder icon denotes local processing.
+
+Dedicated cloud stages require **Allow cloud processing** consent: hosted STT receives microphone audio, hosted LLMs receive transcripts, and hosted TTS receives response text. Hosted STT commits bounded utterances after silence or push-to-talk release; it does not provide word-by-word local-style partials. Pipeline choices persist on this device; changes end an active call before the next route starts. Model IDs remain configurable in Settings. Provider access, quota and live speech quality need validation with your own account. `.env` remains available for source automation.
 
 ## Development And Desktop
 

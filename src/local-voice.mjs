@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { streamReply } from './llm.mjs';
 import { themeVoicePreset } from './theme-session.mjs';
+import { createCloudRecognizer, synthesizeSpeech, validateSpeechPipeline } from './speech-pipeline.mjs';
 import { localThreadDefault } from './runtime-config.mjs';
 import { localSttProvider, stackPaths } from '../scripts/models.mjs';
 import desktopLaunch from '../scripts/desktop-launch.cjs';
@@ -317,11 +318,13 @@ function spokenSummary(value) {
   return sentences.slice(0, 2).join(' ').trim().slice(0, 360) || 'The action finished.';
 }
 
-export async function createLocalVoice({ send, callTool, provider = 'local', model, allowCloud = false, persona = '', voiceTheme = '', env = process.env }) {
+export async function createLocalVoice({ send, callTool, provider = 'local', sttProvider = 'local', ttsProvider = 'local', model, allowCloud = false, persona = '', voiceTheme = '', env = process.env }) {
   const voicePreset = themeVoicePreset(voiceTheme);
-  if (provider !== 'local' && !allowCloud) throw new Error('Enable hybrid consent to send local speech transcripts to a cloud LLM');
+  validateSpeechPipeline({ provider, sttProvider, ttsProvider, allowCloud }, env);
   const config = localConfiguration(env);
-  if (!config.sttConfigured) throw new Error(`Install ${config.sttLabel} and its runtime from Settings > Local voice.`);
+  if (sttProvider === 'local' && !config.sttConfigured) throw new Error(`Install ${config.sttLabel} and its runtime from Settings > Local voice.`);
+  if (ttsProvider === 'local' && !config.ttsConfigured) throw new Error('Install Kokoro from Settings > Local voice.');
+  const speechLifetime = new AbortController();
   const sessionId = randomUUID();
   let closed = false;
   let turn = 0;
@@ -334,6 +337,7 @@ export async function createLocalVoice({ send, callTool, provider = 'local', mod
   let ttsExitHandler;
   let activePhrase;
   let activePhraseTimer;
+  let activePhraseAbort;
   let lastSpeechAt = 0;
   let latestSpeechId;
   let recognizing = false;
@@ -349,6 +353,7 @@ export async function createLocalVoice({ send, callTool, provider = 'local', mod
   announcementTimer.unref();
   const close = () => {
     closed = true;
+    speechLifetime.abort();
     pcmWriter?.dispose();
     controller?.abort();
     clearInterval(announcementTimer);
@@ -368,6 +373,7 @@ export async function createLocalVoice({ send, callTool, provider = 'local', mod
     const hadActivity = generating || responses.size > 0 || phrases.some(item => item.token === interruptedToken) || activePhrase?.token === interruptedToken;
     turn += 1;
     controller?.abort();
+    activePhraseAbort?.abort();
     generating = false;
     for (let index = phrases.length - 1; index >= 0; index -= 1) {
       if (phrases[index].token === interruptedToken) phrases.splice(index, 1);
@@ -383,6 +389,17 @@ export async function createLocalVoice({ send, callTool, provider = 'local', mod
   function pump() {
     if (closed || activePhrase || !phrases.length) return;
     activePhrase = phrases.shift();
+    if (ttsProvider !== 'local') {
+      const current = activePhrase;
+      activePhraseAbort = new AbortController();
+      const signal = AbortSignal.any([speechLifetime.signal, activePhraseAbort.signal]);
+      synthesizeSpeech(current.text, { provider: ttsProvider, voicePreset, env, signal }).then(data => {
+        ttsLineHandler(JSON.stringify({ type: 'audio', id: current.id, data }));
+      }).catch(() => {
+        if (!closed) ttsLineHandler(JSON.stringify({ type: 'error', id: current.id, error: 'Speech synthesis failed. Check provider access and retry.' }));
+      }).finally(() => { activePhraseAbort = undefined; if (!closed) ttsLineHandler(JSON.stringify({ type: 'done', id: current.id })); });
+      return;
+    }
     if (!tts?.stdin.writable) return fail('Kokoro is not available');
     tts.stdin.write(`${JSON.stringify(activePhrase)}\n`);
     clearTimeout(activePhraseTimer);
@@ -479,9 +496,6 @@ export async function createLocalVoice({ send, callTool, provider = 'local', mod
     }
   }
   try {
-    const runtime = await getKokoroRuntime(config, env);
-    tts = runtime.process;
-    ttsReader = runtime.reader;
     ttsLineHandler = line => {
       let event;
       try { event = JSON.parse(line); } catch { return; }
@@ -506,22 +520,19 @@ export async function createLocalVoice({ send, callTool, provider = 'local', mod
         pumpAnnouncements();
       }
     };
-    ttsReader.on('line', ttsLineHandler);
-    ttsExitHandler = () => { if (!closed) fail('Kokoro stopped unexpectedly'); };
-    tts.once('exit', ttsExitHandler);
-    const sttRuntime = await claimSttRuntime(config, env);
-    stt = sttRuntime.process;
-    stt.on('error', error => fail(`${sttRuntime.name} failed: ${error.message}`));
-    stt.on('exit', code => { if (!closed) fail(`${sttRuntime.name} exited (${code}): ${sttRuntime.diagnostic()}`); });
-    pcmWriter = createSttWriter(stt.stdin, config.sttProvider, fail);
-    const transcription = sttRuntime.transcription;
-    readers.push(transcription);
-    transcription.on('line', line => {
+    if (ttsProvider === 'local') {
+      const runtime = await getKokoroRuntime(config, env);
+      tts = runtime.process;
+      ttsReader = runtime.reader;
+      ttsReader.on('line', ttsLineHandler);
+      ttsExitHandler = () => { if (!closed) fail('Kokoro stopped unexpectedly'); };
+      tts.once('exit', ttsExitHandler);
+    }
+    const onTranscription = event => {
       if (closed) return;
-      let event;
-      try { event = JSON.parse(line); } catch { return; }
       if (event.type === 'error') {
         if (event.fatal !== false) return fail(event.message || 'Speech recognition failed');
+        recognizing = false;
         send({ type: 'error', message: event.message });
         send({ type: 'state', state: 'listening' });
         return;
@@ -563,7 +574,23 @@ export async function createLocalVoice({ send, callTool, provider = 'local', mod
         if (event.t1 - event.t0 > 55) { send({ type: 'error', message: 'Long utterance reached the STT cap. Please repeat a shorter complete request.' }); return; }
         void reply(text);
       }
-    });
+    };
+    if (sttProvider === 'local') {
+      const sttRuntime = await claimSttRuntime(config, env);
+      stt = sttRuntime.process;
+      stt.on('error', error => fail(`${sttRuntime.name} failed: ${error.message}`));
+      stt.on('exit', code => { if (!closed) fail(`${sttRuntime.name} exited (${code}): ${sttRuntime.diagnostic()}`); });
+      pcmWriter = createSttWriter(stt.stdin, config.sttProvider, fail);
+      const transcription = sttRuntime.transcription;
+      readers.push(transcription);
+      transcription.on('line', line => {
+        let event;
+        try { event = JSON.parse(line); } catch { return; }
+        onTranscription(event);
+      });
+    } else {
+      pcmWriter = createCloudRecognizer({ provider: sttProvider, env, onEvent: onTranscription });
+    }
     if (closed) throw new Error('Local voice startup was interrupted');
     send({ type: 'ready' });
     return {

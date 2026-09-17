@@ -16,7 +16,7 @@ export function providerProfiles(env = process.env) {
   return [
     {
       id: 'gemini',
-      label: 'Gemini',
+      label: 'Google',
       model: env.GEMINI_MODEL || 'gemini-3.8-flash',
       configured: Boolean(env.GEMINI_API_KEY),
     },
@@ -27,28 +27,10 @@ export function providerProfiles(env = process.env) {
       configured: Boolean(env.OPENAI_API_KEY),
     },
     {
-      id: 'anthropic',
-      label: 'Anthropic',
-      model: env.ANTHROPIC_MODEL || 'claude-sonnet-4-5',
-      configured: Boolean(env.ANTHROPIC_API_KEY),
-    },
-    {
-      id: 'azure',
-      label: 'Azure OpenAI',
-      model: env.AZURE_OPENAI_DEPLOYMENT || env.AZURE_OPENAI_MODEL || 'gpt-4o-mini',
-      configured: Boolean(env.AZURE_OPENAI_ENDPOINT && (env.AZURE_OPENAI_KEY || env.AZURE_OPENAI_API_KEY)),
-    },
-    {
       id: 'local',
       label: 'Local',
       model: env.LOCAL_LLM_MODEL || 'ling-local',
       configured: Boolean(env.LOCAL_LLM_URL),
-    },
-    {
-      id: 'custom',
-      label: 'Custom',
-      model: env.CUSTOM_MODEL || 'custom-model',
-      configured: Boolean(env.CUSTOM_BASE_URL),
     },
   ];
 }

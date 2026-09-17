@@ -1,72 +1,55 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execFileSync } from 'node:child_process';
-import yauzl from 'yauzl';
+import { execFileSync, spawnSync } from 'node:child_process';
 
+const source = fileURLToPath(new URL('../voice_app_assets/', import.meta.url));
 const destination = fileURLToPath(new URL('../public/immersive/', import.meta.url));
-const temporary = await mkdtemp(path.join(tmpdir(), 'voice-theme-assets-'));
+const images = [
+  ['copilot_background.webp', 'copilot-background-1', false],
+  ['copilot_background_2.png', 'copilot-background-2', true],
+  ['jarvis_background.png', 'jarvis-background-1', false],
+  ['jarvis_background_2.png', 'jarvis-background-2', false],
+  ['baymax_background.png', 'baymax-background-1', true],
+  ['baymax_background_2.png', 'baymax-background-2', true],
+];
+const sounds = [
+  ['copilot_bootup_sound.wav', 'copilot-bootup'],
+  ['copilot_action_sound.wav', 'copilot-action'],
+  ['jarvis_bootup_sound.mp3', 'jarvis-bootup'],
+  ['jarvis_action_sound.mp3', 'jarvis-action'],
+  ['baymax_bootup.mp3', 'baymax-bootup'],
+  ['baymax_action_sound.mp3', 'baymax-action'],
+];
 await mkdir(destination, { recursive: true });
-
-async function download(url, name) {
-  const response = await fetch(url, { signal: AbortSignal.timeout(60000) });
-  if (!response.ok) throw new Error(`${name}: HTTP ${response.status}`);
-  const target = path.join(temporary, name);
-  await writeFile(target, Buffer.from(await response.arrayBuffer()));
-  return target;
+for (const [name, start, end] of [['white', 255, 239], ['black', 8, 29]]) {
+  const channel = `${start}+(${end}-${start})*Y/H`;
+  execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=s=1600x900',
+    '-vf', `format=rgb24,geq=r='${channel}':g='${channel}':b='${channel}',setsar=1`,
+    '-frames:v', '1', '-c:v', 'libwebp', '-quality', '84', '-compression_level', '6', '-pix_fmt', 'yuv420p',
+    path.join(destination, `${name}-background.webp`)], { stdio: 'inherit' });
 }
-
-function image(source, name, filter) {
-  execFileSync('ffmpeg', ['-v', 'error', '-y', '-i', source, '-vf', filter, '-frames:v', '1', '-c:v', 'libwebp', '-quality', '84', path.join(destination, name)], { stdio: 'inherit' });
+for (const [filename, name, reframe] of images) {
+  const filters = [
+    ...(reframe ? ['crop=iw:ih*0.8:0:0'] : []),
+    'scale=1600:900:force_original_aspect_ratio=increase:flags=lanczos',
+    'crop=1600:900', 'setsar=1',
+  ];
+  execFileSync('ffmpeg', ['-v', 'error', '-y', '-i', path.join(source, filename),
+    '-map_metadata', '-1', '-vf', filters.join(','), '-frames:v', '1',
+    '-c:v', 'libwebp', '-quality', '84', '-compression_level', '6', '-pix_fmt', 'yuv420p',
+    path.join(destination, `${name}.webp`)], { stdio: 'inherit' });
 }
-
-async function extractAudio(archive) {
-  const selections = { 'click_001.ogg': 'copilot-navigation', 'confirmation_001.ogg': 'copilot-action', 'select_001.ogg': 'reactor-navigation', 'maximize_001.ogg': 'reactor-action', 'bong_001.ogg': 'companion-action', 'drop_001.ogg': 'companion-navigation' };
-  return new Promise((resolve, reject) => yauzl.open(archive, { lazyEntries: true }, (error, zip) => {
-    if (error) return reject(error);
-    zip.on('error', reject);
-    zip.on('end', () => Object.keys(selections).length ? reject(new Error(`Missing sounds: ${Object.keys(selections)}`)) : resolve());
-    zip.on('entry', entry => {
-      const basename = path.posix.basename(entry.fileName);
-      const name = selections[basename];
-      if (!name) return zip.readEntry();
-      zip.openReadStream(entry, (error, stream) => {
-        if (error) return reject(error);
-        const chunks = [];
-        stream.on('data', chunk => chunks.push(chunk));
-        stream.on('error', reject);
-        stream.on('end', async () => {
-          try {
-            const source = path.join(temporary, basename);
-            await writeFile(source, Buffer.concat(chunks));
-            execFileSync('ffmpeg', ['-v', 'error', '-y', '-i', source, '-t', '0.7', '-af', 'afade=t=out:st=0.5:d=0.2,loudnorm=I=-24:TP=-6:LRA=7', '-ar', '24000', '-ac', '1', '-c:a', 'libvorbis', '-q:a', '3', path.join(destination, `${name}.ogg`)], { stdio: 'inherit' });
-            delete selections[basename];
-            zip.readEntry();
-          } catch (error) { zip.close(); reject(error); }
-        });
-      });
-    });
-    zip.readEntry();
-  }));
+for (const [filename, name] of sounds) {
+  const input = path.join(source, filename);
+  const measurement = spawnSync('ffmpeg', ['-hide_banner', '-i', input,
+    '-af', 'apad=pad_dur=0.4,loudnorm=I=-23:TP=-3:LRA=7:print_format=json', '-f', 'null', '-'], { encoding: 'utf8' });
+  if (measurement.status !== 0) throw new Error(`Cannot measure ${filename}: ${measurement.error?.message || measurement.stderr}`);
+  const measured = JSON.parse(measurement.stderr.slice(measurement.stderr.lastIndexOf('{'), measurement.stderr.lastIndexOf('}') + 1));
+  const filter = `loudnorm=I=-23:TP=-3:LRA=7:measured_I=${measured.input_i}:measured_TP=${measured.input_tp}:measured_LRA=${measured.input_lra}:measured_thresh=${measured.input_thresh}:offset=${measured.target_offset}:linear=true`;
+  execFileSync('ffmpeg', ['-v', 'error', '-y', '-i', input, '-map_metadata', '-1',
+    '-af', `${filter},afade=t=in:d=0.01,areverse,afade=t=in:d=0.03,areverse`,
+    '-ar', '48000', '-ac', '1', '-c:a', 'libvorbis', '-q:a', '4',
+    path.join(destination, `${name}.ogg`)], { stdio: 'inherit' });
 }
-
-try {
-  const sphere = await download('https://raw.githubusercontent.com/microsoft/fluentui-emoji/main/assets/White%20circle/3D/white_circle_3d.png', 'sphere.png');
-  image(sphere, 'companion.webp', 'scale=512:512:flags=lanczos');
-  const reactor = fileURLToPath(new URL('../public/jarvis-icon.webp', import.meta.url));
-  const mask = "format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='255*clip((249-sqrt(pow(X-255.5,2)+pow(Y-255.5,2)))/2,0,1)'";
-  image(reactor, 'reactor.webp', mask);
-  image(reactor, 'reactor-gold.webp', `${mask},hue=h=155:s=0.65`);
-  for (const [name, id] of Object.entries({ observatory: 'photo-1462331940025-496dfbfc7564', skyline: 'photo-1519608487953-e999c86e7455', sanctuary: 'photo-1487958449943-2429e8be8625', garden: 'photo-1493976040374-85c8e12f0c0e' })) {
-    const source = await download(`https://images.unsplash.com/${id}?auto=format&fit=crop&w=1600&h=1000&q=85`, `${name}.jpg`);
-    image(source, `${name}.webp`, 'scale=1600:1000:force_original_aspect_ratio=increase:flags=lanczos,crop=1600:1000');
-  }
-  const archive = await download('https://kenney.nl/media/pages/assets/interface-sounds/fa43c1dd4d-1677589452/kenney_interface-sounds.zip', 'sounds.zip');
-  await extractAudio(archive);
-  const license = await download('https://raw.githubusercontent.com/microsoft/fluentui-emoji/main/LICENSE', 'fluent-license.txt');
-  await writeFile(path.join(destination, 'fluent-license.txt'), await readFile(license));
-  console.log('Theme assets normalized: 512px alpha sprites, 1600x1000 WebP wallpapers, mono 24kHz Ogg cues.');
-} finally {
-  await rm(temporary, { recursive: true, force: true });
-}
+console.log('Normalized six 1600x900 WebP backgrounds and six mono 48kHz Ogg cues. Originals preserved.');

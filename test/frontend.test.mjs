@@ -178,6 +178,11 @@ test('themes resolve bounded variants and preserve the default', () => {
   assert.equal(resolveTheme('baymax', { sprite: 'companion' }).spriteId, 'face');
   assert.deepEqual(resolveTheme('baymax').sprites.map(sprite => sprite.id), ['face']);
   for (const theme of themes) {
+    assert.equal(theme.wallpapers.length, 4);
+    assert.deepEqual(theme.wallpapers.slice(2).map(wallpaper => wallpaper.id), ['white', 'black']);
+    assert.equal(resolveTheme(theme.id, { wallpaper: 'black' }).preferences.colorScheme, 'dark');
+    assert.equal(resolveTheme(theme.id, { wallpaper: 'white' }).preferences.colorScheme, 'light');
+    assert.ok(theme.sounds.bootup && theme.sounds.action);
     for (const variant of [...theme.wallpapers, ...theme.sprites]) assert.ok(existsSync(new URL(variant.source)));
     for (const source of Object.values(theme.sounds)) if (source) assert.ok(existsSync(new URL(source)));
   }

@@ -1,7 +1,7 @@
 import { defaultAnimations } from './VoiceSprite.js';
 
 export const captionTiming = Object.freeze({ minimum: 6000, maximum: 16000, perCharacter: 40, afterSpeech: 700, fade: 500 });
-const alpineBackground = new URL('./alpine-lake.webp', import.meta.url).href;
+const alpineBackground = new URL('./immersive/copilot-background-1.webp', import.meta.url).href;
 const defaultTokens = {
   '--cp-bg': '#f5f5f7',
   '--cp-bg-elevated': '#fafafc',
@@ -80,7 +80,7 @@ const defaultTokens = {
   '--cp-caption-font-weight': '400',
   '--cp-caption-fade-duration': `${captionTiming.fade}ms`,
   '--cp-voice-edge-strength': '68%',
-  '--cp-wallpaper-blend': 'soft-light',
+  '--cp-wallpaper-blend': 'normal',
   '--cp-wallpaper-opacity': '1',
   '--cp-sprite-ink': '#202124',
   '--cp-sprite-ring': '#68d7ee',
@@ -92,8 +92,8 @@ const themeDefaults = Object.freeze({
   sprite: new URL('./copilot-icon.webp', import.meta.url).href,
   tokens: Object.freeze(defaultTokens),
   animations: defaultAnimations,
-  sounds: Object.freeze({ navigation: null, action: null }),
-  preferences: Object.freeze({ colorScheme: 'light', soundsEnabled: false, soundVolume: 0.2 }),
+  sounds: Object.freeze({ bootup: null, action: null }),
+  preferences: Object.freeze({ colorScheme: 'light', soundsEnabled: true, soundVolume: 0.2 }),
   kind: 'copilot',
   icons: Object.freeze({ home: 'house', tasks: 'check-square', settings: 'settings', action: 'plus', progress: 'scan-search', continue: 'message-square', microphone: 'mic' }),
 });
@@ -116,23 +116,27 @@ const media = {
   reactor: new URL('./immersive/reactor.webp', import.meta.url).href,
   gold: new URL('./immersive/reactor-gold.webp', import.meta.url).href,
   companion: new URL('./immersive/companion.webp', import.meta.url).href,
-  observatory: new URL('./immersive/observatory.webp', import.meta.url).href,
-  skyline: new URL('./immersive/skyline.webp', import.meta.url).href,
-  sanctuary: new URL('./immersive/sanctuary.webp', import.meta.url).href,
-  garden: new URL('./immersive/garden.webp', import.meta.url).href,
+  observatory: new URL('./immersive/jarvis-background-1.webp', import.meta.url).href,
+  skyline: new URL('./immersive/jarvis-background-2.webp', import.meta.url).href,
+  sanctuary: new URL('./immersive/baymax-background-1.webp', import.meta.url).href,
+  garden: new URL('./immersive/baymax-background-2.webp', import.meta.url).href,
 };
-const copilotWallpapers = [{ id: 'alpine', label: 'Alpine lake', source: alpineBackground }, { id: 'garden', label: 'Kyoto garden', source: media.garden }];
+const neutralWallpapers = [
+  { id: 'white', label: 'White', source: new URL('./immersive/white-background.webp', import.meta.url).href },
+  { id: 'black', label: 'Black', source: new URL('./immersive/black-background.webp', import.meta.url).href },
+];
+const copilotWallpapers = [{ id: 'alpine', label: 'Dreamscape', source: alpineBackground }, { id: 'garden', label: 'Blush', source: new URL('./immersive/copilot-background-2.webp', import.meta.url).href }, ...neutralWallpapers];
 const copilotSprites = [{ id: 'copilot', label: 'Copilot', source: themeDefaults.sprite }, { id: 'opal', label: 'Opal', source: new URL('./opal-icon.webp', import.meta.url).href }];
-const copilotSounds = { navigation: new URL('./immersive/copilot-navigation.ogg', import.meta.url).href, action: new URL('./immersive/copilot-action.ogg', import.meta.url).href };
+const copilotSounds = { bootup: new URL('./immersive/copilot-bootup.ogg', import.meta.url).href, action: new URL('./immersive/copilot-action.ogg', import.meta.url).href };
 
 export const themes = Object.freeze([
   { id: 'alpine', label: 'Copilot', wallpapers: copilotWallpapers, sprites: copilotSprites, sounds: copilotSounds },
   { id: 'jarvis', label: 'Jarvis', kind: 'reactor', sprite: media.reactor, background: media.observatory,
-    wallpapers: [{ id: 'observatory', label: 'Deep space', source: media.observatory }, { id: 'skyline', label: 'Night city', source: media.skyline }],
+    wallpapers: [{ id: 'observatory', label: 'Command center', source: media.observatory }, { id: 'skyline', label: 'Arc chamber', source: media.skyline }, ...neutralWallpapers],
     sprites: [{ id: 'arc', label: 'Arc core', source: media.reactor }, { id: 'palladium', label: 'Palladium core', source: media.gold }],
     animations: { idle: 'reactor-idle', connecting: 'reactor-connect', listening: 'reactor-listen', thinking: 'reactor-think', speaking: 'reactor-speak' },
     icons: { home: 'orbit', tasks: 'radar', settings: 'sliders-horizontal', action: 'zap', progress: 'radar', continue: 'terminal', microphone: 'audio-lines' },
-    sounds: { navigation: new URL('./immersive/reactor-navigation.ogg', import.meta.url).href, action: new URL('./immersive/reactor-action.ogg', import.meta.url).href },
+    sounds: { bootup: new URL('./immersive/jarvis-bootup.ogg', import.meta.url).href, action: new URL('./immersive/jarvis-action.ogg', import.meta.url).href },
     preferences: { colorScheme: 'dark', soundVolume: 0.18, soundsEnabled: true },
     tokens: {
       '--cp-bg': '#101414', '--cp-bg-elevated': '#1a2020', '--cp-surface': '#202727', '--cp-surface-soft': '#293231',
@@ -141,21 +145,21 @@ export const themes = Object.freeze([
       '--cp-border': 'rgba(190,225,216,0.18)', '--cp-border-strong': '#607b73', '--cp-panel': 'rgba(25,35,34,0.8)', '--cp-panel-strong': 'rgba(26,32,32,0.97)', '--cp-sidebar': 'rgba(16,24,23,0.92)',
       '--cp-sheen': 'rgba(182,232,226,0.24)', '--cp-overlay': 'rgba(7,14,13,0.7)', '--cp-highlight': 'rgba(7,14,13,0.55)', '--cp-wave': '#7fdfec', '--cp-listening-hue': '#7fdfec', '--cp-mic-glow': 'rgba(127,223,236,0.18)', '--cp-voice-glass': 'rgba(20,32,31,0.92)',
       '--cp-caption-assistant-bg': 'rgba(26,32,32,0.96)', '--cp-caption-assistant-bg-solid': '#1a2020', '--cp-caption-user-bg': 'rgba(32,57,58,0.96)', '--cp-caption-user-bg-solid': '#20393a', '--cp-caption-text': '#eef5f2',
-      '--cp-font-display': 'Bahnschrift, "Segoe UI Variable Display", "Segoe UI", sans-serif', '--cp-wallpaper-blend': 'normal', '--cp-wallpaper-opacity': '0.3', '--cp-glass-blur': '12px', '--cp-control-stroke': '1.5',
+      '--cp-font-display': 'Bahnschrift, "Segoe UI Variable Display", "Segoe UI", sans-serif', '--cp-wallpaper-blend': 'normal', '--cp-wallpaper-opacity': '1', '--cp-glass-blur': '12px', '--cp-control-stroke': '1.5',
     },
   },
   { id: 'baymax', label: 'Baymax', kind: 'companion', sprite: media.companion, background: media.sanctuary,
-    wallpapers: [{ id: 'sanctuary', label: 'White architecture', source: media.sanctuary }, { id: 'garden', label: 'Kyoto garden', source: media.garden }],
+    wallpapers: [{ id: 'sanctuary', label: 'Workshop', source: media.sanctuary }, { id: 'garden', label: 'Sunlit studio', source: media.garden }, ...neutralWallpapers],
     sprites: [{ id: 'face', label: 'Baymax face', source: media.companion }],
     animations: { idle: 'companion-breathe', connecting: 'companion-listen', listening: 'companion-listen', thinking: 'companion-think', speaking: 'companion-speak' },
     icons: { home: 'heart', tasks: 'clipboard-check', settings: 'sliders-horizontal', action: 'sparkles', progress: 'activity', continue: 'messages-square', microphone: 'mic' },
-    sounds: { navigation: new URL('./immersive/companion-navigation.ogg', import.meta.url).href, action: new URL('./immersive/companion-action.ogg', import.meta.url).href },
+    sounds: { bootup: new URL('./immersive/baymax-bootup.ogg', import.meta.url).href, action: new URL('./immersive/baymax-action.ogg', import.meta.url).href },
     preferences: { soundsEnabled: true, soundVolume: 0.16 },
     tokens: {
       '--cp-bg': '#eef2f1', '--cp-bg-elevated': '#fafcfb', '--cp-surface-soft': '#e8efec', '--cp-text': '#263b36', '--cp-text-muted': '#566d65', '--cp-text-soft': '#61776e',
       '--cp-accent': '#b3384b', '--cp-accent-hover': '#98263a', '--cp-accent-soft': 'rgba(179,56,75,0.08)', '--cp-link': '#287164', '--cp-success': '#287164', '--cp-border': 'rgba(38,59,54,0.13)', '--cp-border-strong': '#a7b9b0',
       '--cp-panel': 'rgba(255,255,255,0.8)', '--cp-sidebar': 'rgba(241,246,243,0.92)', '--cp-voice-glass': 'rgba(255,255,255,0.92)', '--cp-wave': '#b3384b', '--cp-listening-hue': '#b3384b', '--cp-mic-glow': 'rgba(179,56,75,0.12)',
-      '--cp-caption-user-bg': 'rgba(249,234,236,0.96)', '--cp-caption-user-bg-solid': '#f9eaec', '--cp-caption-text': '#263b36', '--cp-control-stroke': '2', '--cp-wallpaper-blend': 'normal', '--cp-wallpaper-opacity': '0.18',
+      '--cp-caption-user-bg': 'rgba(249,234,236,0.96)', '--cp-caption-user-bg-solid': '#f9eaec', '--cp-caption-text': '#263b36', '--cp-control-stroke': '2', '--cp-wallpaper-blend': 'normal', '--cp-wallpaper-opacity': '1',
     },
   },
 ].map(defineTheme));
@@ -168,7 +172,8 @@ export function resolveTheme(id, { wallpaper, sprite } = {}) {
   const theme = themes.find(candidate => candidate.id === id) || themes[0];
   const selectedWallpaper = theme.wallpapers.find(candidate => candidate.id === wallpaper) || theme.wallpapers[0];
   const selectedSprite = theme.sprites.find(candidate => candidate.id === sprite) || theme.sprites[0];
-  return { ...theme, background: selectedWallpaper.source, sprite: selectedSprite.source, wallpaperId: selectedWallpaper.id, spriteId: selectedSprite.id };
+  const surfaceTheme = selectedWallpaper.id === 'black' || (theme.id === 'baymax' && selectedWallpaper.id === 'sanctuary') ? themes[1] : selectedWallpaper.id === 'white' ? themes[0] : theme;
+  return { ...theme, tokens: { ...surfaceTheme.tokens, '--cp-font-display': theme.tokens['--cp-font-display'] }, preferences: { ...theme.preferences, colorScheme: surfaceTheme.preferences.colorScheme }, background: selectedWallpaper.source, sprite: selectedSprite.source, wallpaperId: selectedWallpaper.id, spriteId: selectedSprite.id };
 }
 
 export function motionPreference(value) {

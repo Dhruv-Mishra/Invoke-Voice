@@ -613,7 +613,7 @@
         <h2 id="avatar-label" class="settings-section-title">Theme</h2>
         <div class="appearance-options" role="group" aria-labelledby="avatar-label"></div>
         <div class="setting-row"><label for="wallpaper-strength">Wallpaper strength</label><div class="theme-range"><input id="wallpaper-strength" type="range" min="0" max="100" step="5"><output id="wallpaper-strength-value" for="wallpaper-strength"></output></div></div>
-        <div class="setting-row"><label for="motion-preference">Motion</label><select id="motion-preference"><option value="system">Use device setting</option><option value="reduce">Reduced motion</option><option value="full">Full motion</option></select></div>
+        <div class="setting-row setting-choice"><label for="motion-preference">Motion</label><select id="motion-preference" data-pillbar><option value="system">System</option><option value="reduce">Reduced</option><option value="full">Full</option></select></div>
         <label class="form-row-checkbox toggle-control setting-row" for="transparency-preference">
           <input type="checkbox" id="transparency-preference" checked>
           <span class="toggle-track" aria-hidden="true"></span><span>Transparency</span>
@@ -697,7 +697,7 @@
           </div>
           <div class="form-group">
             <label class="control-label" for="settings-default-backend">Coding agent</label>
-            <select id="settings-default-backend" aria-label="Default Coding Backend"></select>
+            <select id="settings-default-backend" data-pillbar aria-label="Default Coding Backend"></select>
           </div>
           <div class="form-group">
             <label class="control-label" for="settings-copilot-model">Model</label>
@@ -705,7 +705,7 @@
           </div>
           <div class="form-group">
             <label class="control-label" for="settings-copilot-context">Context</label>
-            <select id="settings-copilot-context" aria-label="Context Tier"></select>
+            <select id="settings-copilot-context" data-pillbar aria-label="Context Tier"></select>
           </div>
         </section>
 
@@ -868,7 +868,7 @@
       </div>
       <div class="form-group">
         <label class="control-label" for="task-backend-select">Coding Backend</label>
-        <select id="task-backend-select" aria-label="Select Coding Backend"></select>
+        <select id="task-backend-select" data-pillbar aria-label="Select Coding Backend"></select>
       </div>
       <div class="form-group">
         <label class="control-label" for="task-objective-input">What needs to be done?</label>
@@ -882,7 +882,7 @@
         </div>
         <div class="form-group">
           <label class="control-label" for="task-context-select">Context</label>
-          <select id="task-context-select" aria-label="Copilot Context"></select>
+          <select id="task-context-select" data-pillbar aria-label="Copilot Context"></select>
         </div>
         <div class="form-group">
           <label class="control-label" for="task-agent-select">Agent</label>
@@ -948,20 +948,35 @@
         <button type="button" class="btn btn-icon" id="route-config-close" aria-label="Close dialog" title="Close dialog"><i data-lucide="x"></i></button>
       </div>
       <div class="form-group">
-        <label class="control-label" for="provider-select">Provider</label>
-        <select id="provider-select" aria-label="LLM Provider"></select>
+        <select id="pipeline-mode" data-pillbar aria-label="Voice pipeline"><option value="native">Use Native Voice</option><option value="dedicated" selected>Use Dedicated Models</option></select>
+        <select id="voice-mode-select" aria-label="Voice runtime mode" hidden></select>
       </div>
-      <div class="form-group">
-        <label class="control-label" id="model-label" for="model-input">Model</label>
-        <input type="text" id="model-input" aria-label="Text or cascade model identifier" placeholder="Text model">
+      <section id="native-pipeline" class="pipeline-section" hidden>
+        <label class="control-label" for="native-provider">Provider</label>
+        <select id="native-provider" data-pillbar data-provider-icons aria-label="Native voice provider"><option value="openai-realtime">OpenAI</option><option value="gemini-live">Google</option></select>
+        <span class="pipeline-model" id="native-model-name"></span>
+      </section>
+      <div id="dedicated-pipeline">
+        <section class="pipeline-section">
+          <label class="control-label" for="stt-provider">Speech to text</label>
+          <select id="stt-provider" data-pillbar data-provider-icons aria-label="Speech to text provider"><option value="local">Local</option><option value="openai">OpenAI</option><option value="gemini">Google</option></select>
+          <span class="pipeline-model" id="stt-model-name"></span>
+        </section>
+        <section class="pipeline-section" id="llm-pipeline">
+          <label class="control-label" for="provider-select">LLM</label>
+          <select id="provider-select" data-pillbar data-provider-icons aria-label="LLM Provider"></select>
+          <label class="sr-only" id="model-label" for="model-input">Model</label>
+          <input type="text" id="model-input" aria-label="Text or cascade model identifier" placeholder="Text model">
+        </section>
+        <section class="pipeline-section">
+          <label class="control-label" for="tts-provider">Text to speech</label>
+          <select id="tts-provider" data-pillbar data-provider-icons aria-label="Text to speech provider"><option value="local">Local</option><option value="openai">OpenAI</option><option value="gemini">Google</option></select>
+          <span class="pipeline-model" id="tts-model-name"></span>
+        </section>
       </div>
-      <div class="form-group">
-        <label class="control-label" for="voice-mode-select">Voice</label>
-        <select id="voice-mode-select" aria-label="Voice runtime mode"></select>
-      </div>
-      <label class="form-row-checkbox toggle-control" for="allow-cloud-opt">
+      <label class="form-row-checkbox toggle-control" id="cloud-consent-row" for="allow-cloud-opt">
         <input type="checkbox" id="allow-cloud-opt" aria-label="Allow Cloud Hybrid">
-        <span class="toggle-track" aria-hidden="true"></span><span>Allow Cloud Hybrid</span>
+        <span class="toggle-track" aria-hidden="true"></span><span>Allow cloud processing</span>
       </label>
       <div class="dialog-actions">
         <button type="submit" class="btn btn-accent" id="route-config-done">Done</button>

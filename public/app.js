@@ -4,6 +4,7 @@
 import { createConversationUI } from './captions/controller.js';
 import captureWorkletUrl from './capture-worklet.js?url';
 import { shouldForwardCapturedAudio } from './voice-session.js';
+import { refreshPillbars } from './pillbar.js';
 import { createVoiceCaptionBridge } from './captions/voice-bridge.js';
 import { createToolCatalog } from './tools/tool-catalog.js';
 import { createLocalSetupController } from './setup/local-setup.js';
@@ -57,6 +58,15 @@ let settingsDirty = false;
 
 // DOM Elements
 const providerSelect = document.getElementById('provider-select');
+const pipelineMode = document.getElementById('pipeline-mode');
+const nativeProvider = document.getElementById('native-provider');
+const sttProvider = document.getElementById('stt-provider');
+const ttsProvider = document.getElementById('tts-provider');
+const pipelinePreferenceKey = 'voice-supervisor-pipeline-v1';
+
+function readPipelinePreference() {
+  try { return JSON.parse(localStorage.getItem(pipelinePreferenceKey)) || null; } catch { return null; }
+}
 const modelInput = document.getElementById('model-input');
 const modelLabel = document.getElementById('model-label');
 const voiceModeSelect = document.getElementById('voice-mode-select');
@@ -204,9 +214,10 @@ function setAgentState(state) {
 }
 
 function showToolActivity() {
-  if (!isVoiceStarting && !voiceSocket) return;
+  const alreadyActive = document.body.dataset.voiceActivity === 'tool';
   clearTimeout(toolActivityTimer);
   document.body.dataset.voiceActivity = 'tool';
+  if (!alreadyActive) window.dispatchEvent(new Event('voice-supervisor:tool-activity'));
   toolActivityTimer = window.setTimeout(() => {
     delete document.body.dataset.voiceActivity;
     toolActivityTimer = null;
@@ -486,12 +497,12 @@ function getSelectedRouteStatus() {
     return { configured: true, label: 'Route Ready' };
   }
 
-  // Local / cascade mode requires voice mode + text provider
   const prov = appConfig.providers?.find(p => p.id === providerSelect.value);
   const isProvConfigured = Boolean(prov?.configured);
 
-  if (!isVmConfigured) {
-    return { configured: false, label: 'Voice Mode Unconfigured' };
+  for (const [stage, selected, localKey] of [['Speech to text', sttProvider.value, 'sttConfigured'], ['Text to speech', ttsProvider.value, 'ttsConfigured']]) {
+    const ready = selected === 'local' ? (appConfig.local?.[localKey] ?? isVmConfigured) : appConfig.providers?.find(provider => provider.id === selected)?.configured;
+    if (!ready) return { configured: false, label: `${stage} not configured` };
   }
   if (!isProvConfigured) {
     return { configured: false, label: 'Provider Unconfigured' };
@@ -500,6 +511,7 @@ function getSelectedRouteStatus() {
 }
 
 function updateRouteReadiness() {
+  syncPipelineControls();
   const status = getSelectedRouteStatus();
   if (voiceSocket) {
     if (isServerReady) {
@@ -536,6 +548,20 @@ function updateRouteReadiness() {
   }
 }
 
+function syncPipelineControls() {
+  const native = isIntegratedVoiceMode(voiceModeSelect.value);
+  pipelineMode.value = native ? 'native' : 'dedicated';
+  if (native) nativeProvider.value = voiceModeSelect.value;
+  document.getElementById('native-pipeline').hidden = !native;
+  document.getElementById('dedicated-pipeline').hidden = native;
+  document.getElementById('cloud-consent-row').hidden = native || [sttProvider.value, providerSelect.value, ttsProvider.value].every(provider => provider === 'local');
+  const configuredValue = (key, fallback) => appConfig?.configuration?.fields?.find(field => field.key === key)?.value || fallback;
+  document.getElementById('native-model-name').textContent = appConfig?.voiceModes?.find(mode => mode.id === nativeProvider.value)?.model || '';
+  document.getElementById('stt-model-name').textContent = sttProvider.value === 'local' ? appConfig?.local?.sttLabel || 'Local speech recognition' : sttProvider.value === 'openai' ? configuredValue('OPENAI_STT_MODEL', 'gpt-4o-mini-transcribe') : configuredValue('GEMINI_STT_MODEL', 'gemini-3.8-flash');
+  document.getElementById('tts-model-name').textContent = ttsProvider.value === 'local' ? 'Kokoro' : ttsProvider.value === 'openai' ? configuredValue('OPENAI_TTS_MODEL', 'gpt-4o-mini-tts') : configuredValue('GEMINI_TTS_MODEL', 'gemini-2.5-flash-preview-tts');
+  refreshPillbars();
+}
+
 // Conversation rendering
 function appendMessage(role, text, options = {}) {
   const bubble = document.createElement(role === 'tool' ? 'details' : 'div');
@@ -564,6 +590,7 @@ function notifyReset(reason) {
 
 // Provider / Mode Switch Reset Handler
 function handleRouteSwitch(reason) {
+  try { localStorage.setItem(pipelinePreferenceKey, JSON.stringify({ provider: providerSelect.value, voiceMode: voiceModeSelect.value, sttProvider: sttProvider.value, ttsProvider: ttsProvider.value, nativeProvider: nativeProvider.value, model: modelInput.value, modelExplicit: modelSelectionExplicit })); } catch {}
   if (currentChatAbortController) {
     currentChatAbortController.abort();
     currentChatAbortController = null;
@@ -728,7 +755,7 @@ function queueAudioChunk(data, token) {
 
 // Gating and Hold State for Push-to-Talk and Mute
 function shouldForwardAudio() {
-  return shouldForwardCapturedAudio({ muted: isMuted, pttMode: isPttMode, pttHeld: isPttHeld, assistantSpeaking: isAssistantSpeaking() });
+  return shouldForwardCapturedAudio({ muted: isMuted, pttMode: isPttMode, pttHeld: isPttHeld, assistantSpeaking: isAssistantSpeaking() || Boolean(window.isThemeSoundPlaying?.()) });
 }
 
 function startPttHold() {
@@ -786,8 +813,8 @@ async function startVoiceSession() {
   const vm = appConfig.voiceModes?.find(v => v.id === mode);
   const effectiveModel = isIntegrated ? (vm?.model || textModel) : textModel;
 
-  if (mode === 'local' && provider !== 'local' && !allowCloud) {
-    const confirmHybrid = confirm('Local voice with cloud LLM requires sending transcripts to hosted service. Enable Allow Cloud Hybrid?');
+  if (mode === 'local' && [provider, sttProvider.value, ttsProvider.value].some(selected => selected !== 'local') && !allowCloud) {
+    const confirmHybrid = confirm('The selected cloud stages receive microphone audio, transcripts or response text. Allow processing by your selected OpenAI and Google providers?');
     if (confirmHybrid) {
       allowCloudOpt.checked = true;
     } else {
@@ -882,6 +909,8 @@ async function startVoiceSession() {
         type: 'start',
         mode,
         provider,
+        sttProvider: sttProvider.value,
+        ttsProvider: ttsProvider.value,
         model: effectiveModel,
         allowCloud: allowCloudOpt.checked,
         ...themeOptions,
@@ -1104,6 +1133,7 @@ micToggleBtn.addEventListener('click', () => {
   if (isVoiceStarting || voiceSocket || isCapturing) {
     stopVoiceSession();
   } else {
+    window.dispatchEvent(new Event('voice-supervisor:voice-start'));
     startVoiceSession();
   }
 });
@@ -1358,6 +1388,8 @@ function renderApplicationConfig() {
       let control;
       if (field.type === 'select') {
         control = document.createElement('select');
+        control.dataset.pillbar = '';
+        if (['DEFAULT_PROVIDER', 'DEFAULT_VOICE_MODE', 'LOCAL_STT_PROVIDER'].includes(field.key)) control.dataset.providerIcons = '';
         for (const option of field.options || []) {
           const element = document.createElement('option');
           element.value = option.value;
@@ -1391,6 +1423,7 @@ function renderApplicationConfig() {
     group.append(legend, grid);
     configFields.appendChild(group);
   }
+  refreshPillbars();
 }
 
 if (configForm) {
@@ -1523,17 +1556,17 @@ if (window.voiceSupervisorUpdates && applicationUpdate && applicationUpdateBtn) 
 
 // REST: Config and State Loading
 async function loadConfig(preserveSelection = false) {
-  const selection = preserveSelection ? { provider: providerSelect.value, voiceMode: voiceModeSelect.value, model: modelInput.value, modelExplicit: modelSelectionExplicit } : null;
+  const selection = preserveSelection ? { provider: providerSelect.value, voiceMode: voiceModeSelect.value, sttProvider: sttProvider.value, ttsProvider: ttsProvider.value, nativeProvider: nativeProvider.value, model: modelInput.value, modelExplicit: modelSelectionExplicit } : readPipelinePreference();
   try {
     const res = await fetch('/api/config');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     appConfig = await res.json();
 
     providerSelect.replaceChildren();
-    (appConfig.providers || []).forEach(p => {
+    ['local', 'openai', 'gemini'].map(id => appConfig.providers?.find(provider => provider.id === id)).filter(Boolean).forEach(p => {
       const opt = document.createElement('option');
       opt.value = p.id;
-      opt.textContent = `${p.label || p.id}${p.configured ? '' : ' (unconfigured)'}`;
+      opt.textContent = p.id === 'gemini' ? 'Google' : p.label || p.id;
       providerSelect.appendChild(opt);
     });
     if (appConfig.defaults?.provider) {
@@ -1554,6 +1587,9 @@ async function loadConfig(preserveSelection = false) {
 
     if (selection && appConfig.providers?.some(provider => provider.id === selection.provider)) providerSelect.value = selection.provider;
     if (selection && appConfig.voiceModes?.some(mode => mode.id === selection.voiceMode)) voiceModeSelect.value = selection.voiceMode;
+    for (const [control, saved] of [[sttProvider, selection?.sttProvider], [ttsProvider, selection?.ttsProvider], [nativeProvider, selection?.nativeProvider]]) {
+      if ([...control.options].some(option => option.value === saved)) control.value = saved;
+    }
     const currentProv = appConfig.providers?.find(p => p.id === providerSelect.value);
     if (selection?.modelExplicit) {
       modelInput.value = selection.model;
@@ -2587,6 +2623,7 @@ async function sendChatMessage() {
             chatMessages.scrollTop = chatMessages.scrollHeight;
             conversationUI.preview('assistant', accumulated);
           } else if (evt.type === 'tool') {
+            showToolActivity();
             const toolStr = typeof evt.result === 'object' ? JSON.stringify(evt.result) : String(evt.result);
             appendMessage('tool', `Tool [${evt.name}]: ${toolStr}`, { plain: typeof evt.result === 'object' });
           } else if (evt.type === 'error') {
@@ -2657,6 +2694,18 @@ voiceModeSelect.addEventListener('change', () => {
   handleRouteSwitch('voice mode change');
 });
 
+pipelineMode.addEventListener('change', () => {
+  voiceModeSelect.value = pipelineMode.value === 'native' ? nativeProvider.value : 'local';
+  handleRouteSwitch('voice pipeline change');
+});
+nativeProvider.addEventListener('change', () => {
+  voiceModeSelect.value = nativeProvider.value;
+  handleRouteSwitch('native provider change');
+});
+sttProvider.addEventListener('change', () => handleRouteSwitch('speech recognition change'));
+ttsProvider.addEventListener('change', () => handleRouteSwitch('speech synthesis change'));
+document.addEventListener('change', () => refreshPillbars());
+
 modelInput.addEventListener('change', () => {
   modelSelectionExplicit = true;
   handleRouteSwitch('model change');
@@ -2665,6 +2714,7 @@ modelInput.addEventListener('change', () => {
 let routeConfigOpener = null;
 function openRouteConfig(opener) {
   routeConfigOpener = opener;
+  syncPipelineControls();
   routeConfigDialog.showModal();
 }
 if (routeConfigBtn && routeConfigDialog) {

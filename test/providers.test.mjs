@@ -526,7 +526,7 @@ test('voice requests include supervisor capabilities and spoken output instructi
 });
 
 test('local and hybrid voice execute tools before playback and retain real answers across turns', { timeout: 10000 }, async context => {
-  for (const [provider, recognizer] of [['local', 'moonshine'], ['custom', 'moonshine'], ['local', 'whisper'], ['custom', 'whisper']]) await context.test(`${provider}/${recognizer}`, async context => {
+  for (const [provider, recognizer] of [['local', 'moonshine'], ['openai', 'moonshine'], ['local', 'whisper'], ['openai', 'whisper']]) await context.test(`${provider}/${recognizer}`, async context => {
     const whisper = recognizer === 'whisper';
     const modelDir = mkdtempSync(path.join(os.tmpdir(), 'voice-whisper-session-'));
     for (const name of ['config.json', 'model.bin', 'tokenizer.json', 'vocabulary.txt']) writeFileSync(path.join(modelDir, name), 'fixture');
@@ -604,7 +604,7 @@ test('local and hybrid voice execute tools before playback and retain real answe
     });
     const url = `http://127.0.0.1:${server.address().port}/v1`;
     const env = {
-      LOCAL_LLM_URL: url, CUSTOM_BASE_URL: url,
+      LOCAL_LLM_URL: url, OPENAI_BASE_URL: url, OPENAI_API_KEY: 'fixture',
       LOCAL_STT_PROVIDER: recognizer, WHISPER_MODEL_DIR: modelDir, WHISPER_READY: '1',
       CRISPASR_BIN: process.execPath, PYTHON_BIN: process.execPath,
       MOONSHINE_MODEL: process.execPath, MOONSHINE_TOKENIZER: process.execPath, VAD_MODEL: process.execPath,

@@ -129,7 +129,7 @@ export async function startSupervisor(options = {}) {
   }
   function config() {
     const voiceMode = process.env.DEFAULT_VOICE_MODE || 'local';
-    const provider = process.env.DEFAULT_PROVIDER || 'local';
+    const provider = ['local', 'openai', 'gemini'].includes(process.env.DEFAULT_PROVIDER) ? process.env.DEFAULT_PROVIDER : 'local';
     const settings = supervisor.snapshot().settings;
     const configuredModels = (process.env.COPILOT_MODELS || '').split(',').map(value => value.trim()).filter(Boolean);
     const modelIds = [...new Set(['auto', 'gpt-5.6-sol', 'gpt-5.6-luna', ...configuredModels, settings.copilotModel])];
@@ -283,7 +283,7 @@ export async function startSupervisor(options = {}) {
           voiceOwner = socket;
           starting = true;
           cancelled = false;
-          const options = { mode: message.mode, provider: message.provider, model: message.model, allowCloud: message.allowCloud === true, ...sessionThemeOptions(message), send, callTool: supervisor.callTool.bind(supervisor) };
+          const options = { mode: message.mode, provider: message.provider, sttProvider: message.sttProvider, ttsProvider: message.ttsProvider, model: message.model, allowCloud: message.allowCloud === true, ...sessionThemeOptions(message), send, callTool: supervisor.callTool.bind(supervisor) };
           session = message.mode === 'local' ? await createLocalVoice(options) : await createRealtimeVoice(options);
           starting = false;
           if (cancelled || socket.readyState !== 1) { session.close(); if (voiceOwner === socket) voiceOwner = null; }

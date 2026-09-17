@@ -17,6 +17,7 @@ let chatResponse;
 let chatRequest;
 let voiceServer;
 let voiceSocket;
+let voiceStartRequest;
 let voiceConnections = 0;
 let eventConnections = 0;
 let eventResponse;
@@ -44,13 +45,13 @@ const errors = [];
 const settings = {};
 const config = {
   local: { sttProvider: 'whisper' },
-  providers: [{ id: 'local', label: 'Local', model: 'fixture', configured: true }],
-  voiceModes: [{ id: 'local', label: 'Local voice', configured: true }],
+  providers: [{ id: 'local', label: 'Local', model: 'fixture', configured: true }, { id: 'openai', label: 'OpenAI', model: 'openai-fixture', configured: true }, { id: 'gemini', label: 'Google', model: 'google-fixture', configured: true }],
+  voiceModes: [{ id: 'local', label: 'Local voice', configured: true }, { id: 'openai-realtime', label: 'OpenAI', model: 'gpt-realtime', configured: true }, { id: 'gemini-live', label: 'Google', model: 'gemini-live-fixture', configured: true }],
   defaults: { provider: 'local', voiceMode: 'local' },
   configuration: { fields: [
-    { key: 'CUSTOM_BASE_URL', label: 'Custom URL', group: 'Fixture', type: 'url', secret: false, value: 'https://example.test' },
+    { key: 'OPENAI_BASE_URL', label: 'OpenAI URL', group: 'Fixture', type: 'url', secret: false, value: 'https://example.test' },
     { key: 'LLAMA_THREADS', label: 'Threads', group: 'Fixture', type: 'number', secret: false, value: '8', min: 1, max: 128 },
-    { key: 'CUSTOM_API_KEY', label: 'Custom key', group: 'Fixture', type: 'password', secret: true, configured: true },
+    { key: 'OPENAI_API_KEY', label: 'OpenAI key', group: 'Fixture', type: 'password', secret: true, configured: true },
     { key: 'LOCAL_STT_PROVIDER', label: 'Local speech recognition', group: 'Local speech', type: 'select', value: 'whisper', options: [{ value: 'whisper', label: 'Whisper Small (INT8)' }, { value: 'moonshine', label: 'Moonshine Small (streaming)' }] },
   ] },
 };
@@ -88,9 +89,10 @@ const pointerClick = async selector => {
     control.scrollIntoView({ block: 'center', inline: 'nearest' });
     const box = control.getBoundingClientRect();
     const position = { x: box.left + box.width / 2, y: box.top + box.height / 2 };
-    return { ...position, reachable: control.contains(document.elementFromPoint(position.x, position.y)) };
+    const hit = document.elementFromPoint(position.x, position.y);
+    return { ...position, reachable: control.contains(hit), hit: hit?.outerHTML.slice(0, 250), dialogs: [...document.querySelectorAll('dialog[open]')].map(dialog => dialog.id) };
   }, selector);
-  assert.equal(point.reachable, true, `${selector} must receive pointer input`);
+  assert.equal(point.reachable, true, `${selector} must receive pointer input: ${JSON.stringify(point)}`);
   for (const type of ['mousePressed', 'mouseReleased']) {
     await browser.webContents.debugger.sendCommand('Input.dispatchMouseEvent', { type, x: point.x, y: point.y, button: 'left', clickCount: 1 });
   }
@@ -255,7 +257,11 @@ try {
     voiceSocket = socket;
     voiceConnections++;
     socket.on('message', source => {
-      if (JSON.parse(source).type === 'start') socket.send(JSON.stringify({ type: 'ready' }));
+      const message = JSON.parse(source);
+      if (message.type === 'start') {
+        voiceStartRequest = message;
+        socket.send(JSON.stringify({ type: 'ready' }));
+      }
     });
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -299,21 +305,11 @@ try {
       && Number.parseFloat(style.minHeight) >= 44
       && [...select.options].every(option => getComputedStyle(option).fontFamily === style.fontFamily && getComputedStyle(option).fontSize === style.fontSize);
   })), true);
-  await pointerClick('#motion-preference');
-  assert.equal(await evaluate(() => document.getElementById('motion-preference').matches(':open')), true);
-  assert.equal(await evaluate(() => {
-    const select = document.getElementById('motion-preference');
-    if (!CSS.supports('appearance', 'base-select')) return true;
-    const menu = getComputedStyle(select, '::picker(select)');
-    return menu.fontFamily === getComputedStyle(select).fontFamily && menu.fontSize === '15px' && menu.borderRadius === '8px'
-      && [...select.options].every(option => option.getBoundingClientRect().height >= 44);
-  }), true);
-  await press('Escape');
-  assert.equal(await evaluate(() => document.activeElement.id === 'motion-preference' && !document.activeElement.matches(':open')), true);
-  await pointerClick('#motion-preference');
+  await pointerClick('[data-for="motion-preference"] button[value="full"]');
   await press('ArrowUp');
-  await press('Enter');
   assert.equal(await evaluate(() => document.documentElement.dataset.motion), 'reduce');
+  assert.equal(await evaluate(() => document.activeElement.matches('[data-for="motion-preference"] [aria-checked="true"]')), true);
+  assert.equal(await evaluate(() => [...document.querySelectorAll('[data-for="motion-preference"] button')].every(button => button.getBoundingClientRect().height >= 44)), true);
   await choose('#motion-preference', 'full');
   const toggles = await evaluate(() => [...document.querySelectorAll('#settings-view .toggle-control input:not(:disabled)')]
     .map(input => ({ id: input.id, checked: input.checked })));
@@ -343,15 +339,15 @@ try {
   assert.equal(await checkEditableInputs('#config-fields'), 3);
   assert.equal(await evaluate(() => document.getElementById('config-local-stt-provider').value), 'whisper');
   await click('#setup-consent');
-  await choose('#config-local-stt-provider', 'moonshine');
+  await pointerClick('[data-for="config-local-stt-provider"] button[value="moonshine"]');
   await click('#config-save-btn');
   await waitFor(() => document.getElementById('config-feedback').textContent.includes('Config saved'));
   assert.equal(config.local.sttProvider, 'moonshine');
   assert.equal(await evaluate(() => document.getElementById('setup-consent').checked), false);
   assert.equal(await evaluate(() => document.getElementById('setup-message').textContent.includes('moonshine selected')), true);
   assert.equal(setupWrites, 0, 'saving speech selection must not download anything');
-  await evaluate(() => document.getElementById('config-local-stt-provider').scrollIntoView({ block: 'center' }));
-  await assertPainted('#config-local-stt-provider');
+  await evaluate(() => document.querySelector('[data-for="config-local-stt-provider"]').scrollIntoView({ block: 'center' }));
+  await assertPainted('[data-for="config-local-stt-provider"]');
   await screenshot('speech-selector-desktop');
   await pointerClick('#config-section > summary');
   assert.equal(await evaluate(() => document.getElementById('setup-install-btn').disabled), true);
@@ -490,7 +486,13 @@ try {
   assert.equal(await evaluate(() => document.documentElement.dataset.appearance), themeBeforePreview);
   assert.equal(await evaluate(() => document.querySelector('#settings-view [data-theme-card="jarvis"]').dataset.wallpaper), 'skyline');
   await pointerClick('#settings-view [data-theme-card="jarvis"] [data-theme-control="next"]');
+  assert.equal(await evaluate(() => document.querySelector('#settings-view [data-theme-card="jarvis"]').dataset.wallpaper), 'white');
+  await pointerClick('#settings-view [data-theme-card="jarvis"] [data-theme-control="next"]');
+  assert.equal(await evaluate(() => document.querySelector('#settings-view [data-theme-card="jarvis"]').dataset.wallpaper), 'black');
+  await pointerClick('#settings-view [data-theme-card="jarvis"] [data-theme-control="next"]');
   assert.equal(await evaluate(() => document.querySelector('#settings-view [data-theme-card="jarvis"]').dataset.wallpaper), 'observatory');
+  await pointerClick('#settings-view [data-theme-card="jarvis"] [data-theme-control="previous"]');
+  await pointerClick('#settings-view [data-theme-card="jarvis"] [data-theme-control="previous"]');
   await pointerClick('#settings-view [data-theme-card="jarvis"] [data-theme-control="previous"]');
   assert.equal(await evaluate(() => document.querySelector('#settings-view [data-theme-card="jarvis"]').dataset.wallpaper), 'skyline');
   await pointerClick('#settings-view [data-theme-card="jarvis"] [data-theme-control="previous"]');
@@ -636,6 +638,24 @@ try {
 
   await pointerClick('#voice-options-btn');
   await pointerClick('#dock-route-btn');
+  assert.equal(await evaluate(() => document.querySelector('[data-for="pipeline-mode"] [aria-checked="true"]').value), 'dedicated');
+  assert.equal(await evaluate(() => [...document.querySelectorAll('#dedicated-pipeline [data-for] button')].every(button => button.querySelector('svg'))), true);
+  await pointerClick('[data-for="pipeline-mode"] button[value="native"]');
+  assert.equal(await evaluate(() => document.getElementById('dedicated-pipeline').hidden && !document.getElementById('native-pipeline').hidden), true);
+  await pointerClick('[data-for="native-provider"] button[value="gemini-live"]');
+  assert.equal(await evaluate(() => document.getElementById('voice-mode-select').value), 'gemini-live');
+  await screenshot('native-pipeline-desktop');
+  await pointerClick('[data-for="pipeline-mode"] button[value="dedicated"]');
+  await pointerClick('[data-for="stt-provider"] button[value="gemini"]');
+  await pointerClick('[data-for="tts-provider"] button[value="openai"]');
+  assert.equal(await evaluate(() => document.getElementById('provider-select').value), 'local');
+  assert.deepEqual(await evaluate(() => {
+    const saved = JSON.parse(localStorage.getItem('voice-supervisor-pipeline-v1'));
+    return [saved.sttProvider, saved.provider, saved.ttsProvider];
+  }), ['gemini', 'local', 'openai']);
+  await screenshot('dedicated-pipeline-desktop');
+  await pointerClick('[data-for="stt-provider"] button[value="local"]');
+  await pointerClick('[data-for="tts-provider"] button[value="local"]');
   await press('Escape');
   assert.equal(await evaluate(() => document.activeElement.id), 'voice-options-btn');
   await pointerClick('#voice-options-btn');
@@ -644,9 +664,16 @@ try {
   assert.equal(await evaluate(() => document.getElementById('quiet-mode-btn').getAttribute('aria-pressed')), 'true');
   await pointerClick('#quiet-mode-btn');
 
+  await evaluate(() => {
+    window.fixtureCues = [];
+    const play = HTMLMediaElement.prototype.play;
+    HTMLMediaElement.prototype.play = function () { window.fixtureCues.push({ source: this.src, activity: document.body.dataset.voiceActivity }); return play.call(this); };
+  });
   await click('#assistant-toggle-btn');
   console.log('Browser fixture: checking voice');
   await waitFor(() => document.getElementById('agent-sprite').dataset.state === 'listening');
+  assert.deepEqual([voiceStartRequest.sttProvider, voiceStartRequest.ttsProvider], ['local', 'local']);
+  assert.equal(await evaluate(() => /jarvis-bootup/.test(window.fixtureCues.at(-1)?.source)), true);
   assert.equal(await evaluate(() => document.querySelectorAll('.voice-bars, #mic-canvas').length), 0);
   assert.equal(await evaluate(() => getComputedStyle(document.querySelector('.sprite-image')).visibility), 'visible');
   await evaluate(() => { window.fixtureSpriteImage = document.querySelector('.sprite-image'); });
@@ -679,6 +706,7 @@ try {
   assert.equal(await evaluate(() => document.querySelectorAll('.closed-caption:not([hidden])').length), 2);
   assert.equal(await evaluate(() => document.getElementById('user-caption-text').textContent), 'Voice final');
   await voice({ type: 'tool', name: 'list_work', result: { ok: true } });
+  assert.equal(await evaluate(() => /jarvis-action/.test(window.fixtureCues.at(-1)?.source) && window.fixtureCues.at(-1)?.activity === 'tool'), true);
   assert.equal(await evaluate(() => document.body.dataset.voiceActivity === 'tool'
     && getComputedStyle(document.body, '::after').animationName === 'tool-presence'), true);
   await voice({ type: 'state', state: 'speaking' });
@@ -703,6 +731,7 @@ try {
   await click('#settings-view [data-theme-card="alpine"] [data-theme-control="swap"]');
   await click('#settings-view button[data-appearance="baymax"]');
   assert.equal(voiceConnections, 1, 'changing sprite structure must not reconnect an active call');
+  assert.equal(await evaluate(() => /baymax-bootup/.test(window.fixtureCues.at(-1)?.source)), true);
   await click('#settings-view button[data-appearance="alpine"]');
   assert.equal(await evaluate(() => document.querySelector('#settings-view [data-theme-card="alpine"]').dataset.sprite), 'opal');
   assert.equal(await evaluate(() => document.documentElement.dataset.transparency), 'off');

@@ -156,8 +156,8 @@ body:has(dialog:modal) .sidebar-brand { -webkit-app-region: no-drag; }
 .suggestion {
   min-height: 44px; padding: 10px 16px;
   display: flex; align-items: center; gap: 8px; text-align: left;
-  background: transparent; border: 1px solid var(--cp-border); border-radius: var(--control-radius);
-  color: var(--cp-text-muted); overflow-wrap: anywhere;
+  background: var(--cp-panel-strong); border: 1px solid var(--cp-border); border-radius: var(--control-radius);
+  color: var(--cp-text); overflow-wrap: anywhere;
   font-size: 13px; font-weight: 400; line-height: 1.5; cursor: pointer;
 }
 .suggestion svg { width: 16px; height: 16px; flex-shrink: 0; stroke-width: 1.75; }
@@ -202,6 +202,25 @@ main.center-pane { overflow: hidden; }
 .setting-row { display: flex; align-items: center; justify-content: space-between; gap: var(--cp-space-4); min-height: var(--cp-control-height); }
 .setting-row > label, .setting-row > span { font-size: var(--cp-type-sm, 13px); }
 .setting-row select { width: min(240px, 100%); }
+.setting-choice { flex-direction: column; align-items: stretch; gap: var(--cp-space-2); }
+.pillbar { display: flex; flex-wrap: wrap; align-items: stretch; gap: var(--cp-space-1); padding: var(--cp-space-1); border-radius: 24px; background: var(--cp-surface-soft); width: fit-content; max-width: 100%; }
+.pillbar button { display: inline-flex; flex: 1 1 auto; align-items: center; justify-content: center; gap: var(--cp-space-2); min-height: 44px; min-width: 0; max-width: 100%; padding: var(--cp-space-2) var(--cp-space-3); border: 1px solid transparent; border-radius: 22px; background: transparent; color: var(--cp-text-muted); font: inherit; font-size: var(--cp-type-sm); line-height: var(--cp-leading-tight); cursor: pointer; transition: background var(--cp-duration-fast) var(--cp-ease), color var(--cp-duration-fast) var(--cp-ease); }
+.pillbar button span { overflow-wrap: anywhere; }
+.pillbar button[aria-checked="true"] { background: var(--cp-surface); color: var(--cp-text); border-color: var(--cp-border); font-weight: 600; }
+.pillbar button:hover:not(:disabled) { color: var(--cp-accent); }
+.pillbar button:disabled { opacity: var(--cp-opacity-disabled); cursor: not-allowed; }
+.pillbar svg { width: 16px; height: 16px; flex-shrink: 0; }
+.pipeline-section { display: grid; gap: var(--cp-space-2); padding-block: var(--cp-space-4); border-bottom: 1px solid var(--cp-border); }
+.pipeline-section .pillbar, [data-for="pipeline-mode"] { width: 100%; }
+.pipeline-section .pillbar { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+#native-pipeline .pillbar, [data-for="pipeline-mode"] { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.pipeline-section:last-child { border-bottom: 0; }
+.pipeline-model { font-size: var(--cp-type-xs); color: var(--cp-text-muted); overflow-wrap: anywhere; }
+#cloud-consent-row { margin-top: var(--cp-space-4); }
+@media (max-width: 400px) {
+  .pipeline-section .pillbar button { flex-direction: column; gap: var(--cp-space-1); padding-inline: var(--cp-space-1); }
+  [data-for="pipeline-mode"] button { padding-inline: var(--cp-space-2); }
+}
 .settings-section .form-row-checkbox { display: flex; justify-content: flex-start; width: 100%; margin: 0; min-height: 44px; padding: 8px 0; }
 .settings-section .form-row-checkbox > span:last-child { flex: 1; order: 0; }
 .settings-section .form-row-checkbox > .toggle-track { flex: none; order: 2; margin-left: auto; }

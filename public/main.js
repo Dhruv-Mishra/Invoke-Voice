@@ -2,7 +2,7 @@ import { createApp, h, reactive, ref } from 'vue';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 import {
-  Activity, AudioLines, BellOff, CalendarDays, Check, CheckSquare, ChevronLeft, ChevronRight, CircleDashed, ClipboardCheck, createIcons, Edit2,
+  Activity, AppWindow, AudioLines, BellOff, CalendarDays, Check, CheckSquare, ChevronLeft, ChevronRight, CircleDashed, ClipboardCheck, createIcons, Edit2, Folder,
   ExternalLink, File, FileText, FlaskConical, FolderKanban, HardDriveDownload, House, KeyRound, Keyboard,
   LayoutDashboard, MessageSquare, MessageSquarePlus, Mic, PanelLeftClose, Palette, Play, Plus,
   PlusCircle, Radio, RefreshCw, Save, ScanSearch, Send, Settings,
@@ -14,7 +14,7 @@ import './theme.css';
 
 window.DOMPurify = DOMPurify;
 window.marked = marked;
-const appIcons = { Activity, AudioLines, Check, ChevronLeft, ChevronRight, ClipboardCheck, Heart, MessagesSquare, Orbit, Radar, Terminal, Volume2, Zap, BellOff, CalendarDays, CheckSquare, CircleDashed, Edit2, ExternalLink,
+const appIcons = { Activity, AppWindow, Folder, AudioLines, Check, ChevronLeft, ChevronRight, ClipboardCheck, Heart, MessagesSquare, Orbit, Radar, Terminal, Volume2, Zap, BellOff, CalendarDays, CheckSquare, CircleDashed, Edit2, ExternalLink,
   File, FileText, FlaskConical, FolderKanban, HardDriveDownload, House, KeyRound, Keyboard, LayoutDashboard,
   MessageSquare, MessageSquarePlus, Mic, PanelLeftClose, Palette, Play, Plus, PlusCircle, Radio, RefreshCw,
   Save, ScanSearch, Send, Settings, SlidersHorizontal, Sparkles, Square, Trash2, X };
@@ -95,6 +95,7 @@ const state = ref('idle');
 let soundsEnabled = savedSounds === 'true' ? true : savedSounds === 'false' ? false : null;
 let interactionAudio = null;
 let soundTimeout;
+window.isThemeSoundPlaying = () => Boolean(interactionAudio);
 
 function soundSource(kind) {
   const source = theme.value.sounds[kind];
@@ -106,7 +107,7 @@ function soundSource(kind) {
 }
 
 function syncSoundControls() {
-  const available = Boolean(soundSource('navigation') || soundSource('action'));
+  const available = Boolean(soundSource('bootup') || soundSource('action'));
   for (const input of document.querySelectorAll('input[type="checkbox"][data-theme-sounds]')) {
     input.checked = available && (soundsEnabled ?? theme.value.preferences.soundsEnabled);
     input.disabled = !available;
@@ -126,16 +127,13 @@ function stopSound() {
   audio.load();
 }
 
-function voiceBusy() {
-  return state.value !== 'idle' || document.getElementById('mic-toggle-btn')?.getAttribute('aria-pressed') === 'true';
-}
-
 function playSound(kind, preview = false) {
-  if ((!preview && !(soundsEnabled ?? theme.value.preferences.soundsEnabled)) || voiceBusy()
-    || document.hidden || !document.hasFocus() || interactionAudio) return;
+  if ((!preview && !(soundsEnabled ?? theme.value.preferences.soundsEnabled))
+    || document.hidden || !document.hasFocus()) return;
   const source = soundSource(kind);
   const volume = soundVolume / 100 * theme.value.preferences.soundVolume / 0.2;
   if (!source || !volume) return;
+  stopSound();
   const audio = new Audio();
   interactionAudio = audio;
   const finish = () => { if (interactionAudio === audio) stopSound(); };
@@ -143,18 +141,9 @@ function playSound(kind, preview = false) {
   audio.volume = Math.min(1, volume);
   audio.onended = finish;
   audio.onerror = finish;
-  soundTimeout = window.setTimeout(finish, 1500);
+  soundTimeout = window.setTimeout(finish, 10000);
   audio.src = source;
   try { audio.play()?.catch(finish); } catch { finish(); }
-}
-
-function onInteraction(event) {
-  if (!event.isTrusted || event.defaultPrevented) return;
-  const button = event.target instanceof Element ? event.target.closest('button') : null;
-  if (!button || button.disabled || button.getAttribute('aria-disabled') === 'true') return;
-  if (button.id === 'mic-toggle-btn' || button.closest('#voice-options')) return;
-  const kind = button.dataset.themeSound || (button.matches('[data-view], [data-open-view]') ? 'navigation' : null);
-  if (kind === 'navigation' || kind === 'action') playSound(kind);
 }
 
 function onSoundPreference(event) {
@@ -168,19 +157,20 @@ function onSoundPreference(event) {
 
 function onState(event) {
   state.value = stateCopy[event.detail?.state] ? event.detail.state : 'idle';
-  if (voiceBusy()) stopSound();
 }
 
 function onTheme(event) {
   const id = event.detail?.id;
   if (!themes.some(item => item.id === id)) return;
   const next = resolveTheme(id, variants[id] || {});
+  const changed = next.id !== theme.value.id;
   stopSound();
   theme.value = next;
   applyTheme(next, { transparency: transparencyEnabled, wallpaperStrength });
   syncSoundControls();
   window.lucide.createIcons();
   savePreference(themeKey, next.id);
+  if (changed) playSound('bootup');
 }
 
 function cycleThemeVariant(id, field, direction) {
@@ -331,7 +321,8 @@ transparencyInput.addEventListener('change', () => {
 }, listenerOptions);
 window.addEventListener('voice-supervisor:agent-state', onState, listenerOptions);
 window.addEventListener('voice-supervisor:theme', onTheme, listenerOptions);
-document.addEventListener('click', onInteraction, listenerOptions);
+window.addEventListener('voice-supervisor:voice-start', () => playSound('bootup'), listenerOptions);
+window.addEventListener('voice-supervisor:tool-activity', () => playSound('action'), listenerOptions);
 document.addEventListener('change', onSoundPreference, listenerOptions);
 motionSelect.addEventListener('change', () => {
   const preference = motionPreference(motionSelect.value);

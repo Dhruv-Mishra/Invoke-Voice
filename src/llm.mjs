@@ -481,10 +481,7 @@ export async function* streamReply({
       });
     }
 
-    const anthropicToolResults = [];
-    for (let i = 0; i < finishedCalls.length; i++) {
-      if (signal?.aborted) return;
-      const call = finishedCalls[i];
+    const completedCalls = await Promise.all(finishedCalls.map(async (call, i) => {
       const callId = call.id || `call_${round}_${i}`;
 
       let parsedArgs = {};
@@ -508,16 +505,21 @@ export async function* streamReply({
       } else if (parseFailed) {
         result = parsedArgs;
       } else if (executedCalls.has(invocationKey)) {
-        result = executedCalls.get(invocationKey);
+        result = await executedCalls.get(invocationKey);
       } else {
-        try {
-          result = await callTool(call.name, parsedArgs, toolCallContext);
-        } catch (err) {
-          result = { error: err.message || 'Tool execution error' };
-        }
-        executedCalls.set(invocationKey, result);
+        const pending = Promise.resolve().then(() => callTool(call.name, parsedArgs, toolCallContext))
+          .catch(err => ({ error: err.message || 'Tool execution error' }));
+        executedCalls.set(invocationKey, pending);
+        result = await pending;
+        if (executedCalls.get(invocationKey) === pending) executedCalls.set(invocationKey, result);
       }
 
+      return { call, i, result };
+    }));
+    if (signal?.aborted) return;
+
+    const anthropicToolResults = [];
+    for (const { call, i, result } of completedCalls) {
       yield { type: 'tool', name: call.name, result };
 
       if (isAnthropic) {

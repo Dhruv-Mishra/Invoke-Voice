@@ -252,9 +252,11 @@ section.conversation-pane { height: min(640px, calc(100dvh - 48px)); min-height:
 .closed-caption[data-fading='true'] { opacity: 0; }
 .closed-caption[data-role='user'] { justify-self: end; background: var(--cp-caption-user-bg); }
 .closed-caption[data-role='user'] .caption-text { text-align: right; }
-.caption-text { min-width: 0; height: auto; max-height: var(--cp-caption-max-height); margin: 0; padding-right: var(--cp-caption-dismiss-space); overflow-y: auto; overscroll-behavior: contain; overflow-wrap: anywhere; text-align: left; font-size: 14px; line-height: 1.45; scrollbar-gutter: stable; transition: height var(--cp-caption-grow-duration) ease; }
+.caption-text { min-width: 0; height: auto; max-height: var(--cp-caption-max-height); margin: 0; overflow-y: auto; overscroll-behavior: contain; overflow-wrap: anywhere; text-align: left; font-size: 14px; line-height: 1.45; scrollbar-width: none; transition: height var(--cp-caption-grow-duration) ease; }
+.caption-text::-webkit-scrollbar { display: none; }
 .caption-content { display: block; }
-.closed-caption .btn { position: absolute; top: 50%; right: 2px; width: var(--cp-caption-control-size); min-width: var(--cp-caption-control-size); height: var(--cp-caption-control-size); min-height: var(--cp-caption-control-size); padding: 0; transform: translateY(-50%); background: transparent; border-color: transparent; }
+.closed-caption .btn { position: absolute; top: 50%; right: 0; width: var(--cp-caption-control-size); min-width: var(--cp-caption-control-size); height: var(--cp-caption-control-size); min-height: var(--cp-caption-control-size); padding: 0; transform: translateY(-50%); opacity: 0; pointer-events: none; background: color-mix(in srgb, var(--cp-bg) 42%, transparent); border-color: transparent; transition: opacity var(--cp-duration-fast) ease; }
+.closed-caption:hover .btn, .closed-caption .btn:focus-visible { opacity: .78; pointer-events: auto; }
 body:has(#conversation-dialog[open]) .closed-caption { visibility: hidden; }
 
 .voice-strip {
@@ -363,7 +365,7 @@ body:has(#conversation-dialog[open]) .closed-caption { visibility: hidden; }
   .config-grid { grid-template-columns: minmax(0, 1fr); }
   .setting-row { flex-wrap: wrap; gap: 10px; }
   .caption-region { width: calc(100vw - 24px); }
-  .closed-caption { --cp-caption-dismiss-space: 40px; --cp-caption-control-size: 44px; }
+  .closed-caption { --cp-caption-control-size: 44px; }
   .tool-runner { padding: 18px 14px; }
 }
 html[data-motion='reduce'] *, html[data-motion='reduce'] *::before, html[data-motion='reduce'] *::after {
@@ -392,4 +394,7 @@ html[data-motion='reduce'] body[data-voice-activity='tool']::after { opacity: .5
   .voice-options { max-height: min(420px, calc(100dvh - 130px)); }
   .app-main { inset-block: 14px 108px; }
   dialog.view-dialog { inset-block: 0; height: calc(100dvh - 216px); max-height: calc(100dvh - 216px); }
+}
+@media (hover: none) {
+  .closed-caption .btn { opacity: .58; pointer-events: auto; }
 }

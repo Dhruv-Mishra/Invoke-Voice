@@ -1,6 +1,6 @@
 import { defaultAnimations } from './VoiceSprite.js';
 
-export const captionTiming = Object.freeze({ minimum: 6000, maximum: 16000, perCharacter: 40, fade: 1800 });
+export const captionTiming = Object.freeze({ minimum: 6000, maximum: 16000, perCharacter: 40, afterSpeech: 700, fade: 500 });
 const alpineBackground = new URL('./alpine-lake.webp', import.meta.url).href;
 const defaultTokens = {
   '--cp-bg': '#e8f2f7',
@@ -59,9 +59,8 @@ const defaultTokens = {
   '--cp-caption-max-height': 'min(126px, 16dvh)',
   '--cp-caption-speaker-offset': '10px',
   '--cp-caption-stack-gap': '6px',
-  '--cp-caption-padding-block': '6px',
-  '--cp-caption-padding-inline': '8px',
-  '--cp-caption-dismiss-space': '32px',
+  '--cp-caption-padding-block': '5px',
+  '--cp-caption-padding-inline': '6px',
   '--cp-caption-control-size': '28px',
   '--cp-caption-assistant-bg': 'linear-gradient(135deg, rgba(174, 48, 221, 0.96), rgba(235, 64, 164, 0.96) 58%, rgba(255, 126, 108, 0.96))',
   '--cp-caption-user-bg': 'linear-gradient(135deg, rgba(13, 169, 242, 0.96), rgba(28, 111, 220, 0.96) 58%, rgba(35, 66, 190, 0.96))',

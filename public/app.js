@@ -741,6 +741,7 @@ function sendPlaybackOutcome(responseId, outcome) {
   if (voiceSocket?.readyState === WebSocket.OPEN) {
     voiceSocket.send(JSON.stringify({ type: 'playback_done', responseId, outcome }));
   }
+  if (outcome !== 'interrupted') conversationUI.finishCaption('assistant');
   workletNode?.port.postMessage({ type: 'reset' });
 }
 

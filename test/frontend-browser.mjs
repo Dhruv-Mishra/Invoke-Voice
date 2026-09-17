@@ -584,12 +584,15 @@ try {
           titlesHidden: [...document.querySelectorAll('.caption-speaker')].every(label => getComputedStyle(label).position === 'absolute' && label.getBoundingClientRect().height <= 1),
           compactCaption: captions.every(caption => caption.height <= Math.min(126, innerHeight * .16) + captionPadding),
           captionScrollable: text.scrollHeight > text.clientHeight && text.clientHeight <= Math.min(126, innerHeight * .16) + 1 && getComputedStyle(text).overflowY === 'auto',
+          captionChromeOverlaid: Number.parseFloat(getComputedStyle(text).paddingRight) === 0
+            && getComputedStyle(text).scrollbarWidth === 'none'
+            && getComputedStyle(document.getElementById('dismiss-caption-btn')).position === 'absolute',
           captionStartVisible: firstWordBounds.left >= text.getBoundingClientRect().left && firstWordBounds.right <= text.getBoundingClientRect().right,
           modalCorrect: document.getElementById('view-dialog').matches(':modal') === (innerWidth > 760 && document.body.dataset.view !== 'home'),
           spriteCentered: document.getElementById('voice-personality-app').hidden || Math.abs((document.getElementById('agent-sprite').getBoundingClientRect().left + document.getElementById('agent-sprite').getBoundingClientRect().right - dock.left - dock.right) / 2) < 1,
         };
       });
-      assert.deepEqual(layout, { noOverflow: true, surfaceVisible: true, dockClear: true, freeFloating: true, captionFits: true, captionCentered: true, captionStacked: true, speakerOffset: true, speakerColors: true, titlesHidden: true, compactCaption: true, captionScrollable: true, captionStartVisible: true, modalCorrect: true, spriteCentered: true }, `${width}x${height} ${view}`);
+      assert.deepEqual(layout, { noOverflow: true, surfaceVisible: true, dockClear: true, freeFloating: true, captionFits: true, captionCentered: true, captionStacked: true, speakerOffset: true, speakerColors: true, titlesHidden: true, compactCaption: true, captionScrollable: true, captionChromeOverlaid: true, captionStartVisible: true, modalCorrect: true, spriteCentered: true }, `${width}x${height} ${view}`);
       if (view === 'settings') {
         assert.equal(await evaluate(() => {
           const settings = document.getElementById('settings-view');

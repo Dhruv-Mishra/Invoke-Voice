@@ -205,6 +205,55 @@ test('normal local tool/result roundtrip verifies thinking false, tools roundtri
   }
 });
 
+test('executes complete local tool-call batches concurrently and preserves result order', { timeout: 5000 }, async () => {
+  let requestCount = 0;
+  const server = http.createServer(async (req, res) => {
+    for await (const _ of req) {}
+    requestCount++;
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    if (requestCount === 1) {
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [
+        { index: 0, id: 'call_list', type: 'function', function: { name: 'list_work', arguments: '{}' } },
+        { index: 1, id: 'call_status', type: 'function', function: { name: 'get_work_status', arguments: '{"taskId":"task-1"}' } },
+      ] } }] })}\n\n`);
+      res.end('data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\ndata: [DONE]\n\n');
+    } else {
+      res.end('data: {"choices":[{"delta":{"content":"Both checks finished."},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
+    }
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  let releaseCalls;
+  let markBothStarted;
+  const callGate = new Promise(resolve => { releaseCalls = resolve; });
+  const bothStarted = new Promise(resolve => { markBothStarted = resolve; });
+  const started = [];
+  const events = [];
+  try {
+    const consuming = (async () => {
+      for await (const event of streamReply({
+        provider: 'local',
+        messages: [{ role: 'user', content: 'Check work and status' }],
+        callTool: async name => {
+          started.push(name);
+          if (started.length === 2) markBothStarted();
+          await callGate;
+          return { name };
+        },
+        env: { LOCAL_LLM_URL: `http://127.0.0.1:${server.address().port}/v1`, LOCAL_LLM_MODEL: 'test-local' },
+        requestId: 'parallel-local',
+      })) events.push(event);
+    })();
+    await bothStarted;
+    releaseCalls();
+    await consuming;
+    assert.deepEqual(started, ['list_work', 'get_work_status']);
+    assert.deepEqual(events.filter(event => event.type === 'tool').map(event => event.name), started);
+  } finally {
+    releaseCalls();
+    await new Promise(resolve => server.close(resolve));
+  }
+});
+
 test('truncated tool call stream does NOT invoke callback', async () => {
   const server = http.createServer(async (req, res) => {
     for await (const _ of req) {

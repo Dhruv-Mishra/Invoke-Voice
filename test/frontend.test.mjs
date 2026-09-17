@@ -47,7 +47,7 @@ test('captions replace partials, ignore tools, expire and cannot be cleared by s
   let sequence = 0;
   const captions = createCaptionController(value => updates.push(value), {
     setTimeout(callback, delay) {
-      assert.ok(delay === captionTiming.fade || (delay >= captionTiming.minimum && delay <= captionTiming.maximum));
+      assert.ok([captionTiming.afterSpeech, captionTiming.fade].includes(delay) || (delay >= captionTiming.minimum && delay <= captionTiming.maximum));
       pending.set(++sequence, callback);
       return sequence;
     },
@@ -105,9 +105,10 @@ test('captions replace partials, ignore tools, expire and cannot be cleared by s
 test('speaker captions retain separate text, fade and dismissal lifecycles', () => {
   const updates = new Map();
   const pending = new Map();
+  const delays = [];
   let sequence = 0;
   const timers = {
-    setTimeout(callback) { pending.set(++sequence, callback); return sequence; },
+    setTimeout(callback, delay) { delays.push(delay); pending.set(++sequence, callback); return sequence; },
     clearTimeout(id) { pending.delete(id); },
   };
   const user = createCaptionController(value => updates.set('user', value), timers);
@@ -117,6 +118,9 @@ test('speaker captions retain separate text, fade and dismissal lifecycles', () 
   assistant.update('assistant', 'Updated partial', true);
   assert.equal(updates.get('user').text, 'A complete question');
   assert.equal(updates.get('assistant').text, 'Updated partial');
+  assistant.finish();
+  assert.equal(delays.at(-1), captionTiming.afterSpeech);
+  assert.equal([...pending.keys()].length, 2);
   const expire = pending.get(1);
   pending.delete(1);
   expire();
@@ -158,7 +162,7 @@ test('themes supply local bitmap assets and can replace sprite animations', asyn
     assert.ok(theme.tokens['--cp-font']);
     assert.match(theme.tokens['--cp-caption-user-bg'], /linear-gradient/);
     assert.match(theme.tokens['--cp-caption-assistant-bg'], /linear-gradient/);
-    for (const token of ['--cp-caption-padding-block', '--cp-caption-padding-inline', '--cp-caption-stack-gap', '--cp-caption-speaker-offset', '--cp-caption-dismiss-space', '--cp-caption-control-size']) assert.ok(theme.tokens[token]);
+    for (const token of ['--cp-caption-padding-block', '--cp-caption-padding-inline', '--cp-caption-stack-gap', '--cp-caption-speaker-offset', '--cp-caption-control-size']) assert.ok(theme.tokens[token]);
     for (const state of Object.keys(defaultAnimations)) assert.ok(theme.animations[state]);
   }
   const output = await renderToString(createSSRApp({

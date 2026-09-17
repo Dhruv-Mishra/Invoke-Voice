@@ -5,6 +5,7 @@ export function createCaptionController(render, timers = globalThis) {
   let timeout;
   let revision = 0;
   let paused = false;
+  let expiryDelay;
 
   function cancelExpiry() {
     timers.clearTimeout(timeout);
@@ -14,12 +15,14 @@ export function createCaptionController(render, timers = globalThis) {
   function clear() {
     cancelExpiry();
     paused = false;
+    expiryDelay = undefined;
     current = null;
     render(null);
   }
 
-  function scheduleExpiry() {
+  function scheduleExpiry(delay = expiryDelay) {
     cancelExpiry();
+    if (Number.isFinite(delay)) expiryDelay = delay;
     if (!current || paused) return;
     const scheduledRevision = revision;
     timeout = timers.setTimeout(() => {
@@ -29,7 +32,7 @@ export function createCaptionController(render, timers = globalThis) {
       timeout = timers.setTimeout(() => {
         if (scheduledRevision === revision) clear();
       }, captionTiming.fade);
-    }, Math.min(captionTiming.maximum, captionTiming.minimum + current.text.length * captionTiming.perCharacter));
+    }, expiryDelay);
   }
 
   return {
@@ -37,8 +40,9 @@ export function createCaptionController(render, timers = globalThis) {
       if (!['user', 'assistant'].includes(role) || typeof text !== 'string' || !text.trim()) return;
       current = { role, text: text.trim(), partial: Boolean(partial) };
       render(current);
-      scheduleExpiry();
+      scheduleExpiry(Math.min(captionTiming.maximum, captionTiming.minimum + current.text.length * captionTiming.perCharacter));
     },
+    finish: () => scheduleExpiry(captionTiming.afterSpeech),
     clear,
     pause(value) {
       paused = Boolean(value);
@@ -118,6 +122,7 @@ export function createConversationUI(document) {
   return {
     preview: (role, content) => captions.get(role)?.update(role, content, true),
     clearCaption: clear,
+    finishCaption: role => captions.get(role)?.finish(),
     message(role, content) {
       captions.get(role)?.update(role, content);
     },

@@ -541,10 +541,11 @@ html[data-motion='reduce'] body[data-voice-activity='tool']::after { opacity: .5
   body { min-height: 100dvh; }
   header.top-bar { padding: 16px 20px; gap: 12px; }
   .sidebar-footer { display: none; }
-  .home-composition { height: auto; min-height: 100%; }
-  .assistant-stage { padding-top: 36px; }
-  .voice-sprite { width: 160px; height: 160px; flex-basis: 160px; }
-  .presence-copy { margin-top: 24px; }
+  .home-composition { height: auto; min-height: 100%; padding: 16px; gap: 16px; }
+  .assistant-stage { padding-top: 0; }
+  .voice-sprite { width: 132px; height: 132px; flex-basis: 132px; }
+  .presence-copy { margin-top: 12px; min-height: 30px; }
+  .presence-copy h1 { font-size: 24px; }
   .voice-options { max-height: min(420px, calc(100dvh - 130px)); }
   .app-main { inset-block: 14px 108px; }
   dialog.view-dialog { inset-block: 0; height: calc(100dvh - 216px); max-height: calc(100dvh - 216px); }

@@ -832,6 +832,15 @@ try {
     for (const view of ['home', 'workspace', 'calendar', 'files', 'settings']) {
       console.log(`Browser fixture: ${view}`);
       await visit(view);
+      if (view === 'home') {
+        assert.equal(await evaluate(() => {
+          const surface = document.querySelector('.app-main').getBoundingClientRect();
+          return [...document.querySelectorAll('.suggestion')].every(button => {
+            const bounds = button.getBoundingClientRect();
+            return bounds.top >= surface.top && bounds.bottom <= surface.bottom;
+          });
+        }), true, 'quick actions must be fully visible above the dock');
+      }
       const contentBefore = await evaluate(() => document.querySelector('.page-views').getBoundingClientRect().toJSON());
       const longCaption = 'Supervisor a designated work area. '.repeat(24);
       await voice({ type: 'transcript', role: 'user', text: longCaption, partial: false });

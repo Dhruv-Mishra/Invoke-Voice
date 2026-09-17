@@ -1,9 +1,10 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { voiceInstructions } from '../src/llm.mjs';
+import { localThreadDefault } from '../src/runtime-config.mjs';
+import { tools } from '../src/supervisor/contract.mjs';
 import net from 'node:net';
 import { stackPaths } from './models.mjs';
 import desktopLaunch from './desktop-launch.cjs';
@@ -91,6 +92,33 @@ export async function ensureFrontendBuild(options = {}) {
   return true;
 }
 
+export function localLlmArguments(paths, serverUrl, env = process.env) {
+  const threads = env.LLAMA_THREADS || localThreadDefault(8);
+  return [
+    '-m', paths.ling,
+    '--host', serverUrl.hostname,
+    '--port', serverUrl.port || '8081',
+    '--alias', env.LOCAL_LLM_MODEL || 'ling-local',
+    '--ctx-size', env.LLAMA_CONTEXT || '4096',
+    '--batch-size', '256',
+    '--ubatch-size', '256',
+    '--threads', threads,
+    '--threads-batch', threads,
+    '--parallel', env.LLAMA_PARALLEL || '1',
+    '--gpu-layers', env.LLAMA_GPU_LAYERS || 'auto',
+    '--flash-attn', env.LLAMA_FLASH_ATTN || 'auto',
+    '--cache-type-k', env.LLAMA_CACHE_TYPE_K || 'f16',
+    '--cache-type-v', env.LLAMA_CACHE_TYPE_V || 'f16',
+    '--load-mode', env.LLAMA_LOAD_MODE || 'mmap',
+    '--cache-reuse', env.LLAMA_CACHE_REUSE || '32',
+    '--reasoning', 'off',
+    '--no-reasoning-preserve',
+    '--cors-origins', 'localhost',
+    '--jinja',
+    '--no-ui',
+  ];
+}
+
 export async function ensureLocalLLM(options = {}) {
   const env = options.env || process.env;
   const paths = stackPaths(env);
@@ -106,9 +134,6 @@ export async function ensureLocalLLM(options = {}) {
   const candidateUrl = allocatedPort ? `http://127.0.0.1:${allocatedPort}/v1` : (env.LOCAL_LLM_URL || 'http://127.0.0.1:8081/v1');
   const serverUrl = new URL(candidateUrl);
   const executable = existsSync(paths.llama) ? paths.llama : env.LLAMA_SERVER_BIN || 'llama-server';
-  const threads = env.LLAMA_THREADS || String(Math.max(1, Math.min(12, os.availableParallelism() - 4)));
-  const contextSize = env.LLAMA_CONTEXT || '8192';
-  const parallel = env.LLAMA_PARALLEL || '2';
   const checkOnly = Boolean(options.checkOnly);
 
   if (!existsSync(modelPath)) throw new Error(`Ling model not found: ${modelPath}`);
@@ -127,26 +152,7 @@ export async function ensureLocalLLM(options = {}) {
   let owned = false;
   if (!await healthy()) {
     owned = true;
-    llama = spawn(executable, [
-      '-m', modelPath,
-      '--host', serverUrl.hostname,
-      '--port', serverUrl.port || '8081',
-      '--alias', env.LOCAL_LLM_MODEL || 'ling-local',
-      '--ctx-size', contextSize,
-      '--batch-size', '256',
-      '--ubatch-size', '256',
-      '--threads', threads,
-      '--threads-batch', threads,
-      '--parallel', parallel,
-      '--flash-attn', 'auto',
-      '--load-mode', env.LLAMA_LOAD_MODE || 'mmap',
-      '--cache-reuse', env.LLAMA_CACHE_REUSE || '32',
-      '--reasoning', 'off',
-      '--no-reasoning-preserve',
-      '--cors-origins', 'localhost',
-      '--jinja',
-      '--no-ui',
-    ], { cwd: options.cwd || root, env, stdio: 'inherit', windowsHide: true });
+    llama = spawn(executable, localLlmArguments(paths, serverUrl, env), { cwd: options.cwd || root, env, stdio: 'inherit', windowsHide: true });
     desktopLaunch.trackChild(llama);
 
     let spawnError;
@@ -184,6 +190,8 @@ export async function ensureLocalLLM(options = {}) {
         body: JSON.stringify({
           model: env.LOCAL_LLM_MODEL || 'ling-local',
           messages: [{ role: 'system', content: voiceInstructions }, { role: 'user', content: 'Say hello.' }],
+          tools,
+          tool_choice: 'auto',
           chat_template_kwargs: { enable_thinking: false },
           cache_prompt: true,
           max_tokens: 1,
@@ -193,33 +201,24 @@ export async function ensureLocalLLM(options = {}) {
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const result = await response.json();
-      if (!String(result.choices?.[0]?.message?.content || '').trim()) throw new Error('Ling warm-up returned no text');
-      console.log('Fast voice LLM lane is warm.');
+      const choice = result.choices?.[0];
+      if (choice?.message?.role !== 'assistant' || !['stop', 'length', 'tool_calls'].includes(choice.finish_reason) ||
+          !(typeof choice.message.content === 'string' || choice.message.content === null || Array.isArray(choice.message.tool_calls))) {
+        throw new Error('Ling warm-up returned an invalid completion');
+      }
+      if (!await healthy()) throw new Error('Ling became unhealthy after warm-up');
+      console.log('Local voice LLM prefix is warm.');
+      return String(choice.message.content || '').trim();
     } catch (error) {
-      if (options.requireWarm) throw error;
-      console.warn(`Fast voice LLM warmup deferred: ${error.message}`);
+      if (options.requireWarm || checkOnly) throw error;
+      console.warn(`Local voice LLM warmup deferred: ${error.message}`);
     }
   }
 
   if (checkOnly) {
     try {
-      const response = await fetch(`${serverUrl.origin}/v1/chat/completions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: env.LOCAL_LLM_MODEL || 'ling-local',
-          messages: [{ role: 'user', content: 'Reply with only READY.' }],
-          chat_template_kwargs: { enable_thinking: false },
-          max_tokens: 16,
-          temperature: 0,
-        }),
-        signal: AbortSignal.timeout(60000),
-      });
-      if (!response.ok) throw new Error(`Ling request failed (${response.status}): ${(await response.text()).slice(0, 500)}`);
-      const result = await response.json();
-      const text = String(result.choices?.[0]?.message?.content || '').trim();
-      if (!text) throw new Error('Ling returned no text');
-      console.log(`Local Ling check: ${text}`);
+      const text = await warmVoiceLane();
+      console.log('Local Ling check: healthy with a valid completion.');
       return { llama, text, checked: true, url: serverUrl.href };
     } finally {
       llama?.kill();

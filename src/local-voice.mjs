@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { streamReply } from './llm.mjs';
+import { localThreadDefault } from './runtime-config.mjs';
 import { stackPaths } from '../scripts/models.mjs';
 import desktopLaunch from '../scripts/desktop-launch.cjs';
 
@@ -77,7 +78,7 @@ function getKokoroRuntime(config, env, signal) {
 }
 
 async function startCrispRuntime(config, env, signal) {
-  const process = spawn(config.crispasrBin, localSttArguments(config, env), { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+  const process = spawn(config.crispasrBin, localSttArguments(config, env), { windowsHide: true, env, stdio: ['pipe', 'pipe', 'pipe'] });
   crispProcess = process;
   desktopLaunch.trackChild(process);
   let diagnostic = '';
@@ -184,14 +185,66 @@ export function localConfiguration(env = process.env) {
 }
 
 export function localSttArguments(config, env = process.env) {
-  return ['--backend', 'moonshine-streaming', '-m', config.moonshineModel, '--cache-dir', path.dirname(config.moonshineTokenizer), '--stream', '--stream-json', '--vad', '--vad-model', config.vadModel, '--stream-step', env.CRISPASR_STREAM_STEP_MS || '500', '--stream-length', env.CRISPASR_STREAM_LENGTH_MS || '8000', '--stream-partial-decode-ms', env.CRISPASR_PARTIAL_DECODE_MS || '1000', '--stream-partial-tail-sec', env.CRISPASR_PARTIAL_TAIL_SEC || '6', '--stream-final-on-silence-ms', env.END_SILENCE_MS || '500', '--stream-final-mode', env.CRISPASR_FINAL_MODE || 'prefix', '-t', env.CRISPASR_THREADS || env.LOCAL_THREADS || '12'];
+  return ['--backend', 'moonshine-streaming', '-m', config.moonshineModel, '--cache-dir', path.dirname(config.moonshineTokenizer), '--stream', '--stream-json', '--vad', '--vad-model', config.vadModel, '--stream-step', env.CRISPASR_STREAM_STEP_MS || '500', '--stream-length', env.CRISPASR_STREAM_LENGTH_MS || '4000', '--stream-partial-decode-ms', env.CRISPASR_PARTIAL_DECODE_MS || '4000', '--stream-partial-tail-sec', env.CRISPASR_PARTIAL_TAIL_SEC || '4', '--stream-final-on-silence-ms', env.END_SILENCE_MS || '800', '--stream-final-mode', env.CRISPASR_FINAL_MODE || 'redecode', '-t', env.CRISPASR_THREADS || env.LOCAL_THREADS || localThreadDefault(12)];
 }
 
-export function parseVoiceResponse(value) {
-  const raw = String(value || '').trim();
-  const match = raw.match(/^(SAY|ACTION)\s*:\s*([\s\S]*)$/i);
-  if (!match) return { route: 'say', text: raw || 'Okay.' };
-  return { route: match[1].toLowerCase(), text: match[2].trim() || 'Okay.' };
+export function createPcmWriter(stream, onError, { maxBytes = 32000 * 8, stallMs = 8000 } = {}) {
+  const queue = [];
+  let queuedBytes = 0;
+  let blocked = stream.writableNeedDrain;
+  let disposed = false;
+  let timer;
+  function dispose() {
+    disposed = true;
+    clearTimeout(timer);
+    queue.length = 0;
+    queuedBytes = 0;
+    stream.off('drain', drain);
+    stream.off('error', pipeError);
+    stream.off('close', pipeError);
+  }
+  function fail(message) {
+    if (disposed) return;
+    dispose();
+    onError(message);
+  }
+  function pipeError() { fail('CrispASR input pipe closed'); }
+  function pump() {
+    if (disposed) return;
+    try {
+      while (!blocked && queue.length) {
+        const chunk = queue.shift();
+        queuedBytes -= chunk.length;
+        blocked = !stream.write(chunk);
+      }
+    } catch { return pipeError(); }
+    if (blocked && !timer) {
+      timer = setTimeout(() => fail('Speech recognition input stalled. Reconnect voice to retry.'), stallMs);
+      timer.unref?.();
+    }
+  }
+  function drain() {
+    clearTimeout(timer);
+    timer = undefined;
+    blocked = false;
+    pump();
+  }
+  stream.on('drain', drain);
+  stream.on('error', pipeError);
+  stream.on('close', pipeError);
+  return {
+    write(chunk) {
+      if (disposed) return;
+      if (!stream.writable) return pipeError();
+      if (queuedBytes + stream.writableLength + chunk.length > maxBytes) {
+        return fail('Speech recognition input exceeded its buffer. Reconnect voice to retry.');
+      }
+      queue.push(chunk);
+      queuedBytes += chunk.length;
+      pump();
+    },
+    dispose,
+  };
 }
 
 export function drainVoiceText(value, final = false) {
@@ -223,11 +276,6 @@ export function isVoiceResponsePlayable(response) {
   return response?.audioSent === true && response?.synthesisFailed !== true;
 }
 
-export function retryPlaybackAction(action) {
-  if (!action || (action.playbackRetries || 0) >= 1) return null;
-  return { ...action, playbackRetries: (action.playbackRetries || 0) + 1 };
-}
-
 function spokenSummary(value) {
   const clean = String(value || '')
     .replace(/```[\s\S]*?```/g, ' ')
@@ -255,33 +303,26 @@ export async function createLocalVoice({ send, callTool, provider = 'local', mod
   let activePhrase;
   let activePhraseTimer;
   let lastSpeechAt = 0;
-  let sttBackpressured = false;
-  let reportedBackpressure = false;
-  let plannerRunning = false;
+  let pcmWriter;
   const phrases = [];
   const messages = [];
   const finalized = new Set();
   const readers = [];
   const responses = new Map();
-  const actionQueue = [];
-  const pendingActions = new Map();
-  const plannerControllers = new Set();
   const announcementQueue = [];
   const acceptedNotifications = new Set();
   const announcementTimer = setInterval(() => pumpAnnouncements(), 250);
   announcementTimer.unref();
   const close = () => {
     closed = true;
+    pcmWriter?.dispose();
     controller?.abort();
-    for (const plannerController of plannerControllers) plannerController.abort();
     clearInterval(announcementTimer);
     phrases.length = 0;
-    actionQueue.length = 0;
     announcementQueue.length = 0;
     clearTimeout(activePhraseTimer);
     for (const response of responses.values()) clearTimeout(response.playbackTimer);
     responses.clear();
-    pendingActions.clear();
     readers.forEach(reader => reader.close());
     if (ttsReader && ttsLineHandler) ttsReader.off('line', ttsLineHandler);
     if (tts && ttsExitHandler) tts.off('exit', ttsExitHandler);
@@ -301,7 +342,6 @@ export async function createLocalVoice({ send, callTool, provider = 'local', mod
       if (response.token !== interruptedToken) continue;
       if (response.announcement) announcementQueue.unshift({ ...response.announcement, transcript: false });
       clearTimeout(response.playbackTimer);
-      pendingActions.delete(responseId);
       responses.delete(responseId);
     }
     if (hadActivity) send({ type: 'interrupted' });
@@ -330,16 +370,15 @@ export async function createLocalVoice({ send, callTool, provider = 'local', mod
     response.playbackTimer = setTimeout(() => {
       if (!responses.has(responseId)) return;
       responses.delete(responseId);
-      pendingActions.delete(responseId);
-      send({ type: 'error', message: 'Audio playback did not finish. The pending action was not started.' });
+      send({ type: 'error', message: 'Audio playback did not finish.' });
       send({ type: 'state', state: 'listening' });
       pumpAnnouncements();
     }, 30000);
     response.playbackTimer.unref();
   }
-  function queueAnnouncement(text, { transcript = false, notificationId, action } = {}) {
+  function queueAnnouncement(text, { transcript = false, notificationId } = {}) {
     if (closed) return;
-    announcementQueue.push({ text: spokenSummary(text), transcript, notificationId, action });
+    announcementQueue.push({ text: spokenSummary(text), transcript, notificationId });
     pumpAnnouncements();
   }
   function pumpAnnouncements() {
@@ -349,44 +388,10 @@ export async function createLocalVoice({ send, callTool, provider = 'local', mod
     const responseId = randomUUID();
     const token = turn;
     responses.set(responseId, { token, generationDone: true, ended: false, audioSent: false, synthesisFailed: false, announcement });
-    if (announcement.action) pendingActions.set(responseId, announcement.action);
     if (announcement.transcript) send({ type: 'transcript', role: 'assistant', text: announcement.text, partial: false });
     send({ type: 'state', state: 'speaking' });
     phrase(announcement.text, token, responseId);
     finishResponse(responseId);
-  }
-  function queueAction(action) {
-    if (actionQueue.length >= 8) {
-      queueAnnouncement('I could not queue another action yet. Please try again.', { transcript: true });
-      return;
-    }
-    actionQueue.push(action);
-    void pumpActions();
-  }
-  async function pumpActions() {
-    if (closed || plannerRunning || actionQueue.length === 0) return;
-    plannerRunning = true;
-    const action = actionQueue.shift();
-    const plannerController = new AbortController();
-    plannerControllers.add(plannerController);
-    let complete = '';
-    try {
-      for await (const event of streamReply({ provider, model, messages: action.context, callTool, signal: plannerController.signal, requestId: `${sessionId}:action:${action.id}`, env })) {
-        if (closed || plannerController.signal.aborted) return;
-        if (event.type === 'text') complete += event.text;
-        else if (event.type === 'tool') send(event);
-      }
-      queueAnnouncement(complete || 'The action finished.', { transcript: true });
-    } catch (error) {
-      if (!closed && !plannerController.signal.aborted) {
-        send({ type: 'error', message: `Background action failed: ${error.message}` });
-        queueAnnouncement('I could not complete that action.', { transcript: true });
-      }
-    } finally {
-      plannerControllers.delete(plannerController);
-      plannerRunning = false;
-      if (!closed) void pumpActions();
-    }
   }
   async function reply(text) {
     interrupt();
@@ -397,8 +402,6 @@ export async function createLocalVoice({ send, callTool, provider = 'local', mod
     generating = true;
     messages.push({ role: 'user', content: text });
     messages.splice(0, Math.max(0, messages.length - 12));
-    let raw = '';
-    let streamRoute;
     let transcriptText = '';
     let speechBuffer = '';
     responses.set(responseId, { token, generationDone: false, ended: false, audioSent: false, synthesisFailed: false });
@@ -409,35 +412,21 @@ export async function createLocalVoice({ send, callTool, provider = 'local', mod
     };
     send({ type: 'state', state: 'thinking' });
     try {
-      for await (const event of streamReply({ provider, model, messages, signal, requestId: `${sessionId}:${token}`, env, profile: 'voice-fast' })) {
+      for await (const event of streamReply({ provider, model, messages, callTool, signal, requestId: `${sessionId}:${token}`, env, profile: 'voice' })) {
         if (closed || signal.aborted || turn !== token) return;
+        if (event.type === 'tool') send(event);
         if (event.type !== 'text') continue;
-        raw += event.text;
-        if (!streamRoute) {
-          const prefix = raw.match(/^\s*(SAY|ACTION)\s*:\s*/i);
-          if (prefix) {
-            streamRoute = prefix[1].toLowerCase();
-            transcriptText = raw.slice(prefix[0].length);
-            speechBuffer = transcriptText;
-          }
-        } else {
-          transcriptText += event.text;
-          speechBuffer += event.text;
-        }
-        if (streamRoute) {
-          flushSpeech(false);
-          if (transcriptText.trim()) send({ type: 'transcript', turnId: responseId, role: 'assistant', text: transcriptText.trim(), partial: true });
-        }
+        transcriptText += event.text;
+        speechBuffer += event.text;
+        flushSpeech(false);
+        if (transcriptText.trim()) send({ type: 'transcript', turnId: responseId, role: 'assistant', text: transcriptText.trim(), partial: true });
       }
       if (turn !== token || signal.aborted || closed) return;
-      const response = parseVoiceResponse(raw);
-      if (!streamRoute) speechBuffer = response.text;
       flushSpeech(true);
-      messages.push({ role: 'assistant', content: response.text });
+      messages.push({ role: 'assistant', content: transcriptText.trim() });
       messages.splice(0, Math.max(0, messages.length - 12));
       responses.get(responseId).generationDone = true;
-      if (response.route === 'action') pendingActions.set(responseId, { id: responseId, text, context: messages.slice(-6) });
-      send({ type: 'transcript', turnId: responseId, role: 'assistant', text: response.text, partial: false });
+      send({ type: 'transcript', turnId: responseId, role: 'assistant', text: transcriptText.trim(), partial: false });
       finishResponse(responseId);
     } catch (error) {
       if (!signal.aborted && !closed) {
@@ -490,8 +479,7 @@ export async function createLocalVoice({ send, callTool, provider = 'local', mod
     stt = sttRuntime.process;
     stt.on('error', error => fail(`CrispASR failed: ${error.message}`));
     stt.on('exit', code => { if (!closed) fail(`CrispASR exited (${code}): ${sttRuntime.diagnostic()}`); });
-    stt.stdin.on('error', () => fail('CrispASR input pipe closed'));
-    stt.stdin.on('drain', () => { sttBackpressured = false; });
+    pcmWriter = createPcmWriter(stt.stdin, fail);
     const transcription = sttRuntime.transcription;
     readers.push(transcription);
     transcription.on('line', line => {
@@ -517,28 +505,15 @@ export async function createLocalVoice({ send, callTool, provider = 'local', mod
     return {
       audio(base64) {
         if (closed) return;
-        if (sttBackpressured) {
-          if (!reportedBackpressure) send({ type: 'error', message: 'Speech recognition briefly fell behind; keep speaking and it will recover.' });
-          reportedBackpressure = true;
-          return;
-        }
-        sttBackpressured = !stt.stdin.write(Buffer.from(base64, 'base64'));
+        pcmWriter.write(Buffer.from(base64, 'base64'));
       },
-      commit() { if (!closed) stt.stdin.write(Buffer.alloc(32000 * 2)); },
+      commit() { if (!closed) pcmWriter.write(Buffer.alloc(32000 * 2)); },
       interrupt,
-      playbackDone(responseId, outcome) {
+      playbackDone(responseId) {
         const response = responses.get(responseId);
         if (!response?.ended) return;
         clearTimeout(response.playbackTimer);
         responses.delete(responseId);
-        const action = pendingActions.get(responseId);
-        pendingActions.delete(responseId);
-        if (outcome === 'played' && action) queueAction(action);
-        if (outcome === 'failed' && action) {
-          const retry = retryPlaybackAction(action);
-          if (retry) queueAnnouncement('I will try that now.', { transcript: true, action: retry });
-          else send({ type: 'error', message: 'The action was not started because acknowledgement audio failed twice.' });
-        }
         send({ type: 'state', state: 'listening' });
         pumpAnnouncements();
       },

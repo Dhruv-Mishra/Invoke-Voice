@@ -10,7 +10,7 @@ export function formatSetupBytes(value) {
 export { formatSetupBytes as setupBytes };
 
 export const SETUP_ELEMENT_NAMES = [
-  'status', 'message', 'error', 'chat-status', 'voice-status',
+  'status', 'message', 'warning', 'error', 'chat-status', 'voice-status',
   'progress-region', 'progress', 'progress-label', 'platform',
   'cache', 'runtime', 'components', 'consent', 'consent-label',
   'install-btn', 'install-label', 'refresh-btn', 'log-details', 'log',
@@ -28,6 +28,7 @@ export function createLocalSetupController({
   refreshConfig = async () => true,
   activateView = () => {},
   isSetupVisible,
+  isLocalRoute,
 } = {}) {
   const fetchFn = fetch;
   const clearTimeoutFn = win?.clearTimeout ? win.clearTimeout.bind(win) : globalThis.clearTimeout;
@@ -39,8 +40,10 @@ export function createLocalSetupController({
   );
   const localSetupPrompt = elements.localSetupPrompt || doc?.getElementById?.('local-setup-prompt');
   const localSetupStart = elements.localSetupStart || doc?.getElementById?.('local-setup-start');
+  const localSetupStartLabel = elements.localSetupStartLabel || doc?.getElementById?.('local-setup-start-label');
   const localSetupProvider = elements.localSetupProvider || doc?.getElementById?.('local-setup-provider');
   const localSetupPromptClose = elements.localSetupPromptClose || doc?.getElementById?.('local-setup-prompt-close');
+  const localSetupPromptWarning = elements.localSetupPromptWarning || doc?.getElementById?.('local-setup-prompt-warning');
   const localSetupSection = elements.localSetupSection || doc?.getElementById?.('local-setup');
   const configSection = elements.configSection || doc?.getElementById?.('config-section');
 
@@ -49,6 +52,7 @@ export function createLocalSetupController({
   let setupPoll = null;
   let setupHttpError = '';
   let setupConsentFocusPending = false;
+  let hardwareWarningPrompted = false;
 
   function isVisible() {
     if (typeof isSetupVisible === 'function') return isSetupVisible();
@@ -83,6 +87,22 @@ export function createLocalSetupController({
     if (setupElements.error) {
       setupElements.error.textContent = setupHttpError || (snapshot?.error ? `${chatReady ? 'Local chat is ready. Voice setup needs attention: ' : ''}${snapshot.error}` : '');
       setupElements.error.hidden = !setupElements.error.textContent;
+    }
+
+    if (setupElements.warning) {
+      const warningText = snapshot?.hardware?.warning || '';
+      setupElements.warning.textContent = warningText;
+      setupElements.warning.hidden = !warningText;
+    }
+
+    if (localSetupPromptWarning) {
+      const warningText = snapshot?.hardware?.warning || '';
+      localSetupPromptWarning.textContent = warningText;
+      localSetupPromptWarning.hidden = !warningText;
+    }
+
+    if (localSetupStartLabel) {
+      localSetupStartLabel.textContent = ready ? 'Continue local' : 'Set up local';
     }
 
     for (const [name, capability] of [['chat-status', snapshot?.capabilities?.chat], ['voice-status', snapshot?.capabilities?.voice]]) {
@@ -260,6 +280,7 @@ export function createLocalSetupController({
     const ackPromise = acknowledgePrompt();
     localSetupPrompt?.close?.();
     if (!destination) return ackPromise;
+    if (destination === 'local' && setupSnapshot?.status === 'ready') return ackPromise;
     if (destination === 'local') setupConsentFocusPending = true;
     activateView('settings');
     const scheduleFrame = win?.requestAnimationFrame || (cb => setTimeout(cb, 0));
@@ -276,6 +297,30 @@ export function createLocalSetupController({
     return ackPromise;
   }
 
+  function isLocalRouteSelected() {
+    if (typeof isLocalRoute === 'function') return isLocalRoute();
+    const providerElem = elements.providerSelect || doc?.getElementById?.('provider-select');
+    const voiceModeElem = elements.voiceModeSelect || doc?.getElementById?.('voice-mode-select');
+    if (providerElem?.value) {
+      if (providerElem.value === 'local') return true;
+      if (voiceModeElem?.value === 'local') return true;
+      return false;
+    }
+    const config = getAppConfig?.();
+    if (config?.defaults?.provider) {
+      return config.defaults.provider === 'local' || config.defaults.voiceMode === 'local';
+    }
+    if (Array.isArray(config?.providers) && config.providers.length > 0) {
+      const hasLocal = config.providers.some(p => p.id === 'local');
+      const hasConfiguredCloud = config.providers.some(p => p.id !== 'local' && p.configured);
+      if (!hasLocal) return false;
+      if (hasConfiguredCloud && !config.providers.find(p => p.id === 'local')?.configured) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   async function initialize() {
     try {
       const response = await fetchFn('/api/setup', { cache: 'no-store' });
@@ -283,7 +328,13 @@ export function createLocalSetupController({
         setupSnapshot = await response.json();
         renderSetup();
         const settings = getAppState?.()?.settings;
-        if (settings?.localSetupPrompted !== true && setupSnapshot?.status !== 'ready') {
+        const unpromptedOnboarding = settings?.localSetupPrompted !== true && setupSnapshot?.status !== 'ready';
+        const hasHardwareWarning = Boolean(setupSnapshot?.hardware?.warning);
+        const shouldWarnHardware = hasHardwareWarning && !hardwareWarningPrompted && isLocalRouteSelected();
+        if (shouldWarnHardware) {
+          hardwareWarningPrompted = true;
+          localSetupPrompt?.showModal?.();
+        } else if (unpromptedOnboarding) {
           localSetupPrompt?.showModal?.();
         }
         return setupSnapshot;

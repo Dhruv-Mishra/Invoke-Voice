@@ -1,15 +1,115 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocket } from 'ws';
-import { parseStartupArgs } from '../scripts/start.mjs';
+import { ensureLocalLLM, localLlmArguments, parseStartupArgs } from '../scripts/start.mjs';
+import { createRuntimeConfig, localThreadDefault } from '../src/runtime-config.mjs';
+import { voiceInstructions } from '../src/llm.mjs';
+import { tools } from '../src/supervisor/contract.mjs';
 import { startSupervisor } from '../src/server.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
+
+test('local runtime defaults match displayed settings and honor explicit overrides', () => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-runtime-defaults-'));
+  try {
+    const defaults = Object.fromEntries(createRuntimeConfig({ dataDir, env: {} }).snapshot().fields.map(field => [field.key, field.value]));
+    const paths = { ling: 'ling.gguf' };
+    const url = new URL('http://127.0.0.1:43210/v1');
+    const args = localLlmArguments(paths, url, {});
+    const value = flag => args[args.indexOf(flag) + 1];
+    assert.equal(value('--ctx-size'), '4096');
+    assert.equal(value('--parallel'), '1');
+    assert.equal(value('--threads'), localThreadDefault(8));
+    assert.equal(value('--threads-batch'), value('--threads'));
+    assert.equal(defaults.LLAMA_CONTEXT, value('--ctx-size'));
+    assert.equal(defaults.LLAMA_PARALLEL, value('--parallel'));
+    assert.equal(defaults.LLAMA_THREADS, value('--threads'));
+    assert.equal(defaults.CRISPASR_THREADS, localThreadDefault(12));
+    for (const [key, flag] of [['LLAMA_GPU_LAYERS', '--gpu-layers'], ['LLAMA_FLASH_ATTN', '--flash-attn'], ['LLAMA_CACHE_TYPE_K', '--cache-type-k'], ['LLAMA_CACHE_TYPE_V', '--cache-type-v']]) {
+      assert.equal(defaults[key], value(flag));
+    }
+    const legacy = createRuntimeConfig({ dataDir, env: { LOCAL_THREADS: '2' } }).snapshot().fields;
+    assert.equal(legacy.find(field => field.key === 'CRISPASR_THREADS').value, '2');
+    assert.equal(localThreadDefault(8, 1), '1');
+    assert.equal(localThreadDefault(8, 4), '3');
+    assert.equal(localThreadDefault(8, 32), '8');
+    assert.equal(localThreadDefault(4, 32), '4');
+    const explicit = localLlmArguments(paths, url, { LLAMA_THREADS: '12', LLAMA_CONTEXT: '8192', LLAMA_PARALLEL: '2', LLAMA_GPU_LAYERS: '0', LLAMA_FLASH_ATTN: 'off', LLAMA_CACHE_TYPE_K: 'q8_0', LLAMA_CACHE_TYPE_V: 'q8_0' });
+    assert.equal(explicit[explicit.indexOf('--threads') + 1], '12');
+    assert.equal(explicit[explicit.indexOf('--ctx-size') + 1], '8192');
+    assert.equal(explicit[explicit.indexOf('--parallel') + 1], '2');
+    assert.equal(explicit[explicit.indexOf('--gpu-layers') + 1], '0');
+    assert.equal(explicit[explicit.indexOf('--flash-attn') + 1], 'off');
+    assert.equal(explicit[explicit.indexOf('--cache-type-k') + 1], 'q8_0');
+    assert.equal(explicit[explicit.indexOf('--cache-type-v') + 1], 'q8_0');
+    const env = {};
+    const config = createRuntimeConfig({ dataDir, env });
+    for (const values of [{ LLAMA_GPU_LAYERS: '-1' }, { LLAMA_GPU_LAYERS: 'all' }, { LLAMA_FLASH_ATTN: 'invalid' }, { LLAMA_CACHE_TYPE_V: 'unknown' }]) {
+      assert.throws(() => config.update({ values }), /unsupported|must be/);
+    }
+    const values = { LLAMA_GPU_LAYERS: '24', LLAMA_CACHE_TYPE_K: 'q8_0', LLAMA_CACHE_TYPE_V: 'f16', LLAMA_FLASH_ATTN: 'on' };
+    const changed = config.update({ values });
+    for (const key of Object.keys(values)) {
+      assert.equal(env[key], undefined);
+      assert.equal(changed.fields.find(field => field.key === key).pendingRestart, true);
+    }
+    createRuntimeConfig({ dataDir, env });
+    for (const [key, value] of Object.entries(values)) assert.equal(env[key], value);
+  } finally {
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('local warmup caches the real tool prefix and accepts bounded completions without visible text', async () => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-runtime-warm-'));
+  const modelPath = path.join(dataDir, 'fixture.gguf');
+  writeFileSync(modelPath, 'fixture');
+  const requests = [];
+  let healthChecks = 0;
+  let result = { choices: [{ message: { role: 'assistant', content: '' }, finish_reason: 'length' }] };
+  const server = http.createServer(async (request, response) => {
+    response.setHeader('Content-Type', 'application/json');
+    if (request.url === '/health') {
+      healthChecks += 1;
+      response.end('{}');
+      return;
+    }
+    let body = '';
+    for await (const chunk of request) body += chunk;
+    requests.push(JSON.parse(body));
+    response.end(JSON.stringify(result));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const url = `http://127.0.0.1:${server.address().port}/v1`;
+  const env = { LOCAL_LLM_PATH: modelPath, LOCAL_LLM_URL: url };
+  try {
+    const runtime = await ensureLocalLLM({ env, requireWarm: true });
+    assert.equal(runtime.owned, false);
+    assert.equal(runtime.llama, null);
+    assert.equal(healthChecks, 2);
+    assert.deepEqual(requests[0].messages[0], { role: 'system', content: voiceInstructions });
+    assert.deepEqual(requests[0].tools, tools);
+    assert.equal(requests[0].tool_choice, 'auto');
+    assert.equal(requests[0].cache_prompt, true);
+    assert.equal(requests[0].max_tokens, 1);
+    const checked = await ensureLocalLLM({ env, checkOnly: true });
+    assert.equal(checked.checked, true);
+    assert.equal(checked.text, '');
+    result = { choices: [] };
+    await assert.rejects(ensureLocalLLM({ env, requireWarm: true }), /invalid completion/);
+    await assert.rejects(ensureLocalLLM({ env, checkOnly: true }), /invalid completion/);
+    assert.equal(server.listening, true);
+    assert.equal(env.LOCAL_LLM_URL, url);
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
 
 test('parseStartupArgs supports intuitive debug, release, local, and port flags', () => {
   // Defaults

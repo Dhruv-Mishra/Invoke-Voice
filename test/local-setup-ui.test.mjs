@@ -416,3 +416,235 @@ test('createLocalSetupController renders error badges, retry labels, and handles
 
   controller.destroy();
 });
+
+test('createLocalSetupController displays hardware advisory in setup view and prompts on initialize when local route is selected', async () => {
+  function makeMockElement(tagName = 'div') {
+    const children = [];
+    const attributes = new Map();
+    const listeners = new Map();
+    const element = {
+      tagName: tagName.toUpperCase(),
+      children,
+      textContent: '',
+      className: '',
+      id: '',
+      name: '',
+      value: '',
+      disabled: false,
+      checked: false,
+      hidden: false,
+      open: false,
+      dataset: {},
+      appendChild(child) {
+        children.push(child);
+        child.parentElement = element;
+        return child;
+      },
+      append(...nodes) {
+        for (const n of nodes) this.appendChild(n);
+      },
+      replaceChildren(...nodes) {
+        children.length = 0;
+        for (const n of nodes) this.appendChild(n);
+      },
+      setAttribute(k, v) { attributes.set(k, String(v)); },
+      getAttribute(k) { return attributes.get(k); },
+      removeAttribute(k) { attributes.delete(k); },
+      hasAttribute(k) { return attributes.has(k); },
+      addEventListener(event, fn) {
+        if (!listeners.has(event)) listeners.set(event, []);
+        listeners.get(event).push(fn);
+      },
+      removeEventListener(event, fn) {
+        if (listeners.has(event)) {
+          listeners.set(event, listeners.get(event).filter(f => f !== fn));
+        }
+      },
+      async dispatch(event, payload = {}) {
+        for (const fn of [...(listeners.get(event) || [])]) {
+          await fn({ preventDefault: () => {}, ...payload });
+        }
+      },
+      showModal() { element.open = true; },
+      close() { element.open = false; },
+      focus() {},
+      scrollIntoView() {},
+      querySelector() { return null; },
+      contains() { return false; },
+      get firstChild() { return children[0] || null; },
+      removeChild(child) {
+        const index = children.indexOf(child);
+        if (index >= 0) children.splice(index, 1);
+        return child;
+      },
+    };
+    return element;
+  }
+
+  const elements = {};
+  for (const name of SETUP_ELEMENT_NAMES) {
+    elements[name] = makeMockElement(name === 'progress' ? 'progress' : name === 'components' ? 'ul' : 'div');
+    elements[name].id = `setup-${name}`;
+  }
+  const prompt = makeMockElement('dialog');
+  prompt.id = 'local-setup-prompt';
+  const promptStart = makeMockElement('button');
+  promptStart.id = 'local-setup-start';
+  const promptStartLabel = makeMockElement('span');
+  promptStartLabel.id = 'local-setup-start-label';
+  promptStart.appendChild(promptStartLabel);
+  const promptWarning = makeMockElement('p');
+  promptWarning.id = 'local-setup-prompt-warning';
+  const providerSelect = makeMockElement('select');
+  providerSelect.id = 'provider-select';
+  providerSelect.value = 'local';
+  const voiceModeSelect = makeMockElement('select');
+  voiceModeSelect.id = 'voice-mode-select';
+  voiceModeSelect.value = 'local';
+  const viewDialog = makeMockElement('dialog');
+  viewDialog.open = true;
+
+  const mockDoc = {
+    activeElement: null,
+    hidden: false,
+    body: { dataset: { view: 'settings' } },
+    createElement: tag => makeMockElement(tag),
+    getElementById: id => {
+      if (id === 'local-setup-prompt') return prompt;
+      if (id === 'local-setup-start') return promptStart;
+      if (id === 'local-setup-start-label') return promptStartLabel;
+      if (id === 'local-setup-prompt-warning') return promptWarning;
+      if (id === 'provider-select') return providerSelect;
+      if (id === 'voice-mode-select') return voiceModeSelect;
+      if (id === 'view-dialog') return viewDialog;
+      if (id.startsWith('setup-')) return elements[id.replace('setup-', '')];
+      return null;
+    },
+    addEventListener() {},
+    removeEventListener() {},
+  };
+
+  const appState = {
+    settings: { localSetupPrompted: true },
+  };
+  const appConfig = {
+    defaults: { provider: 'local', voiceMode: 'local' },
+    providers: [{ id: 'local', configured: true }],
+  };
+
+  const lowSpecResponse = {
+    status: 'ready',
+    supported: true,
+    capabilities: {
+      chat: { ready: true, message: 'Chat ready' },
+      voice: { ready: true, message: 'Voice ready' },
+    },
+    components: [],
+    progress: { received: 0, total: 0 },
+    hardware: {
+      logicalCpus: 2,
+      memoryGiB: 8,
+      warning: 'Local AI models run best with at least 16 GB of system memory and 4 CPU cores.',
+    },
+    log: [],
+  };
+
+  const controller = createLocalSetupController({
+    document: mockDoc,
+    window: {
+      requestAnimationFrame: cb => cb(),
+      clearTimeout: () => {},
+      setTimeout: () => {},
+      addEventListener() {},
+      removeEventListener() {},
+    },
+    fetch: async url => {
+      if (url === '/api/setup') {
+        return { ok: true, status: 200, json: async () => lowSpecResponse };
+      }
+      if (url === '/api/settings') {
+        return { ok: true, status: 200, json: async () => appState.settings };
+      }
+      throw new Error(`Unexpected url: ${url}`);
+    },
+    elements: {
+      ...elements,
+      localSetupPrompt: prompt,
+      localSetupStart: promptStart,
+      localSetupStartLabel: promptStartLabel,
+      localSetupPromptWarning: promptWarning,
+      providerSelect,
+      voiceModeSelect,
+    },
+    viewDialog,
+    getAppState: () => appState,
+    getAppConfig: () => appConfig,
+  });
+
+  // 1. On initialize, even though status is 'ready' and localSetupPrompted is true,
+  // hardware warning shows modal dialog because local route is selected
+  await controller.initialize();
+  assert.equal(prompt.open, true);
+  assert.equal(promptWarning.textContent, lowSpecResponse.hardware.warning);
+  assert.equal(promptWarning.hidden, false);
+  assert.equal(elements.warning.textContent, lowSpecResponse.hardware.warning);
+  assert.equal(elements.warning.hidden, false);
+  assert.equal(promptStartLabel.textContent, 'Continue local');
+
+  // 2. User closes prompt; refresh request does NOT re-show modal dialog
+  prompt.close();
+  assert.equal(prompt.open, false);
+  await elements['refresh-btn'].dispatch('click');
+  assert.equal(prompt.open, false);
+
+  // 3. Subsequent initialize in same session does NOT re-show modal dialog
+  await controller.initialize();
+  assert.equal(prompt.open, false);
+
+  controller.destroy();
+
+  // 4. Cloud route does NOT show hardware warning prompt on initialize
+  prompt.open = false;
+  providerSelect.value = 'openai';
+  voiceModeSelect.value = 'openai-realtime';
+  const cloudConfig = {
+    defaults: { provider: 'openai', voiceMode: 'openai-realtime' },
+    providers: [{ id: 'openai', configured: true }],
+  };
+  const cloudController = createLocalSetupController({
+    document: mockDoc,
+    window: {
+      requestAnimationFrame: cb => cb(),
+      clearTimeout: () => {},
+      setTimeout: () => {},
+      addEventListener() {},
+      removeEventListener() {},
+    },
+    fetch: async url => {
+      if (url === '/api/setup') {
+        return { ok: true, status: 200, json: async () => lowSpecResponse };
+      }
+      throw new Error(`Unexpected url: ${url}`);
+    },
+    elements: {
+      ...elements,
+      localSetupPrompt: prompt,
+      localSetupStart: promptStart,
+      localSetupStartLabel: promptStartLabel,
+      localSetupPromptWarning: promptWarning,
+      providerSelect,
+      voiceModeSelect,
+    },
+    viewDialog,
+    getAppState: () => ({ settings: { localSetupPrompted: true } }),
+    getAppConfig: () => cloudConfig,
+  });
+
+  await cloudController.initialize();
+  assert.equal(prompt.open, false);
+  // But setup view in settings still reflects the hardware warning when rendered
+  assert.equal(elements.warning.textContent, lowSpecResponse.hardware.warning);
+  assert.equal(elements.warning.hidden, false);
+
+  cloudController.destroy();
+});

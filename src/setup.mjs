@@ -1,9 +1,23 @@
-export function createSetup({ platform = process.platform, arch = process.arch, cacheDir, runtimeDir, inspect, install, activate, getCapabilities }) {
+import os from 'node:os';
+
+export function createSetup({ platform = process.platform, arch = process.arch, cacheDir, runtimeDir, inspect, install, activate, getCapabilities, inspectHardware = () => ({ logicalCpus: os.availableParallelism(), memoryGiB: Number((os.totalmem() / 1024 ** 3).toFixed(1)) }) }) {
   const supported = platform === 'win32' && arch === 'x64';
   let state = { status: 'idle', stage: 'consent', message: 'Local setup requires your permission. No downloads have started.' };
   let job;
   let controller;
   const log = [];
+
+  const getHardwareSnapshot = () => {
+    const { logicalCpus, memoryGiB } = inspectHardware();
+    let warning = null;
+    if (!supported) {
+      warning = 'Automatic local AI setup requires Windows x64.';
+    } else if (logicalCpus < 4 || memoryGiB < 16) {
+      warning = 'Local AI models run best with at least 16 GB of system memory and 4 CPU cores. On lower-spec hardware, speech recognition and voice responses may be delayed.';
+    }
+    return { logicalCpus, memoryGiB, warning };
+  };
+
   const defaultCapabilities = () => {
     if (state.status === 'ready') {
       return {
@@ -36,6 +50,7 @@ export function createSetup({ platform = process.platform, arch = process.arch, 
     ...state,
     capabilities: getCapabilities ? getCapabilities({ state, supported }) : defaultCapabilities(),
     components: inspect(),
+    hardware: getHardwareSnapshot(),
     log: [...log],
   });
   const report = ({ stage, message, progress }) => {

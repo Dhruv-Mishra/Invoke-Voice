@@ -459,10 +459,11 @@
 <body data-view="home">
   <dialog id="local-setup-prompt" aria-labelledby="local-setup-prompt-title">
     <div class="dialog-header"><span id="local-setup-prompt-title">Choose how to run AI</span><button type="button" class="btn btn-icon" id="local-setup-prompt-close" aria-label="Decide later" title="Decide later"><i data-lucide="x"></i></button></div>
-    <p>Local setup downloads the private chat and voice components to this device. You can also configure an existing provider.</p>
+    <p id="local-setup-prompt-desc">Local setup downloads the private chat and voice components to this device. You can also configure an existing provider.</p>
+    <p id="local-setup-prompt-warning" class="setup-warning" role="status" hidden></p>
     <div class="dialog-actions onboarding-actions">
       <button class="btn" type="button" id="local-setup-provider"><i data-lucide="key-round"></i>Configure provider</button>
-      <button class="btn btn-accent" type="button" id="local-setup-start"><i data-lucide="hard-drive-download"></i>Set up local</button>
+      <button class="btn btn-accent" type="button" id="local-setup-start"><i data-lucide="hard-drive-download"></i><span id="local-setup-start-label">Set up local</span></button>
     </div>
   </dialog>
   <header class="top-bar">
@@ -643,6 +644,7 @@
         <div class="setup-heading"><h2 class="settings-section-title" id="setup-title"><i data-lucide="hard-drive-download" aria-hidden="true"></i>Local voice</h2><span class="badge" id="setup-status">Not checked</span></div>
         <p class="setup-estimate">Approximately 5-6 GB of downloads, plus Python dependencies. Allow at least 12 GB of free disk space for the persistent cache and installed runtimes; Python dependencies may require more.</p>
         <p id="setup-message" role="status" aria-live="polite">Setup status is available when Settings is open.</p>
+        <p id="setup-warning" class="setup-warning" role="status" hidden></p>
         <p id="setup-error" role="alert" hidden></p>
         <ul class="setup-capabilities" aria-label="Local capability readiness">
           <li><span>Local chat</span><strong id="setup-chat-status">Not ready</strong></li>

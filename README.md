@@ -74,7 +74,7 @@ The unified startup flow (`scripts/start.mjs`) handles lifecycle, modes, and cle
 | `npm run local` | Release + Local | Starts or connects to `llama-server` for Ling, then launches supervisor. |
 | `npm start -local` | Release + Local | Starts unified supervisor with local voice stack. |
 | `npm start -debug -local` | Debug + Local | Vite live middleware with local `llama-server` and speech stack. |
-| `npm run local:check` | Local Check | Validates Ling local LLM generation (`READY`) and exits. |
+| `npm run local:check` | Local Check | Checks the tool-capable prompt, completion structure and runtime health, then exits. |
 | `--port <num>`, `-p <num>` | Any | Binds to custom port (defaults to `PORT` env or 4317). |
 | `--build` | Release | Forces frontend rebuild even if `dist/index.html` already exists. |
 
@@ -134,7 +134,33 @@ Check Ling, then start local llama.cpp and the supervisor:
 npm run local:check
 npm run local
 ```
-After provisioning, `local:check` proves only that Ling returns text. `local` starts or reuses a loopback llama.cpp server, then starts the supervisor. CrispASR 0.8.32 requires canonical Moonshine Small Q4_K; the known Q8_0 override falls back to sibling or cached Q4_K when available, and `/api/config` preserves requested/effective paths.
+After provisioning, `local:check` warms the real voice/tool prefix and checks response structure and runtime health; it does not prove correct tool selection. `local` starts or reuses a loopback llama.cpp server, then starts the supervisor. CrispASR 0.8.32 requires canonical Moonshine Small Q4_K; the known Q8_0 override falls back to sibling or cached Q4_K when available, and `/api/config` preserves requested/effective paths.
+
+### Local Performance
+
+Local voice now uses one tool-capable conversation, shared with text chat. There is no separate tool-less acknowledgement model or playback-gated background planner. Status questions can read current work directly, and completed answers remain in conversation history. Tool access still does not authorize starting or resuming work without an explicit request. Kokoro synthesis and playback ownership are unchanged.
+
+Ling defaults to one 4096-token slot, low-variance sampling, prompt reuse, automatic flash attention and a CPU-aware thread budget capped at eight. The sliding history budget includes tools, tool results and an output reserve, preserves complete tool exchanges and rejects oversized instructions instead of silently cutting them. Its token estimate is heuristic, not an exact tokenizer count. A smaller allocated context mainly reduces KV memory; prefill speed depends on the actual prompt length, not simply the configured maximum. Increasing parallel slots shares the configured context across requests; increase total context too when concurrent chat and voice are necessary.
+
+STT keeps streaming PCM and VAD, but previews decode less frequently over a shorter rolling window. Final transcripts use full-utterance `redecode` instead of stitching preview prefixes. A bounded FIFO preserves microphone samples across brief pipe stalls; sustained overload ends the session with an actionable error rather than silently losing words. Turning off the `--stream` transport is not a supported optimization. Disabling captions alone does not reduce inference, and a partial-decode interval of zero increases decoding work.
+
+On a Threadripper PRO 5955WX, synthetic 3.49-second and 10.25-second clips measured approximately 10.5/65.4 seconds from speech end to final under the old settings and 5.2/9.5 seconds under the new portable defaults. Final fixture transcripts were correct with the new settings; old long results duplicated text. These are not laptop or microphone benchmarks, and remaining latency is substantial. The pinned backend's CPU audio frontend remains a bottleneck.
+
+The managed runtimes remain CPU-compatible. An optional SHA-verified optimized CrispASR build is available with `CRISPASR_CPU=avx2` followed by setup or `npm run models -- runtimes`; use it only when AVX2, FMA and F16C are supported. It lives separately from the legacy runtime. With the same fixtures it measured about 4.2/7.6 seconds, with run-to-run variation. Defaulting every machine to it would break older CPUs.
+
+For an independently installed, compatible GPU llama.cpp binary, set `LLAMA_SERVER_BIN`; `LLAMA_GPU_LAYERS=auto` permits its native backend to select offload. The bundled CPU binary cannot use a GPU. `LLAMA_FLASH_ATTN` and `LLAMA_CACHE_TYPE_K`/`LLAMA_CACHE_TYPE_V` are also exposed under Settings > Config. KV defaults stay `f16`; `q8_0` is an opt-in benchmark candidate, not a verified quality or speed improvement for this Ling file. No CUDA/Vulkan installer matrix or GPU migration of the already-fast TTS is added.
+
+Defaults apply after restarting owned runtimes. Existing saved settings and `.env` overrides are preserved, so remove or update old overrides to adopt the new values. Existing externally started servers keep their own configuration. Machines below four logical CPUs or approximately 16 GiB RAM receive a non-blocking local-setup advisory; meeting those thresholds does not guarantee real-time speech.
+
+Reproducible checks use only synthetic speech and synthetic read-only tool results, never actual tasks:
+
+```powershell
+node scripts/bench-local.mjs stt configured
+node scripts/bench-local.mjs stt baseline
+node scripts/bench-local.mjs llm
+```
+
+These checks need intact, installed model files and runtimes and never repair assets. The LLM benchmark compares the old configuration, 4K/f16, q8 keys, and q8 keys/values, including template rendering, task reads, a denial follow-up, empty results and tool errors. Validate on the target device before enabling optional acceleration or KV quantization.
 
 ## Hosted Providers
 

@@ -1,6 +1,11 @@
 import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { availableParallelism } from 'node:os';
 import { stackPaths } from '../scripts/models.mjs';
+
+export function localThreadDefault(cap, parallelism = availableParallelism()) {
+  return String(Math.max(1, Math.min(cap, parallelism - 1)));
+}
 
 const fields = Object.freeze([
   { key: 'DEFAULT_PROVIDER', label: 'Default text provider', group: 'Defaults', type: 'select', defaultValue: 'local', options: [['local', 'Local'], ['gemini', 'Gemini'], ['openai', 'OpenAI'], ['anthropic', 'Anthropic'], ['azure', 'Azure OpenAI'], ['custom', 'Custom']] },
@@ -28,10 +33,14 @@ const fields = Object.freeze([
   { key: 'COPILOT_CLI', label: 'Copilot CLI executable', group: 'Coding tools', type: 'text', defaultValue: 'copilot.exe' },
   { key: 'AGENCY_CLI', label: 'Agency executable', group: 'Coding tools', type: 'text', defaultValue: 'agency.exe' },
   { key: 'COPILOT_REASONING', label: 'Copilot reasoning effort', group: 'Coding tools', type: 'select', defaultValue: 'medium', options: [['low', 'Low'], ['medium', 'Medium'], ['high', 'High']] },
-  { key: 'LLAMA_THREADS', label: 'Ling threads', group: 'Local performance', type: 'number', defaultValue: '12', min: 1, max: 128, restartRequired: true },
-  { key: 'LLAMA_CONTEXT', label: 'Ling context size', group: 'Local performance', type: 'number', defaultValue: '8192', min: 1024, max: 131072, restartRequired: true },
-  { key: 'LLAMA_PARALLEL', label: 'Ling parallel slots', group: 'Local performance', type: 'number', defaultValue: '2', min: 1, max: 16, restartRequired: true },
-  { key: 'CRISPASR_THREADS', label: 'Speech recognition threads', group: 'Local performance', type: 'number', defaultValue: '12', min: 1, max: 128, restartRequired: true },
+  { key: 'LLAMA_THREADS', label: 'Ling threads', group: 'Local performance', type: 'number', defaultValue: localThreadDefault(8), min: 1, max: 128, restartRequired: true },
+  { key: 'LLAMA_CONTEXT', label: 'Ling context size', group: 'Local performance', type: 'number', defaultValue: '4096', min: 1024, max: 131072, restartRequired: true },
+  { key: 'LLAMA_PARALLEL', label: 'Ling parallel slots', group: 'Local performance', type: 'number', defaultValue: '1', min: 1, max: 16, restartRequired: true },
+  { key: 'LLAMA_GPU_LAYERS', label: 'Ling GPU layers (auto or 0-999; GPU build required)', group: 'Local performance', type: 'text', defaultValue: 'auto', restartRequired: true },
+  { key: 'LLAMA_FLASH_ATTN', label: 'Ling flash attention', group: 'Local performance', type: 'select', defaultValue: 'auto', options: [['auto', 'Automatic'], ['on', 'On'], ['off', 'Off']], restartRequired: true },
+  { key: 'LLAMA_CACHE_TYPE_K', label: 'Ling key cache type', group: 'Local performance', type: 'select', defaultValue: 'f16', options: [['f16', 'F16'], ['q8_0', 'Q8_0']], restartRequired: true },
+  { key: 'LLAMA_CACHE_TYPE_V', label: 'Ling value cache type', group: 'Local performance', type: 'select', defaultValue: 'f16', options: [['f16', 'F16'], ['q8_0', 'Q8_0']], restartRequired: true },
+  { key: 'CRISPASR_THREADS', label: 'Speech recognition threads', group: 'Local performance', type: 'number', defaultValue: localThreadDefault(12), min: 1, max: 128, restartRequired: true },
   { key: 'KOKORO_THREADS', label: 'Speech synthesis threads', group: 'Local performance', type: 'number', defaultValue: '8', min: 1, max: 128, restartRequired: true },
 ]);
 
@@ -41,6 +50,7 @@ function normalize(field, raw) {
   if (typeof raw !== 'string') throw new Error(`${field.label} must be text.`);
   const value = raw.trim();
   if (value.length > (field.secret ? 4096 : 500)) throw new Error(`${field.label} is too long.`);
+  if (field.key === 'LLAMA_GPU_LAYERS' && !/^(?:auto|\d{1,3})$/.test(value)) throw new Error(`${field.label} must be auto or an integer from 0 to 999.`);
   if (field.absolutePath && value && !path.isAbsolute(value)) throw new Error(`${field.label} must be an absolute executable path.`);
   if (field.type === 'select' && !field.options.some(([id]) => id === value)) throw new Error(`${field.label} has an unsupported value.`);
   if (field.type === 'number') {
@@ -113,7 +123,7 @@ export function createRuntimeConfig({ dataDir, env = process.env } = {}) {
       console.warn(`${warning} ${error.message}`);
     }
   }
-  const startupEnvironment = { ...env, PYTHON_BIN: stackPaths(env).pythonBase || '' };
+  const startupEnvironment = { ...env, CRISPASR_THREADS: env.CRISPASR_THREADS || env.LOCAL_THREADS || localThreadDefault(12), PYTHON_BIN: stackPaths(env).pythonBase || '' };
   startupValues = Object.fromEntries(fields.filter(field => field.restartRequired).map(field => [field.key, startupEnvironment[field.key]]));
   return {
     snapshot,

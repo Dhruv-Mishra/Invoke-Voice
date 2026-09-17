@@ -11,7 +11,7 @@ const anthropicTools = supervisorTools.map(tool => ({
 }));
 
 const allowedToolNames = new Set(supervisorTools.map(t => t.function?.name || t.name).filter(Boolean));
-export const voiceInstructions = 'Answer with exactly one brief spoken sentence. Prefix ACTION: when the request requires supervisor tools or future work; otherwise prefix SAY:. For ACTION, only acknowledge. Never expose IDs, tool names, JSON, API fields, or reasoning.';
+export const voiceInstructions = `${supervisorInstructions} Respond in brief, natural spoken sentences without markdown or routing prefixes.`;
 
 class ReasoningFilter {
   constructor() {
@@ -72,6 +72,51 @@ export function compactToolResult(result, limit = 6000) {
   const value = result ?? {};
   const serialized = JSON.stringify(value);
   if (serialized.length <= limit) return value;
+  const truth = Object.fromEntries(['taskId', 'id', 'state', 'status', 'stale', 'actions', 'error', 'duplicate', 'receipt', 'opened', 'invoked', 'deleted']
+    .filter(key => value[key] !== undefined)
+    .map(key => [key, value[key]]));
+  if (Array.isArray(value.tasks)) {
+    const compact = { ...truth, tasks: [], truncated: true };
+    for (const task of [...value.tasks].reverse()) {
+      const record = Object.fromEntries(['id', 'taskId', 'state', 'status', 'stale', 'actions', 'error', 'areaId', 'title']
+        .filter(key => task?.[key] !== undefined)
+        .map(key => [key, key === 'title' ? String(task[key]).slice(0, 80) : task[key]]));
+      compact.tasks.unshift(record);
+      if (JSON.stringify(compact).length > limit) {
+        delete record.title;
+        delete record.areaId;
+        if (JSON.stringify(compact).length > limit) {
+          if (compact.tasks.length > 1) compact.tasks.shift();
+          break;
+        }
+      }
+    }
+    if (value.defaultAreaId !== undefined) {
+      compact.defaultAreaId = value.defaultAreaId;
+      if (JSON.stringify(compact).length > limit) delete compact.defaultAreaId;
+    }
+    if (Array.isArray(value.areas)) {
+      compact.areas = [];
+      for (const area of value.areas) {
+        compact.areas.push({ id: area.id, name: String(area.name || '').slice(0, 80) });
+        if (JSON.stringify(compact).length > limit) { compact.areas.pop(); break; }
+      }
+      if (JSON.stringify(compact).length > limit) delete compact.areas;
+    }
+    return compact;
+  }
+  if (Object.keys(truth).length > 0) {
+    const compact = { ...truth, truncated: true };
+    for (const key of ['result', 'update', 'title', 'description']) {
+      if (value[key] === undefined) continue;
+      compact[key] = value[key];
+      while (String(compact[key]).length > 16 && JSON.stringify(compact).length > limit) {
+        compact[key] = String(compact[key]).slice(0, Math.floor(String(compact[key]).length / 2));
+      }
+      if (JSON.stringify(compact).length > limit) delete compact[key];
+    }
+    return compact;
+  }
   let preview = serialized.slice(0, Math.max(0, limit - 40));
   let compact = { preview, truncated: true };
   while (preview && JSON.stringify(compact).length > limit) {
@@ -96,7 +141,7 @@ function stableMutationId(baseRequestId, name, args) {
   return `${baseRequestId || 'req'}-${hash}`;
 }
 
-function prepareMessages(messages = [], { maxMessages = 12, maxChars = 16000 } = {}) {
+function prepareMessages(messages = [], { maxMessages = 12, maxChars = 16000, maxTextChars = 16000 } = {}) {
   const allowed = [];
   for (const m of messages || []) {
     if (!m || (m.role !== 'user' && m.role !== 'assistant')) continue;
@@ -111,7 +156,7 @@ function prepareMessages(messages = [], { maxMessages = 12, maxChars = 16000 } =
     } else if (typeof m.text === 'string') {
       text = m.text;
     }
-    allowed.push({ role: m.role, content: text.slice(0, 16000) });
+    allowed.push({ role: m.role, content: text.slice(0, maxTextChars) });
   }
 
   let slice = allowed.slice(-maxMessages);
@@ -121,6 +166,46 @@ function prepareMessages(messages = [], { maxMessages = 12, maxChars = 16000 } =
     totalChars = slice.reduce((sum, m) => sum + m.content.length, 0);
   }
   return slice;
+}
+
+function localContextTokens(env) {
+  const context = Number(env.LLAMA_CONTEXT || 4096);
+  const parallel = Number(env.LLAMA_PARALLEL || 1);
+  if (!Number.isSafeInteger(context) || context <= 0 || !Number.isSafeInteger(parallel) || parallel <= 0) {
+    throw new Error('LLAMA_CONTEXT and LLAMA_PARALLEL must be positive integers');
+  }
+  return Math.floor(context / parallel);
+}
+
+function fitLocalMessages(messages, instructions, contextTokens) {
+  const fitted = [...messages];
+  const fits = () => {
+    const prompt = { tools: supervisorTools, messages: [{ role: 'system', content: instructions }, ...fitted] };
+    const estimatedTokens = Math.ceil(Buffer.byteLength(JSON.stringify(prompt), 'utf8') / 3) + prompt.messages.length * 16;
+    return estimatedTokens + 512 + 256 <= contextTokens;
+  };
+  while (!fits()) {
+    const latestUser = fitted.findLastIndex(message => message.role === 'user');
+    if (latestUser > 0) {
+      const nextUser = fitted.findIndex((message, index) => index > 0 && message.role === 'user');
+      fitted.splice(0, nextUser);
+      continue;
+    }
+    let reduced = false;
+    for (let index = 0; index < fitted.length; index += 1) {
+      const message = fitted[index];
+      if (message.role !== 'tool' || message.content.length <= 128) continue;
+      const content = boundToolResult(JSON.parse(message.content), Math.max(128, Math.floor(message.content.length / 2)));
+      if (content.length < message.content.length) {
+        fitted[index] = { ...message, content };
+        reduced = true;
+      }
+    }
+    if (!reduced) {
+      throw new Error(`Local request exceeds the estimated per-slot context budget (LLAMA_CONTEXT / LLAMA_PARALLEL = ${contextTokens}, output reserve 512). Shorten the request or increase per-slot context; the latest instruction was not truncated and current-turn tool exchanges were retained.`);
+    }
+  }
+  return fitted;
 }
 
 function formatAnthropicMessages(messages) {
@@ -190,36 +275,40 @@ export async function* streamReply({
   const reasoningFilter = new ReasoningFilter();
   const executedCalls = new Map();
   const isAnthropic = provider === 'anthropic';
-  const voiceFast = profile === 'voice-fast';
-  let workingMessages = prepareMessages(messages, voiceFast ? { maxMessages: 4, maxChars: 2400 } : undefined);
+  const instructions = profile === 'voice' ? voiceInstructions : supervisorInstructions;
+  const contextTokens = provider === 'local' ? localContextTokens(env) : null;
+  let workingMessages = prepareMessages(messages, provider === 'local'
+    ? { maxMessages: Infinity, maxChars: Infinity, maxTextChars: Infinity }
+    : undefined);
   let completed = false;
 
-  for (let round = 0; round < (voiceFast ? 1 : 4); round++) {
+  for (let round = 0; round < 4; round++) {
     if (signal?.aborted) return;
+    if (provider === 'local') workingMessages = fitLocalMessages(workingMessages, instructions, contextTokens);
     const fetchSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(60000)]) : AbortSignal.timeout(60000);
 
     let body;
     if (isAnthropic) {
       body = {
         model: config.model,
-        system: voiceFast ? voiceInstructions : supervisorInstructions,
+        system: instructions,
         messages: formatAnthropicMessages(workingMessages),
         stream: true,
-        max_tokens: voiceFast ? 96 : 1024,
+        max_tokens: profile === 'voice' ? 512 : 1024,
+        tools: anthropicTools,
       };
-      if (!voiceFast) body.tools = anthropicTools;
     } else {
       body = {
         model: config.model,
-        messages: [{ role: 'system', content: voiceFast ? voiceInstructions : supervisorInstructions }, ...workingMessages.filter(m => m.role !== 'system')],
+        messages: [{ role: 'system', content: instructions }, ...workingMessages.filter(m => m.role !== 'system')],
         stream: true,
-        max_tokens: voiceFast ? 96 : (provider === 'local' ? 512 : 1024),
+        max_tokens: provider === 'local' || profile === 'voice' ? 512 : 1024,
+        tools: supervisorTools,
       };
-      if (!voiceFast) body.tools = supervisorTools;
       if (provider === 'local') {
         body.chat_template_kwargs = { enable_thinking: false };
         body.cache_prompt = true;
-        body.temperature = voiceFast ? 0.2 : 0.7;
+        body.temperature = 0.2;
       }
     }
 
@@ -326,9 +415,6 @@ export async function* streamReply({
     }
 
     const finishedCalls = toolCalls.filter(Boolean);
-    if (voiceFast && finishedCalls.length > 0) {
-      throw new Error('Fast voice response attempted a tool call');
-    }
     if (finishedCalls.length === 0) {
       const completeReason = isAnthropic ? stopReason === 'end_turn' : finishReason === 'stop';
       if (!streamCompleted || !completeReason) {

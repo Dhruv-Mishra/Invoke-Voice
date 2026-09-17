@@ -22,6 +22,8 @@ export const ASSETS = Object.freeze([
   { id: 'uv', label: 'uv 0.8.17 / isolated Python', name: 'uv-x86_64-pc-windows-msvc.zip', executable: 'uv.exe', size: 20489375, sha256: '0d051779fbcb173b183efeae1c3e96148764fd82709bbbf0966df3efe48b67c5', sourceUrl: 'https://github.com/astral-sh/uv/releases/download/0.8.17/uv-x86_64-pc-windows-msvc.zip' },
 ]);
 
+export const CRISPASR_AVX2_ASSET = { id: 'crispasr', label: 'CrispASR 0.8.32 CPU AVX2 (opt-in)', name: 'crispasr-windows-x86_64-cpu.zip', executable: 'crispasr.exe', runtimeDirectory: 'crispasr-avx2', size: 8261759, sha256: 'ac8b6caf4dd448d00c5050907275bce4d154747110c37943aa4f69ee7fac9541', sourceUrl: 'https://github.com/CrispStrobe/CrispASR/releases/download/v0.8.32/crispasr-windows-x86_64-cpu.zip' };
+
 export function setupError(message) {
   return Object.assign(new Error(message), { setupMessage: message });
 }
@@ -63,17 +65,19 @@ export function stackPaths(env = process.env, appRoot = root) {
   const select = (...candidates) => candidates.find(candidate => candidate && fileStat(candidate));
   const localStack = path.resolve(appRoot, '../LocalVoiceStack');
   const requestedMoonshine = configured(env.MOONSHINE_MODEL);
+  const crispasrCpu = env.CRISPASR_CPU || 'legacy';
+  if (!['legacy', 'avx2'].includes(crispasrCpu)) throw setupError('CRISPASR_CPU must be legacy or avx2. Use avx2 only on a CPU with AVX2, FMA and F16C support.');
   const q4Name = ASSETS[1].name;
   const compatibleMoonshine = requestedMoonshine && path.basename(requestedMoonshine).toLowerCase() !== 'moonshine-streaming-small-q8_0.gguf' ? requestedMoonshine : null;
   const moonshine = select(compatibleMoonshine, requestedMoonshine && path.join(path.dirname(requestedMoonshine), q4Name), path.join(localStack, 'STT_Models', q4Name), path.join(modelDir, q4Name)) || path.join(modelDir, q4Name);
   return {
-    home, modelDir, runtimeDir, receiptDir: path.join(home, 'setup-receipts'),
+    home, modelDir, runtimeDir, crispasrCpu, receiptDir: path.join(home, 'setup-receipts'),
     ling: select(configured(env.LOCAL_LLM_PATH), path.join(localStack, 'LLMs', ASSETS[0].name), path.join(modelDir, ASSETS[0].name)) || path.join(modelDir, ASSETS[0].name),
     moonshine,
     tokenizer: select(path.join(path.dirname(moonshine), 'tokenizer.bin'), path.join(modelDir, 'tokenizer.bin')) || path.join(modelDir, 'tokenizer.bin'),
     vad: select(configured(env.VAD_MODEL), path.join(modelDir, ASSETS[3].name)) || path.join(modelDir, ASSETS[3].name),
     llama: select(configured(env.LLAMA_SERVER_BIN)) || path.join(runtimeDir, 'llama', 'llama-server.exe'),
-    crispasr: select(configured(env.CRISPASR_BIN), path.join(runtimeDir, 'crispasr.exe')) || path.join(runtimeDir, 'crispasr', 'crispasr.exe'),
+    crispasr: select(configured(env.CRISPASR_BIN)) || (crispasrCpu === 'avx2' ? path.join(runtimeDir, 'crispasr-avx2', 'crispasr.exe') : select(path.join(runtimeDir, 'crispasr.exe')) || path.join(runtimeDir, 'crispasr', 'crispasr.exe')),
     uv: path.join(runtimeDir, 'uv', 'uv.exe'),
     pythonBase, venv,
     python: path.join(venv, 'Scripts', 'python.exe'),
@@ -91,6 +95,7 @@ function receiptPath(paths, asset, destination) {
 }
 
 export function assetReady(paths, asset, destination = paths[asset.id]) {
+  if (asset.id === 'crispasr' && paths.crispasrCpu === 'avx2') asset = CRISPASR_AVX2_ASSET;
   const receipt = readJson(receiptPath(paths, asset, destination));
   if (receipt?.sourceUrl !== asset.sourceUrl || !receipt.files?.length) return false;
   const expected = path.resolve(destination);
@@ -181,6 +186,7 @@ async function verify(file, meta, signal) {
 
 export async function ensureAsset(paths, asset, { report = () => {}, signal, fetchImpl = fetch } = {}) {
   if (!ASSETS.includes(asset)) throw setupError('Unknown setup component.');
+  if (asset.id === 'crispasr' && paths.crispasrCpu === 'avx2') asset = CRISPASR_AVX2_ASSET;
   const destination = paths[asset.id];
   if (assetReady(paths, asset, destination)) return destination;
   const options = { signal, fetchImpl };
@@ -221,7 +227,7 @@ export async function ensureAsset(paths, asset, { report = () => {}, signal, fet
     recordAsset(paths, asset, destination, [destination], meta.sha256 || meta.gitSha1);
     return destination;
   }
-  const targetDir = path.join(paths.runtimeDir, asset.id);
+  const targetDir = path.join(paths.runtimeDir, asset.runtimeDirectory || asset.id);
   const staging = fs.mkdtempSync(`${targetDir}.partial-`);
   try {
     report({ stage: asset.id, message: `Extracting ${asset.label}.` });

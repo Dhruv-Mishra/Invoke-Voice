@@ -8,7 +8,7 @@ import { EventEmitter } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { deflateRawSync } from 'node:zlib';
 import { createSetup } from '../src/setup.mjs';
-import { ASSETS, assetReady, ensureAsset, stackPaths, trustedDownloadUrl, withSetupLock } from '../scripts/models.mjs';
+import { ASSETS, CRISPASR_AVX2_ASSET, assetReady, ensureAsset, stackPaths, trustedDownloadUrl, withSetupLock } from '../scripts/models.mjs';
 import { approvedPythonProbe, createLocalSetup, isolatedEnvironment, runSetupCommand } from '../src/local-setup.mjs';
 import { startSupervisor } from '../src/server.mjs';
 import { createRuntimeConfig } from '../src/runtime-config.mjs';
@@ -590,6 +590,34 @@ test('failed setup redacts raw errors and permits a real retry; offline resume n
   assert.throws(() => unsupported.start({ consent: true }), /Windows x64/);
 });
 
+test('setup snapshot includes hardware advisory with deterministic overrides and preserves non-blocking consent', async () => {
+  const lowSpec = controller({
+    inspectHardware: () => ({ logicalCpus: 2, memoryGiB: 8 }),
+  });
+  const lowSnapshot = lowSpec.snapshot();
+  assert.equal(lowSnapshot.hardware.logicalCpus, 2);
+  assert.equal(lowSnapshot.hardware.memoryGiB, 8);
+  assert.match(lowSnapshot.hardware.warning, /16 GB|4.*CPU/i);
+  lowSpec.start({ consent: true });
+  assert.equal((await lowSpec.settled()).status, 'ready');
+
+  const goodSpec = controller({
+    inspectHardware: () => ({ logicalCpus: 8, memoryGiB: 32 }),
+  });
+  const goodSnapshot = goodSpec.snapshot();
+  assert.equal(goodSnapshot.hardware.logicalCpus, 8);
+  assert.equal(goodSnapshot.hardware.memoryGiB, 32);
+  assert.equal(goodSnapshot.hardware.warning, null);
+
+  const unsupportedLow = controller({
+    platform: 'linux',
+    inspectHardware: () => ({ logicalCpus: 1, memoryGiB: 2 }),
+  });
+  const unsupportedSnapshot = unsupportedLow.snapshot();
+  assert.equal(unsupportedSnapshot.supported, false);
+  assert.match(unsupportedSnapshot.hardware.warning, /Windows x64/i);
+});
+
 test('completed verified assets are reused offline; partial and corrupted downloads are never ready', async context => {
   const { paths } = fixture(context);
   const asset = ASSETS.find(candidate => candidate.id === 'tokenizer');
@@ -637,7 +665,7 @@ test('managed asset receipts reject junctions outside cache roots', context => {
   assert.equal(assetReady(paths, asset, destination), false);
 });
 
-function runtimeArchive(context, entries) {
+function runtimeArchive(context, entries, asset = ASSETS.find(candidate => candidate.id === 'uv')) {
   const localRecords = [];
   const centralRecords = [];
   let offset = 0;
@@ -676,12 +704,52 @@ function runtimeArchive(context, entries) {
   end.writeUInt32LE(centralRecords.reduce((total, record) => total + record.length, 0), 12);
   end.writeUInt32LE(offset, 16);
   const content = Buffer.concat([...localRecords, ...centralRecords, end]);
-  const asset = ASSETS.find(candidate => candidate.id === 'uv');
   const original = { size: asset.size, sha256: asset.sha256 };
   context.after(() => Object.assign(asset, original));
   Object.assign(asset, { size: content.length, sha256: createHash('sha256').update(content).digest('hex') });
   return { asset, content, fetchImpl: async url => { assert.equal(url, asset.sourceUrl); return new Response(content); } };
 }
+
+test('CrispASR CPU builds retain official integrity pins and require explicit AVX2 opt-in', context => {
+  const { directory, paths } = fixture(context);
+  const legacy = ASSETS.find(asset => asset.id === 'crispasr');
+  assert.equal(legacy.size, 7713869);
+  assert.equal(legacy.sha256, 'ba4e23fb8dfcc99b8a76af034954576a75f88193e3dbf62fc774287bcbd1114b');
+  assert.equal(CRISPASR_AVX2_ASSET.size, 8261759);
+  assert.equal(CRISPASR_AVX2_ASSET.sha256, 'ac8b6caf4dd448d00c5050907275bce4d154747110c37943aa4f69ee7fac9541');
+  assert.equal(paths.crispasrCpu, 'legacy');
+  assert.equal(paths.crispasr, path.join(paths.runtimeDir, 'crispasr', 'crispasr.exe'));
+  const optimized = stackPaths({ LOCALAPPDATA: directory, CRISPASR_CPU: 'avx2' }, path.join(directory, 'app'));
+  assert.equal(optimized.crispasr, path.join(paths.runtimeDir, 'crispasr-avx2', 'crispasr.exe'));
+  assert.throws(() => stackPaths({ CRISPASR_CPU: 'auto' }), /CRISPASR_CPU must be/);
+  const custom = path.join(directory, 'custom.exe');
+  writeFileSync(custom, 'fixture');
+  assert.equal(stackPaths({ LOCALAPPDATA: directory, CRISPASR_CPU: 'avx2', CRISPASR_BIN: custom }).crispasr, custom);
+});
+
+test('CrispASR AVX2 setup isolates binaries, checks integrity and reuses only matching receipts', async context => {
+  const { directory, paths: legacyPaths } = fixture(context);
+  const paths = stackPaths({ LOCALAPPDATA: directory, CRISPASR_CPU: 'avx2' }, path.join(directory, 'app'));
+  const legacy = ASSETS.find(asset => asset.id === 'crispasr');
+  mkdirSync(path.dirname(legacyPaths.crispasr), { recursive: true });
+  writeFileSync(legacyPaths.crispasr, 'retained legacy');
+  const { content, fetchImpl } = runtimeArchive(context, [
+    { name: 'release/crispasr.exe', body: 'optimized fixture' },
+    { name: 'release/ggml.dll', body: 'optimized library' },
+  ], CRISPASR_AVX2_ASSET);
+  await assert.rejects(ensureAsset(paths, legacy, { fetchImpl: async () => new Response(Buffer.alloc(content.length)) }), /integrity check failed/);
+  assert.equal(existsSync(paths.crispasr), false);
+  const destination = await ensureAsset(paths, legacy, { fetchImpl });
+  assert.equal(destination, path.join(paths.runtimeDir, 'crispasr-avx2', 'crispasr.exe'));
+  assert.equal(readFileSync(legacyPaths.crispasr, 'utf8'), 'retained legacy');
+  assert.equal(assetReady(paths, legacy), true);
+  assert.equal(assetReady(legacyPaths, legacy, destination), false);
+  assert.equal(await ensureAsset(paths, legacy, { fetchImpl: async () => assert.fail('verified optimized runtime must work offline') }), destination);
+  writeFileSync(path.join(path.dirname(destination), 'ggml.dll'), 'corrupted');
+  assert.equal(assetReady(paths, legacy), false);
+  const fallback = stackPaths({ LOCALAPPDATA: directory }, path.join(directory, 'app'));
+  assert.equal(fallback.crispasr, legacyPaths.crispasr);
+});
 
 test('runtime archives extract root and nested executables with directories and verified offline reuse', async context => {
   for (const prefix of ['', 'release/']) {

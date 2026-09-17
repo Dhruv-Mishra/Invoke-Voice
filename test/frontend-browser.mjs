@@ -38,6 +38,7 @@ const setup = {
     { id: 'runtime', label: 'Local runtime', ready: false, sourceUrl: 'https://example.com/runtime' },
     { id: 'model', label: 'Voice model', ready: false, sourceUrl: 'javascript:alert(1)' },
   ],
+  hardware: { logicalCpus: 8, memoryGiB: 32, warning: null },
 };
 const errors = [];
 const settings = {};

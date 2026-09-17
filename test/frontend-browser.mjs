@@ -474,7 +474,7 @@ try {
     window.fixtureShortCaptionWidth = bounds.width;
     return bounds.toJSON();
   });
-  assert.ok(shortCaption.height <= 36, `Expected a compact single-line caption, received ${shortCaption.height}px`);
+  assert.ok(shortCaption.height <= 40, `Expected a compact single-line caption, received ${shortCaption.height}px`);
   await voice({ type: 'transcript', role: 'user', text: 'Voice partial grows smoothly as each recognized word arrives', partial: true });
   await waitFor(() => document.getElementById('user-closed-caption').getBoundingClientRect().width > window.fixtureShortCaptionWidth);
   const growingCaption = await evaluate(() => document.getElementById('user-closed-caption').getBoundingClientRect().toJSON());
@@ -554,9 +554,9 @@ try {
       assert.deepEqual(await evaluate(() => document.querySelector('.page-views').getBoundingClientRect().toJSON()), contentBefore);
       assert.equal(await evaluate(() => document.getElementById('caption-text').textContent), longCaption.trim());
       assert.equal(await evaluate(() => [...document.querySelectorAll('.caption-text')].every(text =>
-        getComputedStyle(text).textAlign === (text.closest('.closed-caption').dataset.role === 'user' ? 'right' : 'left')
+        getComputedStyle(text).textAlign === 'left'
         && Number.parseFloat(text.style.height) > 0)), true,
-      'Caption text must align by speaker and retain measured heights for smooth growth');
+      'Caption text must be left aligned and retain measured heights for smooth growth');
       const layout = await evaluate(() => {
         const surface = document.querySelector('.app-main').getBoundingClientRect();
         const dock = document.querySelector('.voice-strip').getBoundingClientRect();
@@ -565,7 +565,7 @@ try {
         const rootStyle = getComputedStyle(document.documentElement);
         const stackGap = Number.parseFloat(rootStyle.getPropertyValue('--cp-caption-stack-gap'));
         const speakerOffset = Number.parseFloat(rootStyle.getPropertyValue('--cp-caption-speaker-offset'));
-        const captionPadding = Number.parseFloat(rootStyle.getPropertyValue('--cp-caption-padding-block')) * 2 + 2;
+        const captionPadding = Number.parseFloat(rootStyle.getPropertyValue('--cp-caption-padding')) * 2 + 2;
         const text = document.getElementById('caption-text');
         const firstWord = document.createRange();
         firstWord.setStart(text.firstElementChild.firstChild, 0);
@@ -581,6 +581,14 @@ try {
           captionStacked: Math.abs(captions[1].top - captions[0].bottom - stackGap) < 1,
           speakerOffset: Math.abs(captions[0].left - captions[1].left - speakerOffset) < 1,
           speakerColors: getComputedStyle(document.getElementById('user-closed-caption')).backgroundImage !== getComputedStyle(document.getElementById('closed-caption')).backgroundImage,
+          premiumCaptionStyle: captions.every((_, index) => {
+            const caption = document.querySelectorAll('.closed-caption:not([hidden])')[index];
+            const style = getComputedStyle(caption);
+            const textStyle = getComputedStyle(caption.querySelector('.caption-text'));
+            return Number.parseFloat(style.borderRadius) >= 14
+              && style.paddingTop === style.paddingRight && style.paddingTop === style.paddingBottom && style.paddingTop === style.paddingLeft
+              && style.backdropFilter !== 'none' && Number.parseInt(textStyle.fontWeight, 10) >= 500;
+          }),
           titlesHidden: [...document.querySelectorAll('.caption-speaker')].every(label => getComputedStyle(label).position === 'absolute' && label.getBoundingClientRect().height <= 1),
           compactCaption: captions.every(caption => caption.height <= Math.min(126, innerHeight * .16) + captionPadding),
           captionScrollable: text.scrollHeight > text.clientHeight && text.clientHeight <= Math.min(126, innerHeight * .16) + 1 && getComputedStyle(text).overflowY === 'auto',
@@ -592,7 +600,7 @@ try {
           spriteCentered: document.getElementById('voice-personality-app').hidden || Math.abs((document.getElementById('agent-sprite').getBoundingClientRect().left + document.getElementById('agent-sprite').getBoundingClientRect().right - dock.left - dock.right) / 2) < 1,
         };
       });
-      assert.deepEqual(layout, { noOverflow: true, surfaceVisible: true, dockClear: true, freeFloating: true, captionFits: true, captionCentered: true, captionStacked: true, speakerOffset: true, speakerColors: true, titlesHidden: true, compactCaption: true, captionScrollable: true, captionChromeOverlaid: true, captionStartVisible: true, modalCorrect: true, spriteCentered: true }, `${width}x${height} ${view}`);
+      assert.deepEqual(layout, { noOverflow: true, surfaceVisible: true, dockClear: true, freeFloating: true, captionFits: true, captionCentered: true, captionStacked: true, speakerOffset: true, speakerColors: true, premiumCaptionStyle: true, titlesHidden: true, compactCaption: true, captionScrollable: true, captionChromeOverlaid: true, captionStartVisible: true, modalCorrect: true, spriteCentered: true }, `${width}x${height} ${view}`);
       if (view === 'settings') {
         assert.equal(await evaluate(() => {
           const settings = document.getElementById('settings-view');

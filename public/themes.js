@@ -59,12 +59,17 @@ const defaultTokens = {
   '--cp-caption-max-height': 'min(126px, 16dvh)',
   '--cp-caption-speaker-offset': '10px',
   '--cp-caption-stack-gap': '6px',
-  '--cp-caption-padding-block': '5px',
-  '--cp-caption-padding-inline': '6px',
+  '--cp-caption-padding': '8px',
+  '--cp-caption-radius': '14px',
+  '--cp-caption-blur': '14px',
   '--cp-caption-control-size': '28px',
-  '--cp-caption-assistant-bg': 'linear-gradient(135deg, rgba(174, 48, 221, 0.96), rgba(235, 64, 164, 0.96) 58%, rgba(255, 126, 108, 0.96))',
-  '--cp-caption-user-bg': 'linear-gradient(135deg, rgba(13, 169, 242, 0.96), rgba(28, 111, 220, 0.96) 58%, rgba(35, 66, 190, 0.96))',
-  '--cp-caption-text': '#ffffff',
+  '--cp-caption-assistant-bg': 'linear-gradient(135deg, rgba(174, 48, 221, 0.88), rgba(235, 64, 164, 0.88) 58%, rgba(255, 126, 108, 0.88))',
+  '--cp-caption-assistant-bg-solid': 'linear-gradient(135deg, #ae30dd, #eb40a4 58%, #ff7e6c)',
+  '--cp-caption-user-bg': 'linear-gradient(135deg, rgba(13, 169, 242, 0.88), rgba(28, 111, 220, 0.88) 58%, rgba(35, 66, 190, 0.88))',
+  '--cp-caption-user-bg-solid': 'linear-gradient(135deg, #0da9f2, #1c6fdc 58%, #2342be)',
+  '--cp-caption-text': 'rgba(255, 255, 255, 0.98)',
+  '--cp-caption-font-size': '14px',
+  '--cp-caption-font-weight': '500',
   '--cp-caption-grow-duration': '220ms',
   '--cp-caption-fade-duration': `${captionTiming.fade}ms`,
   '--cp-voice-edge-strength': '68%',
@@ -118,6 +123,8 @@ export function applyTheme(theme, { transparency = true } = {}) {
     })) tokens[token] = tokens[surface];
     tokens['--cp-highlight'] = tokens['--cp-bg'];
     tokens['--cp-accent-soft'] = `color-mix(in srgb, ${tokens['--cp-accent']} 12%, ${tokens['--cp-surface']})`;
+    tokens['--cp-caption-assistant-bg'] = tokens['--cp-caption-assistant-bg-solid'];
+    tokens['--cp-caption-user-bg'] = tokens['--cp-caption-user-bg-solid'];
     tokens['--cp-glass-blur'] = '0px';
   }
   for (const [token, value] of Object.entries(tokens)) {

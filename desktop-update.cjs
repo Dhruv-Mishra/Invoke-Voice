@@ -17,7 +17,8 @@ function releaseVersion(tag) {
   return semver.valid(typeof tag === 'string' ? tag.replace(/^v/, '') : '');
 }
 
-function selectUpdate(releases, currentVersion) {
+function selectUpdate(releases, currentVersion, edition = 'bundled') {
+  if (!['bundled', 'online'].includes(edition)) throw new Error('Unknown installer edition.');
   const current = semver.valid(currentVersion);
   if (!current) throw new Error('The installed application version is invalid.');
   const acceptsPrereleases = semver.prerelease(current) !== null;
@@ -26,7 +27,7 @@ function selectUpdate(releases, currentVersion) {
     const version = releaseVersion(release?.tag_name);
     if (!version || release.draft || !semver.gt(version, current)) continue;
     if (!acceptsPrereleases && (release.prerelease || semver.prerelease(version))) continue;
-    const installerName = `${PRODUCT_NAME}-Setup-${version}.exe`;
+    const installerName = `${PRODUCT_NAME}-Setup-${version}${edition === 'online' ? '-Online' : ''}.exe`;
     const checksumName = `${installerName}.sha256`;
     const installerAsset = release.assets?.find(asset => asset?.name === installerName);
     const checksumAsset = release.assets?.find(asset => asset?.name === checksumName);
@@ -74,14 +75,14 @@ async function fetchReleaseAsset(asset, tag, fetchImpl, signal) {
   return response;
 }
 
-async function checkForUpdate(currentVersion, { fetchImpl = fetch, signal = AbortSignal.timeout(20000) } = {}) {
+async function checkForUpdate(currentVersion, { fetchImpl = fetch, signal = AbortSignal.timeout(20000), edition = 'bundled' } = {}) {
   const response = await fetchImpl(RELEASES_URL, {
     headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'Voice-Work-Supervisor-Updater', 'X-GitHub-Api-Version': '2022-11-28' },
     redirect: 'error',
     signal,
   });
   if (!response.ok) throw new Error(`GitHub returned HTTP ${response.status} while checking for updates.`);
-  const update = selectUpdate(await response.json(), currentVersion);
+  const update = selectUpdate(await response.json(), currentVersion, edition);
   return update ? { available: true, currentVersion, ...update } : { available: false, currentVersion };
 }
 

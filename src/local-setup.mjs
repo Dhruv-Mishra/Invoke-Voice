@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
@@ -8,6 +8,7 @@ import { ASSETS, assetReady, ensureAsset, localSetupAssets, localSttProvider, re
 import { createSetup } from './setup.mjs';
 import { closeLocalVoice, isLocalVoiceWarm, localConfiguration, onLocalVoiceRuntimeExit, warmLocalVoice } from './local-voice.mjs';
 import { verifyKokoroPack, verifyWhisperPack } from './kokoro-pack.mjs';
+import { resolveVoicePack } from './voice-pack.mjs';
 import desktopLaunch from '../scripts/desktop-launch.cjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -137,7 +138,7 @@ function packageIndex(value, fallback, label) {
   return url.href.replace(/\/$/, '');
 }
 
-export function createLocalSetup({ env = process.env, activateLLM, run = runSetupCommand, provision = ensureAsset, warm = warmLocalVoice, offlinePackDir = path.join(root, 'artifacts', 'kokoro-offline-pack') } = {}) {
+export function createLocalSetup({ env = process.env, activateLLM, run = runSetupCommand, provision = ensureAsset, warm = warmLocalVoice, offlinePackDir = path.join(root, 'artifacts', 'kokoro-offline-pack'), compressedPackDir = path.join(root, 'artifacts', 'voice-pack') } = {}) {
   const paths = stackPaths(env);
   const selectedAssets = () => localSetupAssets(env).filter(asset => asset.id !== 'uv' || !paths.pythonBase);
   const whisperReady = () => pythonReady(paths, 'whisper-complete.json', whisperReceiptVersion);
@@ -275,6 +276,8 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
     cacheDir: paths.home, runtimeDir: paths.runtimeDir, inspect, getCapabilities,
     install: ({ report, signal }) => withSetupLock(paths, async () => {
       const commandEnv = isolatedEnvironment(env, paths);
+      let preparedPack;
+      const compressedPack = async () => preparedPack ??= await resolveVoicePack({ sourceDir: compressedPackDir, paths, env, report, signal, run: (executable, args, options) => run(executable, args, { ...options, env: commandEnv, redactEnv: env, cwd: paths.home }) });
       mkdirSync(paths.home, { recursive: true });
       for (const asset of ASSETS.filter(asset => CHAT_ASSET_IDS.has(asset.id))) {
         await provision(paths, asset, { report, signal });
@@ -292,8 +295,8 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
           const torchIndex = packageIndex(env.LOCAL_TORCH_INDEX_URL, 'https://download.pytorch.org/whl/cpu', 'PyTorch package index');
           const pythonIndex = packageIndex(env.LOCAL_PYPI_INDEX_URL, 'https://pypi.org/simple', 'Python package index');
           const modelUrl = packageIndex(env.LOCAL_SPACY_MODEL_URL, englishModel, 'spaCy model URL');
-          const bundledWhisperPack = await verifyWhisperPack(offlinePackDir);
-          const offlinePack = bundledWhisperPack || await verifyKokoroPack(offlinePackDir);
+          let bundledWhisperPack = await verifyWhisperPack(offlinePackDir);
+          let offlinePack = bundledWhisperPack || await verifyKokoroPack(offlinePackDir);
           if (paths.pythonBase) {
             if (!existsSync(paths.pythonBase)) throw setupError('Configured PYTHON_BIN was not found. Set it to the full path of an IT-approved Python 3.12 x64 interpreter and restart the app. No downloaded Python or uv fallback will be attempted.');
             await command(paths.pythonBase, ['-I', '-c', approvedPythonProbe], 'python', 'Checking approved full CPython 3.12 x64 with venv, pip bootstrap and SSL. No Python runtime will be downloaded.');
@@ -314,6 +317,10 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
               await command(paths.uv, ['--no-config', 'venv', ...clear, '--python', pythonVersion, '--managed-python', paths.venv], 'python', clear.length ? `Replacing the stale Kokoro environment with managed Python ${pythonVersion}.` : 'Creating the isolated Kokoro environment.');
             }
             await command(paths.python, ['-I', '-c', managedPythonProbe], 'python', `Checking the managed Python ${pythonVersion} environment.`);
+          }
+          if (!offlinePack) {
+            bundledWhisperPack = await compressedPack();
+            offlinePack = bundledWhisperPack;
           }
           const installer = paths.pythonBase ? paths.python : paths.uv;
           const installArgs = paths.pythonBase
@@ -358,7 +365,7 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
           ? ['-I', '-m', 'pip', '--isolated', '--disable-pip-version-check', '--no-input', '--cache-dir', commandEnv.PIP_CACHE_DIR, '--use-feature=truststore', 'install']
           : ['--no-config', 'pip', 'install', '--python', paths.python];
         const command = (executable, commandArgs, message) => run(executable, commandArgs, { env: commandEnv, redactEnv: env, cwd: paths.home, signal, report, stage: 'whisper', message });
-        const offlinePack = await verifyWhisperPack(offlinePackDir);
+        const offlinePack = await verifyWhisperPack(offlinePackDir) || await compressedPack();
         if (offlinePack) {
           const offlineArgs = ['--no-index', '--find-links', offlinePack.wheelhouse, '--only-binary', ':all:', '--require-hashes', '-r', offlinePack.lockFile];
           const installArgs = paths.pythonBase ? [...args, ...offlineArgs] : [args[0], '--offline', ...args.slice(1), ...offlineArgs];
@@ -377,6 +384,9 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
         }
         await command(paths.python, ['-I', '-c', 'import faster_whisper, ctranslate2, onnxruntime; from faster_whisper.vad import get_vad_model; assert faster_whisper.__version__ == "1.2.1"; assert ctranslate2.__version__ == "4.6.0"; assert onnxruntime.__version__ == "1.23.2"; assert "int8" in ctranslate2.get_supported_compute_types("cpu"); get_vad_model()'], 'Checking Whisper INT8 and bundled Silero VAD.');
         recordPython(paths, 'whisper-complete.json', whisperReceiptVersion);
+      }
+      if (preparedPack) {
+        try { rmSync(preparedPack.packDir, { recursive: true, force: true }); } catch {}
       }
       applyPaths();
       writeJson(completionFile, { version: 1, pathInputs, paths: Object.fromEntries(ASSETS.map(asset => [asset.id, paths[asset.id]])) });

@@ -52,7 +52,7 @@ ipcMain.handle('updates:check', async event => {
   if (!trustedRenderer(event)) return { supported: false, error: 'Update requests are available only from the local application.' };
   if (!app.isPackaged) return { supported: false, currentVersion: app.getVersion() };
   try {
-    pendingUpdate = await checkForUpdate(app.getVersion());
+    pendingUpdate = await checkForUpdate(app.getVersion(), { edition: require('./package.json').distributionEdition || 'bundled' });
     return { supported: true, ...publicUpdate(pendingUpdate) };
   } catch (error) {
     logDesktopError('Update check failed', error);
@@ -87,6 +87,7 @@ function createWindow() {
     width: 1280,
     height: 840,
     title: 'Voice Work Supervisor',
+    icon: path.join(__dirname, 'build', 'copilot.png'),
     show: false,
     autoHideMenuBar: true,
     backgroundColor: '#f5f7f6',

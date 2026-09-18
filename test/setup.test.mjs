@@ -12,6 +12,7 @@ import { ASSETS, CRISPASR_AVX2_ASSET, TASK_SEARCH_ASSETS, assetReady, ensureAsse
 import { approvedPythonProbe, createLocalSetup, isolatedEnvironment, runSetupCommand } from '../src/local-setup.mjs';
 import { startSupervisor } from '../src/server.mjs';
 import { createRuntimeConfig } from '../src/runtime-config.mjs';
+import { downloadVoicePack, resolveVoicePack } from '../src/voice-pack.mjs';
 
 function fixture(context) {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'voice-setup-'));
@@ -129,13 +130,130 @@ function localFixture(context, options = {}) {
     },
     warm: async () => true,
     offlinePackDir: path.join(directory, 'missing-kokoro-offline-pack'),
+    compressedPackDir: null,
     ...setupOptions,
   });
   context.after(() => setup.close());
   return { setup, paths, commands, provisioned, children, env };
 }
 
+test('voice pack download resumes, rejects corrupt sources, and reuses verified archives offline', async context => {
+  const { directory } = fixture(context);
+  const content = Buffer.from('verified voice pack bytes');
+  const destination = path.join(directory, 'pack.tar.xz');
+  const descriptor = { size: content.length, sha256: createHash('sha256').update(content).digest('hex'), urls: ['https://github.com/pack'] };
+  writeFileSync(`${destination}.partial`, content.subarray(0, 5));
+  await downloadVoicePack(descriptor, destination, { fetchImpl: async (_url, options) => {
+    assert.equal(options.headers.Range, 'bytes=5-');
+    return new Response(content.subarray(5), { status: 206, headers: { 'content-range': `bytes 5-${content.length - 1}/${content.length}` } });
+  } });
+  assert.deepEqual(readFileSync(destination), content);
+  await downloadVoicePack(descriptor, destination, { fetchImpl: () => { throw new Error('No network expected'); } });
+  rmSync(destination);
+  let attempts = 0;
+  await downloadVoicePack(descriptor, destination, { urls: ['https://mirror.test/pack', 'https://github.com/pack'], fetchImpl: async () => {
+    attempts += 1;
+    return new Response(attempts === 1 ? Buffer.alloc(content.length) : content);
+  } });
+  assert.equal(attempts, 2);
+  assert.deepEqual(readFileSync(destination), content);
+});
+
+test('voice pack download rejects untrusted redirects, bad ranges, and cancellation', async context => {
+  const { directory } = fixture(context);
+  const descriptor = { size: 10, sha256: 'a'.repeat(64), urls: ['https://github.com/pack'] };
+  const destination = path.join(directory, 'pack.tar.xz');
+  let calls = 0;
+  await assert.rejects(downloadVoicePack(descriptor, destination, { fetchImpl: async () => {
+    calls += 1;
+    return new Response(null, { status: 302, headers: { location: 'http://evil.test/pack' } });
+  } }), /pinned voice dependency pack/);
+  assert.equal(calls, 1);
+  writeFileSync(`${destination}.partial`, 'abc');
+  await assert.rejects(downloadVoicePack(descriptor, destination, { fetchImpl: async () => new Response('def', { status: 206, headers: { 'content-range': 'bytes 0-2/10' } }) }), /pinned voice dependency pack/);
+  assert.equal(readFileSync(`${destination}.partial`, 'utf8'), 'abc');
+  await assert.rejects(downloadVoicePack(descriptor, destination, { signal: AbortSignal.abort(), fetchImpl: () => { throw new Error('Unexpected download'); } }), { name: 'AbortError' });
+});
+
+test('compressed voice pack uses pinned manifest, local file and verified extracted cache', async context => {
+  const { directory, paths } = fixture(context);
+  const { packDir } = offlinePackFixture(directory, [
+    ['faster-whisper', '1.2.1', 'faster_whisper-1.2.1-py3-none-any.whl'],
+    ['ctranslate2', '4.6.0', 'ctranslate2-4.6.0-cp312-cp312-win_amd64.whl'],
+    ['onnxruntime', '1.23.2', 'onnxruntime-1.23.2-cp312-cp312-win_amd64.whl'],
+    ['setuptools', '80.9.0', 'setuptools-80.9.0-py3-none-any.whl'],
+  ]);
+  const sourceDir = path.join(directory, 'compressed');
+  mkdirSync(sourceDir);
+  const content = Buffer.from('synthetic compressed pack');
+  const sha256 = createHash('sha256').update(content).digest('hex');
+  const descriptor = { format: 'wheelhouse-tar-xz-v1', filename: `voice-dependencies-${sha256.slice(0, 16)}.tar.xz`, sha256, size: content.length, expandedSize: 1024 * 1024, manifestSha256: createHash('sha256').update(readFileSync(path.join(packDir, 'manifest.json'))).digest('hex'), urls: ['https://github.com/pack'] };
+  writeFileSync(path.join(sourceDir, 'descriptor.json'), JSON.stringify(descriptor));
+  const localFile = path.join(directory, descriptor.filename);
+  writeFileSync(localFile, content);
+  const { cpSync } = await import('node:fs');
+  let extractions = 0;
+  const options = { sourceDir, paths, env: { LOCAL_VOICE_PACK_FILE: localFile }, fetchImpl: () => { throw new Error('No network expected'); }, run: async (_executable, args) => {
+    extractions += 1;
+    assert.equal(args[2], 'extract');
+    assert.equal(args[3], localFile);
+    cpSync(packDir, args[4], { recursive: true });
+  } };
+  assert.ok(await resolveVoicePack(options));
+  rmSync(localFile);
+  assert.ok(await resolveVoicePack(options));
+  assert.equal(extractions, 1);
+  descriptor.manifestSha256 = 'a'.repeat(64);
+  writeFileSync(path.join(sourceDir, 'descriptor.json'), JSON.stringify(descriptor));
+  writeFileSync(localFile, content);
+  await assert.rejects(resolveVoicePack(options), /failed verification/);
+});
+
 const windowsSetup = { skip: process.platform !== 'win32' || process.arch !== 'x64' };
+
+test('compressed bundled setup retains the hash-locked install and removes only successful expanded staging', windowsSetup, async context => {
+  const { directory } = fixture(context);
+  const { packDir } = offlinePackFixture(directory, [
+    ['faster-whisper', '1.2.1', 'faster_whisper-1.2.1-py3-none-any.whl'],
+    ['ctranslate2', '4.6.0', 'ctranslate2-4.6.0-cp312-cp312-win_amd64.whl'],
+    ['onnxruntime', '1.23.2', 'onnxruntime-1.23.2-cp312-cp312-win_amd64.whl'],
+    ['setuptools', '80.9.0', 'setuptools-80.9.0-py3-none-any.whl'],
+  ]);
+  const compressedPackDir = path.join(directory, 'compressed');
+  mkdirSync(compressedPackDir);
+  const content = Buffer.from('bundled archive fixture');
+  const sha256 = createHash('sha256').update(content).digest('hex');
+  const filename = `voice-dependencies-${sha256.slice(0, 16)}.tar.xz`;
+  writeFileSync(path.join(compressedPackDir, filename), content);
+  writeFileSync(path.join(compressedPackDir, 'descriptor.json'), JSON.stringify({ format: 'wheelhouse-tar-xz-v1', filename, sha256, size: content.length, expandedSize: 1024 * 1024, manifestSha256: createHash('sha256').update(readFileSync(path.join(packDir, 'manifest.json'))).digest('hex'), urls: ['https://github.com/pack'] }));
+  const { cpSync } = await import('node:fs');
+  let expanded;
+  const { setup, paths, commands } = localFixture(context, {
+    env: { LOCAL_STT_PROVIDER: 'whisper' }, compressedPackDir,
+    run: async (executable, args, options) => {
+      commands.push({ executable, args, options });
+      if (args.includes('venv')) {
+        mkdirSync(path.dirname(paths.python), { recursive: true });
+        writeFileSync(paths.python, 'isolated Python fixture');
+      }
+      if (args[2] === 'extract') cpSync(packDir, args[4], { recursive: true });
+      if (args.includes('--find-links')) {
+        expanded = path.dirname(args[args.indexOf('--find-links') + 1]);
+        assert.ok(existsSync(path.join(expanded, 'manifest.json')));
+      }
+    },
+  });
+  setup.start({ consent: true });
+  assert.equal((await setup.settled()).status, 'ready');
+  const installs = commands.filter(command => command.args.includes('pip') && command.args.includes('install'));
+  assert.equal(installs.length, 1);
+  assert.ok(installs[0].args.includes('--offline') && installs[0].args.includes('--require-hashes') && installs[0].args.includes('--no-index'));
+  assert.ok(expanded);
+  assert.equal(existsSync(expanded), false);
+  assert.equal(existsSync(path.join(compressedPackDir, filename)), true);
+  assert.equal(existsSync(path.join(paths.venv, 'complete.json')), true);
+  assert.equal(existsSync(path.join(paths.venv, 'whisper-complete.json')), true);
+});
 
 test('Whisper setup installs only selected models and verifies INT8 dependencies', windowsSetup, async context => {
   const { setup, provisioned, commands, env } = localFixture(context, { env: { LOCAL_STT_PROVIDER: '' } });

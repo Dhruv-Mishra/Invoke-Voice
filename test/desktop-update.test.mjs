@@ -39,6 +39,18 @@ test('update asset URLs must belong to the selected repository, tag and filename
   ]) assert.throws(() => updater.validateReleaseAssetUrl(value, 'v0.1.2', name), /release|trusted|match/i);
 });
 
+test('updates keep online and bundled editions separate while preserving legacy bundled names', async () => {
+  const candidate = release('0.1.2');
+  const onlineAssets = candidate.assets.map(item => ({ name: item.name.replace('.exe', '-Online.exe'), browser_download_url: item.browser_download_url.replace('.exe', '-Online.exe') }));
+  assert.equal(updater.selectUpdate([candidate], '0.1.1', 'online'), null);
+  candidate.assets.push(...onlineAssets);
+  assert.equal(updater.selectUpdate([candidate], '0.1.1').installer.name, 'Voice Work Supervisor-Setup-0.1.2.exe');
+  assert.equal(updater.selectUpdate([candidate], '0.1.1', 'online').installer.name, 'Voice Work Supervisor-Setup-0.1.2-Online.exe');
+  const update = await updater.checkForUpdate('0.1.1', { edition: 'online', fetchImpl: async () => Response.json([candidate]) });
+  assert.equal(update.installer.name, 'Voice Work Supervisor-Setup-0.1.2-Online.exe');
+  assert.throws(() => updater.selectUpdate([candidate], '0.1.1', 'unknown'), /edition/);
+});
+
 test('downloaded updates require a matching named SHA-256 sidecar', async context => {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'voice-update-'));
   context.after(() => rmSync(directory, { recursive: true, force: true }));

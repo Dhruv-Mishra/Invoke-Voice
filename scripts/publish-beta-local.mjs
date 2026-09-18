@@ -87,6 +87,7 @@ async function main() {
   let installer;
   let packagedExecutable;
   let checksumFile;
+  let releaseAssets = [];
 
   try {
     runNpm(['version', bump, '--preid=beta', '--no-git-tag-version']);
@@ -110,6 +111,16 @@ async function main() {
 
     const checksum = `${await sha256(installer)}  ${path.basename(installer)}\n`;
     await writeFile(checksumFile, checksum, 'ascii');
+    const onlineInstaller = path.join(root, 'release', `${config.build.productName}-Setup-${config.version}-Online.exe`);
+    const pack = JSON.parse(readFileSync(path.join(root, 'artifacts', 'voice-pack', 'descriptor.json'), 'utf8'));
+    const packFile = path.join(root, 'release', pack.filename);
+    if (await sha256(packFile) !== pack.sha256) throw new Error('Release dependency pack checksum mismatch.');
+    releaseAssets = [installer, checksumFile];
+    for (const asset of [onlineInstaller, packFile]) {
+      const sidecar = `${asset}.sha256`;
+      await writeFile(sidecar, `${await sha256(asset)}  ${path.basename(asset)}\n`, 'ascii');
+      releaseAssets.push(asset, sidecar);
+    }
 
     run('git', ['add', '--', 'package.json', 'package-lock.json']);
     run('git', ['commit', '-m', `chore: release ${tag}`]);
@@ -120,7 +131,7 @@ async function main() {
     pushed = true;
 
     run('gh', [
-      'release', 'create', tag, installer, checksumFile, '--verify-tag',
+      'release', 'create', tag, ...releaseAssets, '--verify-tag',
       '--title', `Voice Work Supervisor ${config.version}`, '--generate-notes', '--prerelease', '--latest=false',
     ]);
     const releaseUrl = run('gh', ['release', 'view', tag, '--json', 'url', '--jq', '.url'], { capture: true });
@@ -131,9 +142,10 @@ async function main() {
       console.error(`Build succeeded and ${tag} was committed locally, but the push failed. Resolve the push issue before publishing another version.`);
     } else if (pushed) {
       const releaseExists = succeeds('gh', ['release', 'view', tag]);
+      const assets = releaseAssets.map(asset => `"${asset}"`).join(' ');
       const recovery = releaseExists
-        ? `gh release upload ${tag} "${installer}" "${checksumFile}" --clobber`
-        : `gh release create ${tag} "${installer}" "${checksumFile}" --verify-tag --generate-notes --prerelease --latest=false`;
+        ? `gh release upload ${tag} ${assets} --clobber`
+        : `gh release create ${tag} ${assets} --verify-tag --generate-notes --prerelease --latest=false`;
       console.error(`Version ${tag} was pushed, but release upload failed. Recover with: ${recovery}`);
     }
     throw error;

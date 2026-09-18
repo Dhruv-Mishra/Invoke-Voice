@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, createReadStream, mkdirSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import yauzl from 'yauzl';
@@ -115,6 +115,47 @@ function publishPack(staging) {
   }
 }
 
+async function buildCompressedPack() {
+  const target = path.join(root, 'artifacts', 'voice-pack');
+  const descriptorFile = path.join(target, 'descriptor.json');
+  const sourceSha256 = await sha256(path.join(output, 'manifest.json'));
+  const version = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8')).version;
+  let descriptor;
+  try { descriptor = JSON.parse(readFileSync(descriptorFile, 'utf8')); } catch {}
+  if (descriptor?.format === 'wheelhouse-tar-xz-v1' && descriptor.sourceSha256 === sourceSha256 && existsSync(path.join(target, descriptor.filename)) && await sha256(path.join(target, descriptor.filename)) === descriptor.sha256) {
+    descriptor.urls = [`https://github.com/Dhruv-Mishra/VoiceOrchestration/releases/download/v${version}/${descriptor.filename}`];
+    writeFileSync(descriptorFile, JSON.stringify(descriptor, null, 2) + '\n');
+    console.log(`Verified compressed voice pack is current: ${target}`);
+    return;
+  }
+  const python = findPython();
+  const staging = `${target}.staging-${process.pid}`;
+  const normalized = path.join(staging, 'normalized');
+  const unpacked = path.join(staging, 'roundtrip');
+  const archive = path.join(staging, 'voice-pack.tar.xz');
+  const helper = path.join(root, 'scripts', 'voice_pack.py');
+  mkdirSync(staging, { recursive: true });
+  try {
+    run(python.executable, [...python.prefix, '-I', helper, 'prepare', output, normalized]);
+    const verified = await verifyWhisperPack(normalized);
+    if (!verified) throw new Error('Normalized voice pack failed hash verification.');
+    const expandedSize = verified.manifest.wheels.reduce((total, wheel) => total + wheel.size, 0) + statSync(path.join(normalized, 'manifest.json')).size + statSync(path.join(normalized, 'requirements.lock')).size;
+    run(python.executable, [...python.prefix, '-I', helper, 'archive', normalized, archive]);
+    run(python.executable, [...python.prefix, '-I', helper, 'extract', archive, unpacked, String(expandedSize)]);
+    if (!await verifyWhisperPack(unpacked)) throw new Error('Compressed voice pack failed round-trip verification.');
+    await verifyInstall(python, unpacked);
+    const digest = await sha256(archive);
+    const filename = `voice-dependencies-${digest.slice(0, 16)}.tar.xz`;
+    descriptor = { format: 'wheelhouse-tar-xz-v1', sourceSha256, filename, sha256: digest, size: statSync(archive).size, expandedSize, manifestSha256: await sha256(path.join(normalized, 'manifest.json')), urls: [`https://github.com/Dhruv-Mishra/VoiceOrchestration/releases/download/v${version}/${filename}`] };
+    mkdirSync(target, { recursive: true });
+    copyFileSync(archive, path.join(target, filename));
+    writeFileSync(descriptorFile, JSON.stringify(descriptor, null, 2) + '\n');
+    console.log(`Verified compressed voice pack: ${(descriptor.size / 1024 ** 2).toFixed(2)} MiB`);
+  } finally {
+    rmSync(staging, { recursive: true, force: true });
+  }
+}
+
 async function main() {
   if (process.platform !== 'win32' || process.arch !== 'x64') throw new Error('Kokoro pack builds are supported only on Windows x64.');
   const recipeSha256 = await sha256(recipe);
@@ -122,6 +163,7 @@ async function main() {
   const complete = await verifyWhisperPack(output);
   if (!process.argv.includes('--force') && complete?.manifest.recipeSha256 === recipeSha256) {
     console.log(`Verified local voice offline pack is current: ${output}`);
+    await buildCompressedPack();
     return;
   }
 
@@ -151,6 +193,7 @@ async function main() {
     publishPack(staging);
     if (!await verifyKokoroPack(output) || !await verifyWhisperPack(output)) throw new Error('Published local voice pack failed manifest verification.');
     console.log(`Built and verified local voice offline pack: ${output}`);
+    await buildCompressedPack();
   } catch (error) {
     rmSync(staging, { recursive: true, force: true });
     throw error;

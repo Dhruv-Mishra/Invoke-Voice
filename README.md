@@ -81,7 +81,11 @@ npm run models -- task-search
 
 Pinned URLs, revisions, sizes, and SHA-256 values are owned by [scripts/models.mjs](scripts/models.mjs). Python package inputs are in [requirements-local.txt](requirements-local.txt), [requirements-whisper.txt](requirements-whisper.txt), and [requirements-kokoro-pack.in](requirements-kokoro-pack.in).
 
-Windows releases include a hash-verified Python wheelhouse for Kokoro and faster-whisper. Setup installs it without package-network access; approved package mirrors and the local cache remain recovery paths for source builds.
+Windows releases use the same pinned, hash-verified Kokoro and faster-whisper dependency pack. **Bundled** includes the pack for environments where Python package sources are blocked. **Online** downloads it after setup consent. Both still download selected models and native runtimes; neither is a fully offline installer.
+
+Setup reuses verified files before downloading. Set `LOCAL_VOICE_PACK_FILE` in the app's `.env` to a matching release pack supplied by IT, or `LOCAL_VOICE_PACK_URL` to an approved HTTPS mirror. The mirror and release URL must provide identical pinned bytes; TLS and SHA-256 verification remain mandatory. Interrupted pack downloads resume when the source supports ranges. If every source fails, setup reports an error and preserves working chat. Source builds without a pack keep their existing package-index fallback.
+
+First-time voice setup adds pack extraction time and several GB of temporary disk use. Expanded wheels are removed after successful setup; Online retains the compressed pack for recovery. Model downloads, later launches, and inference are unchanged.
 
 Use only approved HTTPS sources. Do not disable TLS verification, bypass application-control policy, or share configuration and unsanitized logs. An IT-approved Python 3.12 x64 path and package mirrors can be configured in Settings when organizational policy requires them.
 
@@ -98,13 +102,15 @@ The installer is unsigned unless the distributor adds signing. Windows SmartScre
 
 ## Desktop Builds And Releases
 
-Build the unsigned per-user Windows x64 installer:
+Build both unsigned per-user Windows x64 installers (requires Python 3.12 x64):
 
 ```powershell
 npm run dist:win
 ```
 
-The command builds a verified offline Kokoro dependency pack, the frontend, and the NSIS package under `release/`. Generated release files remain ignored.
+Outputs under `release/`: `Voice Work Supervisor-Setup-<version>.exe` (Bundled), `Voice Work Supervisor-Setup-<version>-Online.exe`, the shared dependency pack, and SHA-256 sidecars. Use `npm run dist:win:bundled` or `npm run dist:win:online` for one edition. Both use the Copilot sprite as the app icon and run packaged startup checks.
+
+Compression preserves dependency contents and excludes only other-platform ONNX binaries. Changed packs require recompression and a clean offline-install check; unchanged packs are reused. Building both editions takes longer, but smaller uploads offset some publishing time. Generated assets remain ignored.
 
 From a clean `master` branch, publish a beta either locally or through GitHub Actions:
 
@@ -113,7 +119,7 @@ npm run release:beta:local
 npm run release:beta
 ```
 
-Both flows run validation, publish the installer and its SHA-256 sidecar, and create a prerelease. The local flow requires an authenticated GitHub CLI. The in-app updater requires both release assets.
+Both flows run validation and publish both installers, the matching dependency pack, and their SHA-256 sidecars. The local flow requires an authenticated GitHub CLI. The in-app updater preserves the installed edition; older installations remain Bundled. Do not publish an Online installer without its pinned dependency archive.
 
 ## Themes
 

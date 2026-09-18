@@ -61,21 +61,25 @@ jobs:
       - name: Test
         run: npm test
 
-      - name: Build Windows installer
+      - name: Test voice pack format
+        run: python -I test/voice_pack_test.py
+
+      - name: Build Windows installers
         run: npm run dist:win
 
-      - name: Locate release asset
+      - name: Verify release assets
         id: asset
         shell: pwsh
         run: |
-          $installers = @(Get-ChildItem release -Filter '*-Setup-*.exe')
-          if ($installers.Count -ne 1) { throw "Expected one installer, found $($installers.Count)." }
-          $installer = $installers[0]
-          $checksum = "$((Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLower())  $($installer.Name)"
-          $checksumPath = Join-Path $installer.DirectoryName "$($installer.Name).sha256"
-          Set-Content -Path $checksumPath -Value $checksum -Encoding ascii
-          "installer=$($installer.FullName)" >> $env:GITHUB_OUTPUT
-          "checksum=$checksumPath" >> $env:GITHUB_OUTPUT
+          $version = '${{ steps.version.outputs.version }}'
+          $pack = Get-Content artifacts/voice-pack/descriptor.json -Raw | ConvertFrom-Json
+          $assets = @("release/Voice Work Supervisor-Setup-$version.exe", "release/Voice Work Supervisor-Setup-$version-Online.exe", "release/$($pack.filename)")
+          if ((Get-FileHash $assets[2] -Algorithm SHA256).Hash.ToLower() -ne $pack.sha256) { throw 'Dependency pack checksum mismatch.' }
+          foreach ($asset in $assets) {
+            $filename = Split-Path $asset -Leaf
+            $checksum = "$((Get-FileHash $asset -Algorithm SHA256).Hash.ToLower())  $filename"
+            Set-Content -Path "$asset.sha256" -Value $checksum -Encoding ascii
+          }
 
       - name: Commit and tag version
         shell: pwsh
@@ -96,7 +100,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
           VERSION: ${{ steps.version.outputs.version }}
-          INSTALLER: ${{ steps.asset.outputs.installer }}
-          CHECKSUM: ${{ steps.asset.outputs.checksum }}
         run: |
-          gh release create $env:TAG $env:INSTALLER $env:CHECKSUM --repo '${{ github.repository }}' --title "Voice Work Supervisor $env:VERSION" --generate-notes --prerelease --latest=false
+          $pack = Get-Content artifacts/voice-pack/descriptor.json -Raw | ConvertFrom-Json
+          $assets = @("release/Voice Work Supervisor-Setup-$env:VERSION.exe", "release/Voice Work Supervisor-Setup-$env:VERSION-Online.exe", "release/$($pack.filename)")
+          $upload = @($assets | ForEach-Object { $_; "$_.sha256" })
+          gh release create $env:TAG @upload --repo '${{ github.repository }}' --title "Voice Work Supervisor $env:VERSION" --generate-notes --prerelease --latest=false

@@ -4,6 +4,8 @@ node_modules/
 # Build and packaging outputs
 dist/
 release/
+build/copilot.ico
+build/copilot.png
 
 # Local configuration and secrets
 .env

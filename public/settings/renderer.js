@@ -146,6 +146,8 @@ export function createSettingsRenderer({
   function renderApplicationConfig() {
     if (!configFields) return;
     const config = getConfig();
+    const focusedField = configFields.contains(document.activeElement)
+      ? document.activeElement.closest('.config-field')?.querySelector('[data-config-key]')?.id : null;
     configFields.replaceChildren();
     const warnings = Array.isArray(config?.configuration?.warnings) ? config.configuration.warnings : [];
     if (warnings.length && configFeedback && !configFeedback.textContent) {
@@ -192,7 +194,7 @@ export function createSettingsRenderer({
         let control;
         if (field.type === 'select') {
           control = document.createElement('select');
-          control.dataset.pillbar = '';
+          if (field.options?.length <= 4) control.dataset.pillbar = '';
           if (['DEFAULT_PROVIDER', 'DEFAULT_VOICE_MODE', 'LOCAL_STT_PROVIDER'].includes(field.key)) control.dataset.providerIcons = '';
           for (const fieldOption of field.options || []) {
             const option = document.createElement('option');
@@ -216,6 +218,14 @@ export function createSettingsRenderer({
         control.dataset.configSecret = String(secret);
         if (!secret) control.value = field.value || '';
         wrapper.appendChild(control);
+        if (field.description) {
+          const hint = document.createElement('p');
+          hint.id = `${id}-hint`;
+          hint.className = 'field-hint';
+          hint.textContent = field.description;
+          control.setAttribute('aria-describedby', hint.id);
+          wrapper.appendChild(hint);
+        }
         if (secret && field.configured) {
           const saved = document.createElement('span');
           saved.className = 'config-saved';
@@ -228,6 +238,11 @@ export function createSettingsRenderer({
       configFields.appendChild(group);
     }
     refreshPillbars();
+    if (focusedField) {
+      const control = document.getElementById(focusedField);
+      const target = control?.hidden ? control.nextElementSibling?.querySelector('[aria-checked="true"]') : control;
+      target?.focus({ preventScroll: true });
+    }
   }
 
   return Object.freeze({ populateOptions, populateIntegrations, populateView, renderApplicationConfig });

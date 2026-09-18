@@ -10,7 +10,7 @@ import { pipeline } from 'node:stream/promises';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const hf = (id, label, repo, revision, name) => ({ id, label, repo, revision, name, sourceUrl: `https://huggingface.co/${repo}/resolve/${revision}/${name}` });
 export const ASSETS = Object.freeze([
-  hf('ling', 'Ling Compact GGUF', 'SC117/Ling-3.0-tiny-abliterated-APEX-GGUF', 'b923d16fcf28261f12be9ece2b520ed442403f70', 'Ling-3.0-tiny-abliterated-APEX-I-Compact.gguf'),
+  hf('ling', 'Ling Quality GGUF', 'SC117/Ling-3.0-tiny-abliterated-APEX-GGUF', 'b923d16fcf28261f12be9ece2b520ed442403f70', 'Ling-3.0-tiny-abliterated-APEX-I-Quality.gguf'),
   hf('moonshine', 'Moonshine Tiny Q4_K', 'cstr/moonshine-streaming-tiny-GGUF', '34ac435a44ab618d426a72346987b68ce07bbf44', 'moonshine-streaming-tiny-q4_k.gguf'),
   hf('tokenizer', 'Moonshine tokenizer', 'cstr/moonshine-streaming-tiny-GGUF', '34ac435a44ab618d426a72346987b68ce07bbf44', 'tokenizer.bin'),
   hf('vad', 'Silero VAD 6.2.0', 'ggml-org/whisper-vad', '9ffd54a1e1ee413ddf265af9913beaf518d1639b', 'ggml-silero-v6.2.0.bin'),

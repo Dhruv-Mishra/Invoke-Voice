@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, symlinkSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -63,6 +63,42 @@ test('installer includes physical runtime dependencies, excludes private data an
   assert.equal(config.build.nsis.allowElevation, false);
 });
 
+test('data reset removes only the fixed application directory after its owner exits', context => {
+  const parent = mkdtempSync(path.join(os.tmpdir(), 'invoke-reset-'));
+  context.after(() => rmSync(parent, { recursive: true, force: true }));
+  const dataDir = path.join(parent, 'VoiceSupervisor');
+  const external = path.join(parent, 'external-repository');
+  const legacyUpdateDir = path.join(parent, 'temp', 'VoiceSupervisor', 'updates');
+  mkdirSync(legacyUpdateDir, { recursive: true });
+  writeFileSync(path.join(legacyUpdateDir, 'installer.exe'), 'cached installer');
+  const prepare = spawnSync(process.execPath, ['-e', `const fs = require('node:fs'); const path = require('node:path'); const launcher = require(${JSON.stringify(path.join(root, 'scripts', 'desktop-launch.cjs'))}); const directory = ${JSON.stringify(dataDir)}; for (const name of ['state.json', 'config.json', '.env', 'models/model.gguf', 'runtimes/python.exe', 'desktop/Local Storage/value', 'worktrees/work/result']) { const file = path.join(directory, name); fs.mkdirSync(path.dirname(file), {recursive:true}); fs.writeFileSync(file, 'synthetic data'); } fs.mkdirSync(${JSON.stringify(external)}); launcher.requestDataReset(directory);`], { encoding: 'utf8' });
+  assert.equal(prepare.status, 0, prepare.stderr);
+  writeFileSync(path.join(external, 'keep.txt'), 'external data');
+  symlinkSync(external, path.join(dataDir, 'external-link'), process.platform === 'win32' ? 'junction' : 'dir');
+  assert.equal(desktopLaunch.completeDataReset(dataDir, { legacyUpdateDir }), true);
+  assert.equal(existsSync(dataDir), false);
+  assert.equal(existsSync(external), true);
+  assert.equal(readFileSync(path.join(external, 'keep.txt'), 'utf8'), 'external data');
+  assert.equal(existsSync(legacyUpdateDir), false);
+  assert.equal(desktopLaunch.completeDataReset(dataDir), false);
+  assert.throws(() => desktopLaunch.requestDataReset(parent), /Invalid application data directory/);
+  symlinkSync(external, dataDir, process.platform === 'win32' ? 'junction' : 'dir');
+  assert.throws(() => desktopLaunch.requestDataReset(dataDir), /Invalid application data directory/);
+  assert.throws(() => desktopLaunch.completeDataReset(dataDir), /Invalid application data directory/);
+  assert.equal(readFileSync(path.join(external, 'keep.txt'), 'utf8'), 'external data');
+});
+
+test('data reset refuses to delete files while the requesting process is alive', context => {
+  const parent = mkdtempSync(path.join(os.tmpdir(), 'invoke-reset-live-'));
+  context.after(() => rmSync(parent, { recursive: true, force: true }));
+  const dataDir = path.join(parent, 'VoiceSupervisor');
+  const child = spawnSync(process.execPath, ['-e', `require('node:fs').mkdirSync(${JSON.stringify(dataDir)})`]);
+  assert.equal(child.status, 0);
+  desktopLaunch.requestDataReset(dataDir);
+  assert.throws(() => desktopLaunch.completeDataReset(dataDir), /previous app instance/);
+  assert.equal(existsSync(dataDir), true);
+});
+
 test('local voice pack targets Python 3.12 Windows x64 and verifies a hash-locked offline install', () => {
   const recipe = readFileSync(path.join(root, 'requirements-kokoro-pack.in'), 'utf8');
   const builder = readFileSync(path.join(root, 'scripts', 'build-kokoro-pack.mjs'), 'utf8');
@@ -84,6 +120,9 @@ test('desktop updater uses an isolated preload bridge and verified installer flo
   assert.doesNotMatch(preload, /exposeInMainWorld\([^)]*ipcRenderer/s);
   assert.match(preload, /check: \(\) => ipcRenderer\.invoke\('updates:check'\)/);
   assert.match(preload, /install: \(\) => ipcRenderer\.invoke\('updates:install'\)/);
+  assert.match(preload, /setTheme: \(colors\) => ipcRenderer\.send\('window:theme', colors\)/);
+  assert.match(desktop, /setTitleBarOverlay\(\{ color: colors\.background, symbolColor: colors\.foreground, height: 32 \}\)/);
+  assert.match(readFileSync(path.join(root, 'scripts', 'desktop-icon.mjs'), 'utf8'), /'public', 'copilot-icon.webp'/);
 });
 
 test('beta publisher builds before atomically pushing its version tag and prerelease', () => {
@@ -115,7 +154,7 @@ test('beta publisher builds before atomically pushing its version tag and prerel
 test('desktop allows setup documentation sources but rejects arbitrary URLs and protocols', context => {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'voice-desktop-links-'));
   context.after(() => rmSync(directory, { recursive: true, force: true }));
-  for (const url of ['https://aka.ms/agency', 'https://github.com/Dhruv-Mishra/Invoke-Voice/releases', 'https://github.com/Dhruv-Mishra/Invoke-Voice/releases/latest']) assert.equal(desktopLaunch.allowedExternal(url), true);
+  for (const url of ['https://aka.ms/agency', 'https://outlook.office.com/calendar/', 'https://github.com/Dhruv-Mishra/Invoke-Voice/releases', 'https://github.com/Dhruv-Mishra/Invoke-Voice/releases/latest']) assert.equal(desktopLaunch.allowedExternal(url), true);
   for (const provider of ['whisper', 'moonshine']) {
     const setup = createLocalSetup({ env: { LOCALAPPDATA: directory, LOCAL_STT_PROVIDER: provider } });
     for (const component of setup.snapshot().components) assert.equal(desktopLaunch.allowedExternal(component.sourceUrl), true, component.sourceUrl);

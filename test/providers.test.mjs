@@ -562,7 +562,7 @@ test('voice requests include spoken instructions and preserve final response tex
     assert.equal(requestBody.cache_prompt, true);
     assert.equal(requestBody.messages[0].content, voiceInstructions);
     assert.ok(voiceInstructions.startsWith(supervisorInstructions));
-    assert.deepEqual(events.filter(event => event.type === 'text').map(event => event.text), [chunks.join('')]);
+    assert.deepEqual(events.filter(event => event.type === 'text').map(event => event.text), chunks);
   } finally {
     await new Promise(resolve => server.close(resolve));
   }
@@ -926,7 +926,7 @@ test('normal local tool/result roundtrip verifies thinking false, tools roundtri
     const fullText = textEvents.map(e => e.text).join('');
     assert.ok(!fullText.includes('Internal thought process'), 'Reasoning content must not be output');
     assert.ok(!fullText.includes('think'), 'Thinking tags must not be output');
-    assert.ok(!fullText.includes('Checking existing work registered.'), 'Tool-round prose must not be published as an outcome');
+    assert.ok(fullText.includes('Checking existing work registered.'), 'Local text streams unchanged; silent tool use is instructed at the source');
     assert.ok(fullText.includes('Here are the work areas.'), 'Followup text must be output');
 
     const toolEvents = events.filter(e => e.type === 'tool');
@@ -1043,7 +1043,7 @@ test('truncated tool call stream does NOT invoke callback', async () => {
   }
 });
 
-test('incomplete text streams do not publish unverified answers or report success', async () => {
+test('incomplete local text streams retain partial text but never report success', async () => {
   const server = http.createServer(async (req, res) => {
     for await (const _ of req) {}
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
@@ -1059,9 +1059,40 @@ test('incomplete text streams do not publish unverified answers or report succes
         env: { LOCAL_LLM_URL: `http://127.0.0.1:${server.address().port}/v1` },
       })) events.push(event);
     }, /before completion/i);
-    assert.equal(events.map(event => event.text || '').join(''), '');
+    assert.equal(events.map(event => event.text || '').join(''), 'Partial answer');
     assert.equal(events.some(event => event.type === 'done'), false);
   } finally {
+    await new Promise(resolve => server.close(resolve));
+  }
+});
+
+test('local text reaches the consumer before generation completes', { timeout: 5000 }, async () => {
+  let finish;
+  const gate = new Promise(resolve => { finish = resolve; });
+  const server = http.createServer(async (req, res) => {
+    for await (const chunk of req) {}
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    res.write('data: {"choices":[{"delta":{"content":"Ready now."}}]}\n\n');
+    await gate;
+    res.end('data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const controller = new AbortController();
+  try {
+    const events = [];
+    for await (const event of streamReply({
+      provider: 'local', profile: 'voice', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(2000)]),
+      messages: [{ role: 'user', content: 'Hello' }],
+      env: { LOCAL_LLM_URL: `http://127.0.0.1:${server.address().port}/v1` },
+    })) {
+      events.push(event);
+      if (event.type === 'text') finish();
+    }
+    assert.deepEqual(events, [{ type: 'text', text: 'Ready now.' }, { type: 'done' }]);
+  } finally {
+    finish();
+    controller.abort();
+    server.closeAllConnections();
     await new Promise(resolve => server.close(resolve));
   }
 });

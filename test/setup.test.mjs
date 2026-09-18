@@ -1365,6 +1365,56 @@ test('cached chat resumes after restart when Kokoro installation was incomplete'
   assert.equal(resumed.capabilities.voice.ready, false);
 });
 
+test('managed Compact upgrades to Quality on resume without upgrading custom paths or new installs', windowsSetup, async context => {
+  assert.match(ASSETS[0].name, /APEX-I-Quality\.gguf$/);
+  for (const scenario of ['upgrade', 'failure', 'custom', 'fresh']) await context.test(scenario, async childContext => {
+    const { directory, paths } = fixture(childContext);
+    const oldName = 'Ling-3.0-tiny-abliterated-APEX-I-Compact.gguf';
+    const oldModel = path.join(paths.modelDir, oldName);
+    const env = { SUPERVISOR_CACHE_DIR: paths.home, ...(scenario === 'custom' ? { LOCAL_LLM_PATH: oldModel } : {}) };
+    const pathInputs = Object.fromEntries(['LOCAL_LLM_PATH', 'MOONSHINE_MODEL', 'WHISPER_MODEL_DIR', 'LLAMA_SERVER_BIN', 'CRISPASR_BIN', 'VAD_MODEL', 'PYTHON_BIN'].map(key => [key, env[key] || '']));
+    mkdirSync(paths.receiptDir, { recursive: true });
+    for (const asset of ASSETS.filter(item => ['ling', 'llama'].includes(item.id))) {
+      const destination = asset.id === 'ling' ? oldModel : paths.llama;
+      mkdirSync(path.dirname(destination), { recursive: true });
+      writeFileSync(destination, 'previous verified asset');
+      const stat = statSync(destination);
+      const receipt = path.join(paths.receiptDir, `${asset.id}-${createHash('sha256').update(destination).digest('hex').slice(0, 20)}.json`);
+      writeFileSync(receipt, JSON.stringify({ sourceUrl: asset.sourceUrl.replace('APEX-I-Quality.gguf', 'APEX-I-Compact.gguf'), files: [{ path: destination, size: stat.size, mtimeMs: stat.mtimeMs }] }));
+    }
+    const savedFile = path.join(paths.home, 'local-setup.json');
+    if (scenario !== 'fresh') writeFileSync(savedFile, JSON.stringify({ version: 1, pathInputs, paths: { ling: oldModel, llama: paths.llama } }));
+    const provisioned = [];
+    const activated = [];
+    const setup = createLocalSetup({ env, warm: async () => false,
+      provision: async (destinations, asset, options) => {
+        provisioned.push(asset.id);
+        if (scenario === 'failure') throw Object.assign(new Error('Download unavailable'), { setupMessage: 'Download unavailable' });
+        const content = Buffer.from('synthetic Quality');
+        return ensureAsset(destinations, asset, { ...options, fetchImpl: async url => url.includes('/api/models/')
+          ? Response.json([{ path: asset.name, size: content.length, lfs: { oid: createHash('sha256').update(content).digest('hex') } }]) : new Response(content) });
+      },
+      activateLLM: async options => { activated.push(options.env.LOCAL_LLM_PATH); return { llama: null }; },
+    });
+    childContext.after(() => setup.close());
+    setup.resume();
+    setup.resume();
+    const result = await setup.settled();
+    assert.equal(readFileSync(oldModel, 'utf8'), 'previous verified asset');
+    assert.deepEqual(provisioned, ['upgrade', 'failure'].includes(scenario) ? ['ling'] : []);
+    assert.deepEqual(activated, scenario === 'upgrade' ? [paths.ling] : []);
+    if (scenario === 'upgrade') {
+      assert.equal(result.capabilities.chat.ready, true);
+      assert.equal(assetReady(paths, ASSETS[0]), true);
+      assert.equal(JSON.parse(readFileSync(savedFile, 'utf8')).paths.ling, paths.ling);
+    } else if (scenario === 'failure') {
+      assert.match(result.error, /Download unavailable/);
+      assert.equal(JSON.parse(readFileSync(savedFile, 'utf8')).paths.ling, oldModel);
+    } else assert.equal(result.status, 'idle');
+    assert.ok(paths.home.startsWith(directory));
+  });
+});
+
 test('saved configuration retains valid fields beside malformed values', context => {
   const { directory } = fixture(context);
   writeFileSync(path.join(directory, 'config.json'), JSON.stringify({ version: 1, values: { LLAMA_THREADS: '0', OPENAI_MODEL: 0, GEMINI_MODEL: 'gemini-valid' } }));

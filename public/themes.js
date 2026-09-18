@@ -224,4 +224,5 @@ export function applyTheme(theme, { transparency = true, wallpaperStrength = 100
   root.dataset.appearance = theme.id;
   root.dataset.transparency = transparency ? 'on' : 'off';
   root.style.colorScheme = theme.preferences.colorScheme;
+  globalThis.window?.voiceSupervisorWindow?.setTheme({ background: tokens['--cp-bg'], foreground: tokens['--cp-text'] });
 }

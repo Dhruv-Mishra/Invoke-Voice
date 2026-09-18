@@ -139,6 +139,10 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
   const completionFile = path.join(paths.home, 'local-setup.json');
   const saved = readJson(completionFile);
   const pathInputs = Object.fromEntries(['LOCAL_LLM_PATH', 'MOONSHINE_MODEL', 'WHISPER_MODEL_DIR', 'LLAMA_SERVER_BIN', 'CRISPASR_BIN', 'VAD_MODEL', 'PYTHON_BIN'].map(key => [key, env[key] || '']));
+  const previousModel = { ...ASSETS[0], name: 'Ling-3.0-tiny-abliterated-APEX-I-Compact.gguf', sourceUrl: ASSETS[0].sourceUrl.replace('APEX-I-Quality.gguf', 'APEX-I-Compact.gguf') };
+  const upgradeManagedModel = saved?.version === 1 && !pathInputs.LOCAL_LLM_PATH && !saved.pathInputs?.LOCAL_LLM_PATH
+    && saved.paths?.ling === path.join(paths.modelDir, previousModel.name)
+    && assetReady(paths, previousModel, saved.paths.ling);
   if (saved?.version === 1 && saved.paths && JSON.stringify(saved.pathInputs) === JSON.stringify(pathInputs)) {
     for (const asset of ASSETS) {
       const candidate = saved.paths[asset.id];
@@ -384,10 +388,14 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
       applyPaths();
       writeJson(completionFile, { version: 1, pathInputs, paths: Object.fromEntries(ASSETS.map(asset => [asset.id, paths[asset.id]])) });
     }),
-    async activate({ signal }) {
+    async activate({ signal, report = () => {} }) {
       if (active) return;
+      if (upgradeManagedModel && !assetReady(paths, ASSETS[0])) {
+        await withSetupLock(paths, () => provision(paths, ASSETS[0], { report, signal }));
+      }
       await closeLocalVoice();
       await activateChat({ report: () => {}, signal });
+      if (upgradeManagedModel) writeJson(completionFile, { version: 1, pathInputs, paths: Object.fromEntries(ASSETS.map(asset => [asset.id, paths[asset.id]])) });
       applyPaths();
       let runtime = `${sttLabel()} / Kokoro`;
       try {
@@ -451,7 +459,7 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
       setup.invalidate(voiceMessage);
       if (inspect().every(component => component.ready)) setup.resume();
     },
-    resume() { if (saved?.version === 1 && ASSETS.filter(asset => CHAT_ASSET_IDS.has(asset.id)).every(asset => assetReady(paths, asset))) setup.resume(); },
+    resume() { if (saved?.version === 1 && ASSETS.filter(asset => CHAT_ASSET_IDS.has(asset.id)).every(asset => assetReady(paths, asset) || (asset.id === 'ling' && upgradeManagedModel))) setup.resume(); },
     invalidate(message) {
       chatReady = false;
       voiceReady = false;

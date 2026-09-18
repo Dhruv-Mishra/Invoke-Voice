@@ -42,7 +42,7 @@ function reportRuntimeExit(runtime) {
 }
 
 async function startKokoroRuntime(config, env, signal) {
-  const process = spawn(config.pythonBin, ['-u', worker], { windowsHide: true, env: { ...env, LOCAL_THREADS: env.KOKORO_THREADS || env.LOCAL_THREADS || '8' }, stdio: ['pipe', 'pipe', 'pipe'] });
+  const process = spawn(config.pythonBin, ['-u', worker], { windowsHide: true, env: { ...env, LOCAL_THREADS: env.KOKORO_THREADS || env.LOCAL_THREADS || localThreadDefault(8) }, stdio: ['pipe', 'pipe', 'pipe'] });
   kokoroProcess = process;
   desktopLaunch.trackChild(process);
   let diagnostic = '';

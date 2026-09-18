@@ -1,4 +1,38 @@
 const path = require('node:path');
+const fs = require('node:fs');
+
+function resetMarker(dataDir) {
+  if (!path.isAbsolute(dataDir) || path.basename(dataDir) !== 'VoiceSupervisor' || fs.lstatSync(dataDir).isSymbolicLink()) throw new Error('Invalid application data directory.');
+  return path.join(dataDir, '.reset-request.json');
+}
+
+function requestDataReset(dataDir) {
+  fs.writeFileSync(resetMarker(dataDir), JSON.stringify({ version: 1, parentPid: process.pid }), { encoding: 'utf8', mode: 0o600 });
+}
+
+function completeDataReset(dataDir, { legacyUpdateDir } = {}) {
+  if (!fs.existsSync(dataDir)) return false;
+  const marker = resetMarker(dataDir);
+  if (!fs.existsSync(marker)) return false;
+  const request = JSON.parse(fs.readFileSync(marker, 'utf8'));
+  if (request.version !== 1 || !Number.isSafeInteger(request.parentPid) || request.parentPid <= 0) throw new Error('Invalid data reset request.');
+  try {
+    process.kill(request.parentPid, 0);
+    throw new Error('Close the previous app instance before clearing application data.');
+  } catch (error) {
+    if (error.code !== 'ESRCH') throw error;
+  }
+  const removeOptions = { recursive: true, force: true, maxRetries: 10, retryDelay: 200 };
+  if (legacyUpdateDir && fs.existsSync(legacyUpdateDir)) {
+    if (!path.isAbsolute(legacyUpdateDir) || path.basename(legacyUpdateDir) !== 'updates' || path.basename(path.dirname(legacyUpdateDir)) !== 'VoiceSupervisor' || fs.lstatSync(path.dirname(legacyUpdateDir)).isSymbolicLink()) throw new Error('Invalid update cache directory.');
+    fs.rmSync(legacyUpdateDir, removeOptions);
+  }
+  for (const name of fs.readdirSync(dataDir)) {
+    if (name !== path.basename(marker)) fs.rmSync(path.join(dataDir, name), removeOptions);
+  }
+  fs.rmSync(dataDir, removeOptions);
+  return true;
+}
 
 function serverLaunch({ executable, appRoot, resourcesPath, packaged, dataDir, env = process.env }) {
   const backendRoot = packaged ? path.join(resourcesPath, 'app.asar.unpacked') : appRoot;
@@ -22,6 +56,7 @@ const externalSources = new Set([
   'https://pypi.org/project/faster-whisper/1.2.1/',
   'https://docs.github.com/en/copilot',
   'https://aka.ms/agency',
+  'https://outlook.office.com/calendar/',
   'https://github.com/Dhruv-Mishra/Invoke-Voice/releases',
   'https://github.com/Dhruv-Mishra/Invoke-Voice/releases/latest',
 ]);
@@ -54,4 +89,4 @@ function stopChild(child) {
   });
 }
 
-module.exports = { serverLaunch, allowedExternal, trackChild, stopChild };
+module.exports = { serverLaunch, allowedExternal, trackChild, stopChild, requestDataReset, completeDataReset };

@@ -2,7 +2,7 @@ const { spawn } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
 const { app, BrowserWindow, session, dialog, shell, ipcMain, net } = require('electron');
-const { serverLaunch, allowedExternal } = require('./scripts/desktop-launch.cjs');
+const { serverLaunch, allowedExternal, requestDataReset, completeDataReset } = require('./scripts/desktop-launch.cjs');
 const { checkForUpdate, downloadUpdate, publicUpdate } = require('./desktop-update.cjs');
 
 if (process.env.VOICE_SUPERVISOR_DISABLE_GPU === '1') app.disableHardwareAcceleration();
@@ -22,6 +22,7 @@ const dataDir = path.join(process.env.LOCALAPPDATA || app.getPath('appData'), 'V
 const logFile = path.join(dataDir, 'logs', 'desktop.log');
 let dataPathError = false;
 try {
+  if (app.isPackaged && process.argv.includes('--reset-application-data')) completeDataReset(dataDir, { legacyUpdateDir: path.join(app.getPath('temp'), 'VoiceSupervisor', 'updates') });
   fs.mkdirSync(path.join(dataDir, 'desktop'), { recursive: true });
   app.setPath('userData', path.join(dataDir, 'desktop'));
 } catch { dataPathError = true; }
@@ -48,6 +49,27 @@ function logDesktopError(label, error) {
   try { fs.writeSync(logDescriptor, `${label}: ${error?.stack || error}\n`); } catch {}
 }
 
+ipcMain.on('window:theme', (event, colors) => {
+  if (!trustedRenderer(event) || !colors || !/^#[\da-f]{6}$/i.test(colors.background) || !/^#[\da-f]{6}$/i.test(colors.foreground)) return;
+  mainWindow.setTitleBarOverlay({ color: colors.background, symbolColor: colors.foreground, height: 32 });
+});
+
+ipcMain.handle('data-reset:info', event => trustedRenderer(event) ? { supported: app.isPackaged, path: dataDir } : { supported: false });
+ipcMain.handle('data-reset:clear', (event, confirmation) => {
+  if (!trustedRenderer(event) || !app.isPackaged || confirmation !== 'DELETE_ALL_APP_DATA' || closing || installingUpdate) return { started: false, error: 'Data reset is unavailable.' };
+  try {
+    requestDataReset(dataDir);
+    setImmediate(() => {
+      app.relaunch({ args: [...process.argv.slice(1).filter(value => value !== '--reset-application-data'), '--reset-application-data'] });
+      void stop();
+    });
+    return { started: true };
+  } catch (error) {
+    logDesktopError('Data reset failed', error);
+    return { started: false, error: 'Could not prepare data reset. Check access to the application data folder and retry.' };
+  }
+});
+
 ipcMain.handle('updates:check', async event => {
   if (!trustedRenderer(event)) return { supported: false, error: 'Update requests are available only from the local application.' };
   if (!app.isPackaged) return { supported: false, currentVersion: app.getVersion() };
@@ -66,7 +88,7 @@ ipcMain.handle('updates:install', async event => {
   if (!pendingUpdate?.available) return { started: false, error: 'Check for updates before installing.' };
   installingUpdate = true;
   try {
-    const installer = await downloadUpdate(pendingUpdate, path.join(app.getPath('temp'), 'VoiceSupervisor', 'updates'), { fetchImpl: net.fetch.bind(net) });
+    const installer = await downloadUpdate(pendingUpdate, path.join(dataDir, 'updates'), { fetchImpl: net.fetch.bind(net) });
     const installerChild = spawn(installer, [], { detached: true, stdio: 'ignore', windowsHide: false, shell: false });
     await new Promise((resolve, reject) => {
       installerChild.once('spawn', resolve);

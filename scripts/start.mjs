@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { voiceInstructions } from '../src/llm.mjs';
 import { localThreadDefault } from '../src/runtime-config.mjs';
-import { tools } from '../src/supervisor/contract.mjs';
+import { voiceTools } from '../src/supervisor/contract.mjs';
 import net from 'node:net';
 import { stackPaths } from './models.mjs';
 import desktopLaunch from './desktop-launch.cjs';
@@ -190,7 +190,7 @@ export async function ensureLocalLLM(options = {}) {
         body: JSON.stringify({
           model: env.LOCAL_LLM_MODEL || 'ling-local',
           messages: [{ role: 'system', content: voiceInstructions }, { role: 'user', content: 'Say hello.' }],
-          tools,
+          tools: voiceTools,
           tool_choice: 'auto',
           chat_template_kwargs: { enable_thinking: false },
           cache_prompt: true,

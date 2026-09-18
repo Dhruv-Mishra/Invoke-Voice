@@ -379,6 +379,12 @@ function activateView(viewName) {
   if (viewName === 'settings') {
     populateSettingsView();
   }
+  if (viewName === 'calendar') {
+    document.getElementById('calendar-date').textContent = new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric' }).format(new Date());
+    document.getElementById('calendar-feedback').textContent = privateWorkEnabled()
+      ? 'Ready to request your schedule. Calendar access depends on your work account.'
+      : 'Private work sources are off. Enable Read-only access in Settings > Providers & keys > Coding tools, then Save config.';
+  }
   document.getElementById('view-dialog-title').textContent = viewTitles[viewName] || 'Invoke';
   syncViewPresentation();
   if (previous !== viewName && viewName !== 'home') {
@@ -442,7 +448,39 @@ document.getElementById('dock-route-btn').addEventListener('click', () => {
   closeVoiceOptions();
   openRouteConfig(voiceOptionsButton);
 });
-document.getElementById('calendar-date').textContent = new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric' }).format(new Date());
+function privateWorkEnabled() {
+  return appConfig?.configuration?.fields?.find(field => field.key === 'AGENCY_WORK_DATA_ACCESS')?.value === 'read-only';
+}
+
+function openPrivateWorkSettings() {
+  activateView('settings');
+  document.getElementById('config-section').open = true;
+  const control = document.getElementById('config-agency-work-data-access');
+  const target = document.querySelector('[data-for="config-agency-work-data-access"] button[aria-checked="true"]') || control || configSaveBtn;
+  target.scrollIntoView({ block: 'center' });
+  target.focus({ preventScroll: true });
+}
+document.querySelectorAll('[data-private-work-settings]').forEach(button => button.addEventListener('click', openPrivateWorkSettings));
+document.getElementById('calendar-check-btn').addEventListener('click', async event => {
+  if (!privateWorkEnabled()) return openPrivateWorkSettings();
+  const button = event.currentTarget;
+  const feedback = document.getElementById('calendar-feedback');
+  button.disabled = true;
+  feedback.textContent = 'Requesting your schedule...';
+  try {
+    const receipt = await callSupervisorTool('start_work', {
+      backend: 'agency', readOnly: true,
+      objective: 'Check my Outlook/Teams calendar for today in my work-account timezone. List meeting titles, local start/end times and available join links. Do not change events. State clearly if access fails; do not infer an empty calendar from a failed request.',
+    });
+    if (!receipt.taskId) throw new Error(receipt.error || 'The calendar request could not start.');
+    await loadState();
+    activateView('workspace');
+    const task = appState.tasks?.find(item => item.id === receipt.taskId);
+    if (task) showTaskDetail(task);
+  } catch (error) {
+    feedback.textContent = error.message || 'Could not check your calendar.';
+  } finally { button.disabled = false; }
+});
 
 const conversationDialog = document.getElementById('conversation-dialog');
 function openConversation(text) {
@@ -1522,6 +1560,33 @@ if (settingsForm) {
   });
 }
 
+if (window.voiceSupervisorData) {
+  const clearData = document.getElementById('application-data-clear');
+  const feedback = document.getElementById('application-data-feedback');
+  window.voiceSupervisorData.info().then(info => {
+    if (!info.supported) return;
+    clearData.disabled = false;
+    feedback.textContent = `Data folder: ${info.path}`;
+    clearData.addEventListener('click', async () => {
+      clearData.disabled = true;
+      let restarting = false;
+      try {
+        const confirmed = await showAppConfirm('Permanently delete all data in the Invoke data folder, including saved keys, settings, conversations, tasks, unsaved managed worktrees, models, runtimes and browser data? The app will close and restart with setup required. External repositories, custom files and Agency account credentials are not deleted. This cannot be undone.', { heading: 'Clear all application data?', acceptLabel: 'Delete data and restart', danger: true });
+        if (!confirmed) return;
+        const result = await window.voiceSupervisorData.clear('DELETE_ALL_APP_DATA');
+        if (!result.started) throw new Error(result.error || 'Data reset could not start.');
+        restarting = true;
+        feedback.textContent = 'Closing Invoke and clearing application data...';
+        return;
+      } catch (error) {
+        feedback.textContent = error.message;
+      } finally {
+        clearData.disabled = restarting;
+      }
+    });
+  }).catch(() => { feedback.textContent = 'Application data reset is unavailable.'; });
+}
+
 if (window.voiceSupervisorUpdates && applicationUpdate && applicationUpdateBtn) {
   applicationUpdate.hidden = false;
   let updateAvailable = false;
@@ -1585,7 +1650,7 @@ async function runAgencyCheck() {
     populateIntegrationsTable();
     const failures = result.results.filter(item => item.status !== 'ready');
     feedback.textContent = failures.length ? 'Some connections need attention.' : 'Tool catalogs verified.';
-    if (result.workDataAccess === 'disabled') feedback.textContent += ' Private work-data access is off.';
+    if (result.workDataAccess === 'disabled') feedback.textContent += ' Private work sources are off. Select Private work sources below, choose Read-only, then Save config.';
     feedback.className = `settings-feedback${failures.length ? ' error' : ''}`;
     return result;
   } catch (error) {
@@ -1600,16 +1665,20 @@ async function checkAgencyOnEntry() {
   if (appState.settings.defaultBackend !== 'agency') return;
   const result = await checkAgencyConnections();
   const messages = [...new Set(result.results.filter(item => item.status !== 'ready').map(item => item.message))];
-  if (result.workDataAccess === 'disabled' && !appState.settings.agencySetupPrompted) messages.push('Private work-data access is off. Enable Agency work data in Settings > Config > Coding tools for work-data research.');
+  const needsConsent = result.workDataAccess === 'disabled';
+  if (needsConsent && !appState.settings.agencySetupPrompted) messages.push('Enable Teams and calendar: Settings > Providers & keys > Coding tools > Private work sources > Read-only, then Save config. Uses cloud services; questions and answers are saved and may be spoken. Sign in to Agency with your work account.');
   if (!messages.length) return;
   while (document.querySelector('dialog[open]')) {
     await new Promise(resolve => document.querySelector('dialog[open]').addEventListener('close', resolve, { once: true }));
   }
   const openSettings = await showAppConfirm(messages.join('\n\n'), { heading: 'Agency setup', acceptLabel: 'Open settings', cancelLabel: 'Later' });
   if (openSettings) {
-    activateView('settings');
-    agencyCheckBtn.closest('details').open = true;
-    agencyCheckBtn.scrollIntoView({ block: 'center' });
+    if (needsConsent) openPrivateWorkSettings();
+    else {
+      activateView('settings');
+      agencyCheckBtn.closest('details').open = true;
+      agencyCheckBtn.scrollIntoView({ block: 'center' });
+    }
   }
   try {
     const response = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agencySetupPrompted: true }) });
@@ -2643,6 +2712,7 @@ async function sendChatMessage() {
   const chatToken = ++currentChatToken;
   const abortController = new AbortController();
   currentChatAbortController = abortController;
+  let renderFrame = null;
 
   try {
     const res = await fetch('/api/chat', {
@@ -2670,6 +2740,13 @@ async function sendChatMessage() {
     let assistantBubble = null;
     let accumulated = '';
     let buffer = '';
+    const renderReply = () => {
+      renderFrame = null;
+      if (!assistantBubble || chatToken !== currentChatToken || abortController.signal.aborted) return;
+      renderSafeMarkdown(assistantBubble, accumulated);
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+      conversationUI.preview('assistant', accumulated);
+    };
 
     while (true) {
       const { done, value } = await reader.read();
@@ -2695,9 +2772,7 @@ async function sendChatMessage() {
               chatMessages.appendChild(assistantBubble);
             }
             accumulated += evt.text;
-            renderSafeMarkdown(assistantBubble, accumulated);
-            chatMessages.scrollTop = chatMessages.scrollHeight;
-            conversationUI.preview('assistant', accumulated);
+            if (renderFrame === null) renderFrame = requestAnimationFrame(renderReply);
           } else if (evt.type === 'tool') {
             showToolActivity();
             const toolStr = typeof evt.result === 'object' ? JSON.stringify(evt.result) : String(evt.result);
@@ -2713,6 +2788,8 @@ async function sendChatMessage() {
     }
 
     if (chatToken === currentChatToken && !abortController.signal.aborted && accumulated) {
+      if (renderFrame !== null) cancelAnimationFrame(renderFrame);
+      renderReply();
       conversation.push({ role: 'assistant', content: accumulated });
       conversationUI.message('assistant', accumulated, assistantBubble);
     }
@@ -2723,6 +2800,7 @@ async function sendChatMessage() {
     conversationUI.clearCaption();
     appendMessage('system', `Error sending message: ${err.message}`);
   } finally {
+    if (renderFrame !== null) cancelAnimationFrame(renderFrame);
     if (currentChatAbortController === abortController) {
       currentChatAbortController = null;
     }

@@ -397,6 +397,7 @@ export async function* streamReply({
           const text = (provider === 'local' || provider === 'custom') ? reasoningFilter.process(delta.content) : delta.content;
           if (text) {
             roundText += text;
+            if (provider === 'local' && !toolCalls.length && !delta.tool_calls?.length) yield { type: 'text', text };
           }
         }
         if (delta?.tool_calls) {
@@ -415,6 +416,7 @@ export async function* streamReply({
         const remaining = reasoningFilter.flush();
         if (remaining) {
           roundText += remaining;
+          if (provider === 'local' && !toolCalls.length) yield { type: 'text', text: remaining };
         }
       }
     }
@@ -426,7 +428,7 @@ export async function* streamReply({
         const reason = isAnthropic ? stopReason : finishReason;
         throw new Error(`Response stream ended before completion (${reason || 'no finish reason'})`);
       }
-      if (roundText) yield { type: 'text', text: roundText };
+      if (roundText && provider !== 'local') yield { type: 'text', text: roundText };
       completed = true;
       break;
     }

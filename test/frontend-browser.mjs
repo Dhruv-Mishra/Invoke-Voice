@@ -3,7 +3,7 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, ipcMain } from 'electron';
 import { WebSocketServer } from 'ws';
 
 if (process.env.VOICE_SUPERVISOR_DISABLE_GPU === '1') app.disableHardwareAcceleration();
@@ -25,6 +25,11 @@ let setupReads = 0;
 let setupWrites = 0;
 let settingsWrites = 0;
 let agencyChecks = 0;
+let windowTheme;
+const resetRequests = [];
+ipcMain.handle('data-reset:info', () => ({ supported: true, path: 'C:\\Users\\fixture\\AppData\\Local\\VoiceSupervisor' }));
+ipcMain.handle('data-reset:clear', (_event, confirmation) => { resetRequests.push(confirmation); return { started: true }; });
+const calendarRequests = [];
 let configReads = 0;
 let setupHttpStatus = 200;
 const setupRequests = [];
@@ -57,6 +62,7 @@ const config = {
     { key: 'LLAMA_THREADS', label: 'Threads', group: 'Fixture', type: 'number', secret: false, value: '8', min: 1, max: 128 },
     { key: 'OPENAI_API_KEY', label: 'OpenAI key', group: 'Fixture', type: 'password', secret: true, configured: true },
     { key: 'LOCAL_STT_PROVIDER', label: 'Local speech recognition', group: 'Local speech', type: 'select', value: 'whisper', options: [{ value: 'whisper', label: 'Whisper Small (INT8)' }, { value: 'moonshine', label: 'Moonshine Tiny (streaming)' }] },
+    { key: 'AGENCY_WORK_DATA_ACCESS', label: 'Private work sources', description: 'Uses cloud services; questions and answers are saved and may be spoken.', group: 'Coding tools', type: 'select', value: 'disabled', options: [{ value: 'disabled', label: 'Off' }, { value: 'read-only', label: 'Read-only' }] },
   ] },
 };
 
@@ -246,6 +252,13 @@ try {
           let body = '';
           for await (const chunk of request) body += chunk;
           const input = JSON.parse(body);
+          if (input.name === 'start_work') {
+            calendarRequests.push(input);
+            fixtureTasks.push({ id: 'calendar-task', title: 'Today\'s calendar', state: 'running', readOnly: true });
+            response.writeHead(200, { 'Content-Type': 'application/json' });
+            response.end(JSON.stringify({ taskId: 'calendar-task', state: 'running' }));
+            return;
+          }
           assert.equal(input.name, 'control_app');
           assert.equal(input.args.action, 'clear_notifications');
           fixtureNotifications.length = 0;
@@ -262,6 +275,7 @@ try {
             const values = JSON.parse(body).values;
             config.local.sttProvider = values.LOCAL_STT_PROVIDER;
             config.configuration.fields.find(field => field.key === 'LOCAL_STT_PROVIDER').value = values.LOCAL_STT_PROVIDER;
+            config.configuration.fields.find(field => field.key === 'AGENCY_WORK_DATA_ACCESS').value = values.AGENCY_WORK_DATA_ACCESS;
             setup.message = `${values.LOCAL_STT_PROVIDER} selected`;
           }
         }
@@ -305,7 +319,11 @@ try {
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   console.log('Browser fixture: loading UI');
-  browser = new BrowserWindow({ width: 1440, height: 960, show: true, titleBarStyle: 'hidden', titleBarOverlay: { height: 32 }, webPreferences: { partition: `frontend-fixture-${process.pid}`, backgroundThrottling: false, contextIsolation: true, sandbox: true } });
+  ipcMain.on('window:theme', (_event, colors) => {
+    windowTheme = colors;
+    browser.setTitleBarOverlay({ color: colors.background, symbolColor: colors.foreground, height: 32 });
+  });
+  browser = new BrowserWindow({ width: 1440, height: 960, show: true, titleBarStyle: 'hidden', titleBarOverlay: { height: 32 }, webPreferences: { preload: fileURLToPath(new URL('../desktop-preload.cjs', import.meta.url)), partition: `frontend-fixture-${process.pid}`, backgroundThrottling: false, contextIsolation: true, sandbox: true } });
   browser.webContents.session.setPermissionRequestHandler((_contents, permission, callback) => callback(permission === 'media'));
   console.log('Browser fixture: initializing renderer');
   await browser.loadURL('about:blank');
@@ -320,6 +338,14 @@ try {
   await waitFor(() => document.getElementById('route-status-badge').textContent.includes('Ready'));
   console.log('Browser fixture: route ready');
   assert.equal(await evaluate(() => ['end-call-btn', 'notifications-btn', 'notifications-read', 'notifications-clear'].every(id => document.getElementById(id).querySelector('svg'))), true, 'call and inbox buttons must render registered icons');
+  const bellCentered = () => {
+    const button = document.getElementById('notifications-btn').getBoundingClientRect();
+    const icon = document.querySelector('#notifications-btn svg').getBoundingClientRect();
+    return Math.abs(button.left + button.width / 2 - icon.left - icon.width / 2) < 1
+      && Math.abs(button.top + button.height / 2 - icon.top - icon.height / 2) < 1;
+  };
+  assert.equal(await evaluate(bellCentered), true, 'empty inbox bell must be centered');
+  assert.equal(await evaluate(() => document.querySelector('.sidebar-brand img').src.includes('copilot-icon') && document.querySelector('link[rel="icon"]').href.includes('copilot-icon')), true);
 
   assert.equal(await evaluate(() => document.querySelectorAll('.appearance-options input').length), 0);
   assert.equal(await evaluate(() => document.querySelector('.top-bar').getBoundingClientRect().width), 248);
@@ -394,7 +420,7 @@ try {
   assert.equal(await evaluate(() => document.getElementById('setup-cache').textContent), setup.cacheDir);
   assert.equal(await evaluate(() => document.querySelectorAll('#setup-components a[href]').length), 1);
   assert.equal(await evaluate(() => document.querySelector('#setup-components a[href]').rel), 'noopener noreferrer');
-  assert.equal(await evaluate(() => document.querySelector('.setup-estimate').textContent.includes('5-6 GB') && document.querySelector('.setup-estimate').textContent.includes('12 GB')), true);
+  assert.equal(await evaluate(() => document.querySelector('.setup-estimate').textContent.includes('7-8 GB') && document.querySelector('.setup-estimate').textContent.includes('18 GB')), true);
   await click('#setup-install-btn');
   assert.equal(setupWrites, 0);
   await click('#setup-consent');
@@ -462,19 +488,22 @@ try {
   }), true);
   await evaluate(() => document.getElementById('settings-save-btn').focus());
   await press('Tab');
-  assert.equal(await evaluate(() => document.activeElement === document.querySelector('#settings-view > .settings-container > details:last-child > summary')), true);
+  assert.equal(await evaluate(() => document.activeElement === document.querySelector('#settings-view > .settings-container > details:last-of-type > summary')), true);
+  await press('Tab');
+  assert.equal(await evaluate(() => document.activeElement.id), 'application-data-clear');
   await press('Tab');
   assert.equal(await evaluate(() => document.activeElement.id), 'close-view-btn');
   await press('Tab', 8);
   await press('Tab', 8);
+  await press('Tab', 8);
   assert.equal(await evaluate(() => document.activeElement.id), 'settings-save-btn');
-  await click('#settings-view > .settings-container > details:last-child > summary');
+  await click('#settings-view > .settings-container > details:last-of-type > summary');
   await pointerClick('#agency-check-btn');
-  await waitFor(() => !document.getElementById('agency-check-btn').disabled && document.getElementById('agency-check-feedback').textContent.includes('Private work-data access is off'));
+  await waitFor(() => !document.getElementById('agency-check-btn').disabled && document.getElementById('agency-check-feedback').textContent.includes('Private work sources are off'));
   assert.equal(agencyChecks, 1);
   assert.equal(await evaluate(() => Boolean(document.querySelector('#agency-check-btn svg'))), true);
   assert.equal(await evaluate(() => document.querySelector('#integrations-table-body img') === null && document.getElementById('integrations-table-body').textContent.includes('<img src=x onerror=alert(1)>')), true);
-  await click('#settings-view > .settings-container > details:last-child > summary');
+  await click('#settings-view > .settings-container > details:last-of-type > summary');
   await evaluate(() => document.getElementById('home-tab').focus());
   assert.equal(await evaluate(() => document.getElementById('view-dialog').contains(document.activeElement)), true);
   await press('Escape');
@@ -953,7 +982,8 @@ try {
   await pointerClick('#voice-options-btn');
   assert.equal(await evaluate(() => {
     const style = getComputedStyle(document.getElementById('voice-options'));
-    return Number(style.backgroundColor.match(/[\d.]+/g).at(-1)) < 1 && style.backdropFilter !== 'none';
+    return style.backgroundColor === getComputedStyle(document.documentElement).getPropertyValue('--cp-panel-strong').trim()
+      && style.backdropFilter === 'none';
   }), true);
   await pointerClick('#voice-options-btn');
   await voice({ type: 'tool', name: 'list_work', result: { ok: true } });
@@ -1141,6 +1171,7 @@ try {
   eventResponse.write(`data: ${JSON.stringify({ type: 'state', state: { areas: [], tasks: fixtureTasks, settings, notifications: fixtureNotifications } })}\n\n`);
   for (const notification of fixtureNotifications) eventResponse.write(`data: ${JSON.stringify({ type: 'notification', notification })}\n\n`);
   await waitFor(() => document.getElementById('notifications-count').textContent === '2');
+  assert.equal(await evaluate(bellCentered), true, 'unread count must not move the bell');
   await pointerClick('#notifications-btn');
   assert.equal(await evaluate(() => document.querySelectorAll('#notifications-list .notification-item').length), 2);
   assert.equal(await evaluate(() => document.querySelectorAll('#notifications-list img').length), 0);
@@ -1181,6 +1212,40 @@ try {
   assert.equal(await evaluate(() => document.querySelector('[data-app-dialog-cancel]').textContent), 'Later');
   await click('[data-app-dialog-cancel]');
   await waitFor(() => !document.getElementById('app-dialog').open);
+  await visit('calendar');
+  assert.equal(await evaluate(() => document.querySelector('#calendar-view a').href), 'https://outlook.office.com/calendar/');
+  await pointerClick('#calendar-check-btn');
+  assert.equal(calendarRequests.length, 0, 'opening consent must not read private work sources');
+  assert.equal(await evaluate(() => document.getElementById('config-section').open && document.activeElement.closest('[data-for="config-agency-work-data-access"]') !== null), true);
+  assert.match(await evaluate(() => document.getElementById('config-agency-work-data-access-hint').textContent), /cloud services/);
+  await pointerClick('[data-for="config-agency-work-data-access"] button[value="read-only"]');
+  await pointerClick('#config-save-btn');
+  await waitFor(() => document.getElementById('config-feedback').textContent.includes('Config saved'));
+  await visit('calendar');
+  await screenshot('calendar-connected');
+  await pointerClick('#calendar-check-btn');
+  await waitFor(() => document.getElementById('task-detail-dialog').open);
+  assert.equal(calendarRequests.length, 1);
+  assert.equal(calendarRequests[0].args.backend, 'agency');
+  assert.equal(calendarRequests[0].args.readOnly, true);
+  assert.match(calendarRequests[0].args.objective, /work-account timezone/);
+  assert.deepEqual(windowTheme, await evaluate(() => ({ background: document.documentElement.style.getPropertyValue('--cp-bg'), foreground: document.documentElement.style.getPropertyValue('--cp-text') })), 'native controls follow the active theme');
+  await press('Escape');
+  await visit('settings');
+  await pointerClick('#application-data-clear');
+  assert.equal(await evaluate(() => Boolean(document.querySelector('#application-data-title svg') && document.querySelector('#application-data-clear svg'))), true);
+  await waitFor(() => document.getElementById('app-dialog').open);
+  assert.equal(await evaluate(() => document.activeElement.hasAttribute('data-app-dialog-cancel')), true);
+  assert.match(await evaluate(() => document.querySelector('[data-app-dialog-message]').textContent), /cannot be undone/);
+  await screenshot('clear-data-confirmation');
+  await click('[data-app-dialog-cancel]');
+  await waitFor(() => !document.getElementById('application-data-clear').disabled);
+  assert.deepEqual(resetRequests, []);
+  await pointerClick('#application-data-clear');
+  await waitFor(() => document.getElementById('app-dialog').open);
+  await click('[data-app-dialog-accept]');
+  await waitFor(() => document.getElementById('application-data-feedback').textContent.includes('Closing Invoke'));
+  assert.deepEqual(resetRequests, ['DELETE_ALL_APP_DATA']);
   assert.deepEqual(errors, []);
   console.log('Frontend browser checks passed: real toggle/input events and painted surfaces, two overlay captions, persisted transparency, setup lifecycle, unchanged voice/SSE ownership, themes and five viewports.');
 } catch (error) {

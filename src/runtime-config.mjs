@@ -31,7 +31,7 @@ const fields = Object.freeze([
   { key: 'LOCAL_SPACY_MODEL_URL', label: 'spaCy English 3.8.0 wheel URL (optional)', group: 'Local setup network', type: 'url' },
   { key: 'COPILOT_CLI', label: 'Copilot CLI executable', group: 'Coding tools', type: 'text', defaultValue: process.platform === 'win32' ? 'copilot.exe' : 'copilot' },
   { key: 'AGENCY_CLI', label: 'Agency executable', group: 'Coding tools', type: 'text', defaultValue: process.platform === 'win32' ? 'agency.exe' : 'agency' },
-  { key: 'AGENCY_WORK_DATA_ACCESS', label: 'Agency work data (cloud, saved history, spoken answers)', group: 'Coding tools', type: 'select', defaultValue: 'disabled', options: [['disabled', 'Off'], ['read-only', 'Allow WorkIQ, Teams, calendar and people reads']] },
+  { key: 'AGENCY_WORK_DATA_ACCESS', label: 'Private work sources', description: 'Allow Agency to read WorkIQ, Teams, Outlook calendar and people. Uses cloud services; questions and answers are saved and may be spoken.', group: 'Coding tools', type: 'select', defaultValue: 'disabled', options: [['disabled', 'Off'], ['read-only', 'Read-only']] },
   { key: 'COPILOT_REASONING', label: 'Copilot reasoning effort', group: 'Coding tools', type: 'select', defaultValue: 'medium', options: [['low', 'Low'], ['medium', 'Medium'], ['high', 'High']] },
   { key: 'LLAMA_THREADS', label: 'Ling threads', group: 'Local performance', type: 'number', defaultValue: localThreadDefault(8), min: 1, max: 128, restartRequired: true },
   { key: 'LLAMA_CONTEXT', label: 'Ling context size', group: 'Local performance', type: 'number', defaultValue: '4096', min: 1024, max: 131072, restartRequired: true },
@@ -42,7 +42,7 @@ const fields = Object.freeze([
   { key: 'LLAMA_CACHE_TYPE_V', label: 'Ling value cache type', group: 'Local performance', type: 'select', defaultValue: 'f16', options: [['f16', 'F16'], ['q8_0', 'Q8_0']], restartRequired: true },
   { key: 'WHISPER_THREADS', label: 'Whisper recognition threads', group: 'Local performance', type: 'number', defaultValue: localThreadDefault(8), min: 1, max: 128, restartRequired: true },
   { key: 'CRISPASR_THREADS', label: 'Moonshine recognition threads', group: 'Local performance', type: 'number', defaultValue: localThreadDefault(12), min: 1, max: 128, restartRequired: true },
-  { key: 'KOKORO_THREADS', label: 'Speech synthesis threads', group: 'Local performance', type: 'number', defaultValue: '8', min: 1, max: 128, restartRequired: true },
+  { key: 'KOKORO_THREADS', label: 'Speech synthesis threads', group: 'Local performance', type: 'number', defaultValue: localThreadDefault(8), min: 1, max: 128, restartRequired: true },
 ]);
 
 const byKey = new Map(fields.map(field => [field.key, field]));
@@ -86,6 +86,7 @@ export function createRuntimeConfig({ dataDir, env = process.env } = {}) {
     fields: fields.map(field => ({
       key: field.key,
       label: field.label,
+      ...(field.description ? { description: field.description } : {}),
       group: field.group,
       type: field.type,
       secret: field.secret === true,

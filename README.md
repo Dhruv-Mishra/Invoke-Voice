@@ -25,12 +25,12 @@ Invoke is a voice-first orchestration platform that transforms spoken intent int
 
 ## Requirements
 
-Download **Invoke-Setup-1.0.0.exe** for the bundled Python dependency pack, or **Invoke-Setup-1.0.0-Online.exe** for a smaller installer that downloads that pack during consented setup. Neither edition bundles voice models. Verify the accompanying SHA-256 checksum. Installers are unsigned; follow Windows and organizational security policy.
+Download **Invoke-Setup-1.0.1.exe** for the bundled Python dependency pack, or **Invoke-Setup-1.0.1-Online.exe** for a smaller installer that downloads that pack during consented setup. Neither edition bundles voice models. Verify the accompanying SHA-256 checksum. Installers are unsigned; follow Windows and organizational security policy.
 
 - Node.js 22+ and npm to run from source.
 - Windows x64 for the packaged desktop app and managed local voice setup.
 - Git, VS Code, and an authenticated GitHub Copilot CLI or [Agency client](https://aka.ms/agency) for delegated work.
-- 12 GB free disk space for local voice setup; 16 GB RAM is recommended.
+- At least 18 GB free disk space for local voice setup, more if retaining old models; 16 GB RAM is recommended and performance varies with available memory.
 
 The desktop package includes Node. Managed setup uses an isolated Python environment and does not modify system Python or `PATH`.
 
@@ -59,7 +59,7 @@ npm run desktop
 
 ## Configuration
 
-Use **Settings > Config** for providers, models, endpoints, defaults, and local setup. State is stored under `%LOCALAPPDATA%\VoiceSupervisor`; secrets are never returned to the browser. Cloud stages require **Allow cloud processing**.
+Use **Settings > Providers & keys** for providers, models, endpoints, defaults, and local performance. State is stored under `%LOCALAPPDATA%\VoiceSupervisor`; secrets are never returned to the browser. Cloud stages require **Allow cloud processing**.
 
 See [docs/operations.md](docs/operations.md) for data locations, local voice provisioning, Agency access boundaries, call behavior, and release procedures.
 
@@ -71,21 +71,29 @@ Follow-ups reuse the original task session. Up to ten messages can queue while w
 
 Invoke starts its Agency connections and checks tool catalogs on entry. A concise setup dialog identifies missing installation, sign-in, connectivity, or optional access steps. Catalog readiness is not proof of authorization to read a particular account or source. Consent is never enabled silently.
 
+**Enable Teams and calendar:** install and sign in to [Agency](https://aka.ms/agency) with your work account. Open **Settings > Integrations > Private work sources**, choose **Read-only**, then **Save config**. Run **Check connections** in Integrations. The same setting is under **Providers & keys > Coding tools**. Questions and answers use cloud services, are saved, and may be spoken.
+
+**Calendar** opens your Outlook work calendar or checks today's schedule through a read-only Agency task. Outlook and Teams share that Microsoft 365 calendar. Results appear in task details; no calendar data is read just by opening the tab. You can also ask Invoke to check your calendar by voice or chat.
+
 ## Local Voice
 
 Local setup is opt-in and provisions:
 
-- Ling through llama.cpp for chat and tool calls.
+- Ling APEX-I Quality through llama.cpp for chat and tool calls.
 - Moonshine Streaming Tiny by default, or Whisper Small for multilingual recognition.
 - Kokoro for speech synthesis in an isolated Python 3.12 environment.
 
 Downloads are pinned and hash-verified. Working chat remains available if speech setup fails. Detailed model, mirror, and release-pack behavior is documented in [docs/operations.md](docs/operations.md#voice-routes).
 
+The Quality model is 5.77 GB. Previously consented, verified managed Compact installations download it automatically on startup; custom model paths and fresh-install consent are preserved. The previous model stays on disk. Quality follows the publisher's accuracy recommendation but costs more memory than Compact and may be slower on constrained machines; this is not an independently measured accuracy or speed gain.
+
+Local replies stream as they are generated so speech can start before the whole answer finishes. Thinking is disabled; warm-up uses the live voice tool schema, and default synthesis threads scale to the CPU. Saved overrides remain respected. The compact tool set is retained.
+
 ## Calls And Notifications
 
 Calls open with an optional short greeting. The red hang-up control ends an active call. Idle calls check in after 40 seconds and end after 60 seconds by default; both values are configurable.
 
-The inbox shows concise task-outcome headings; full answers stay in task details. Announcements are queued and deduplicated. Text chat and local/hybrid voice withhold tool-round prose until the final response; native hosted realtime speech remains provider-controlled. The inbox retains the latest 100 updates; quiet mode suppresses speech without removing history.
+The inbox shows concise task-outcome headings; full answers stay in task details. Announcements are queued and deduplicated. Local-model output streams without prose rewriting; instructions require silent tools, verified outcomes, and task titles instead of internal IDs. Non-local text-model routes still buffer the final answer; native hosted realtime speech remains provider-controlled. The inbox retains the latest 100 updates; quiet mode suppresses speech without removing history.
 
 Ask Invoke to switch themes, clear notifications, mark them read, or turn spoken updates on or off. These controls use the same persisted state as the UI and cannot change credentials or Agency access consent.
 
@@ -97,6 +105,8 @@ Ask Invoke to switch themes, clear notifications, mark them read, or turn spoken
 - Logs are replaced or bounded; setup diagnostics are sanitized before presentation.
 - Models, credentials, state, tests, and generated installers are excluded from packaged builds.
 - Uninstall retains user data and model caches unless the user removes them while the app is closed.
+
+**Settings > Application data > Clear application data** permanently deletes the installed app's data after confirmation and restarts into fresh setup. This includes saved keys, history, managed worktrees (including uncommitted work), models, runtimes and browser data. External repositories, custom files, source `.env` and Agency credentials/session storage are preserved. This action is unavailable in source/browser runs.
 
 The installer is unsigned unless the distributor adds signing. Windows SmartScreen or organizational policy may block it; do not bypass those controls.
 

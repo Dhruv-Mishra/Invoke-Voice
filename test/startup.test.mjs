@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocket } from 'ws';
 import { ensureLocalLLM, localLlmArguments, parseStartupArgs } from '../scripts/start.mjs';
+import { voiceTools } from '../src/supervisor/contract.mjs';
 import { createRuntimeConfig, localThreadDefault } from '../src/runtime-config.mjs';
 import { voiceInstructions } from '../src/llm.mjs';
 import { tools } from '../src/supervisor/contract.mjs';
@@ -139,7 +140,8 @@ test('local warmup caches the real tool prefix and accepts bounded completions w
     assert.equal(runtime.llama, null);
     assert.equal(healthChecks, 2);
     assert.deepEqual(requests[0].messages[0], { role: 'system', content: voiceInstructions });
-    assert.deepEqual(requests[0].tools, tools);
+    assert.deepEqual(requests[0].tools, voiceTools);
+    assert.equal(requests[0].chat_template_kwargs.enable_thinking, false);
     assert.equal(requests[0].tool_choice, 'auto');
     assert.equal(requests[0].cache_prompt, true);
     assert.equal(requests[0].max_tokens, 1);

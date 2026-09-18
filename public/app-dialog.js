@@ -18,7 +18,7 @@ export function createAppDialog(dialog) {
       const onClose = () => resolve(dialog.returnValue === 'confirm');
       dialog.addEventListener('close', onClose, { once: true });
       dialog.showModal();
-      accept.focus({ preventScroll: true });
+      (danger && cancelLabel ? cancel : accept).focus({ preventScroll: true });
     });
   }
 

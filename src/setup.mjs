@@ -65,7 +65,7 @@ export function createSetup({ platform = process.platform, arch = process.arch, 
     job = new Promise(resolve => setImmediate(resolve)).then(async () => {
       if (download) await install({ report, signal: controller.signal });
       report({ stage: 'starting', message: 'Starting and checking the local voice runtimes.' });
-      await activate({ signal: controller.signal });
+      await activate({ signal: controller.signal, report });
       state = { status: 'ready', stage: 'complete', message: 'Local voice runtimes passed startup checks. Cached files can be reused offline.' };
     }).catch(error => {
       const message = error.setupMessage || 'Local setup failed. Check your connection, free disk space and security software, then retry. Completed files will be reused.';

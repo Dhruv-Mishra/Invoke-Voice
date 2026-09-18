@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="Invoke: From Voice to Agency. Local-first voice orchestration for coding, research and work.">
-  <link rel="icon" href="./invoke.svg" />
+  <link rel="icon" href="./copilot-icon.webp" />
   <title>Invoke</title>
   <script>
     (() => {
@@ -475,7 +475,7 @@
   </dialog>
   <header class="top-bar">
     <div class="sidebar-heading">
-      <div class="sidebar-brand"><img src="./invoke.svg" width="24" height="24" alt=""><span>Invoke</span></div>
+      <div class="sidebar-brand"><img src="./copilot-icon.webp" width="24" height="24" alt=""><span>Invoke</span></div>
       <button class="btn btn-icon" id="sidebar-toggle" type="button" aria-label="Collapse sidebar" title="Collapse sidebar" aria-expanded="true" aria-controls="sidebar-history"><i data-lucide="panel-left-close" aria-hidden="true"></i></button>
     </div>
     <nav class="view-tabs" role="tablist" aria-label="Invoke views">
@@ -563,8 +563,14 @@
     </div>
     <div class="calendar-empty">
       <i data-lucide="calendar-days"></i>
-      <h2>No calendar connected</h2>
-      <button type="button" class="btn" data-open-view="settings"><i data-lucide="settings"></i>View integrations</button>
+      <h2>Outlook &amp; Teams</h2>
+      <p>Outlook and Teams share your Microsoft 365 calendar. Agency reads it using your signed-in work account.</p>
+      <div class="utility-toolbar">
+        <a class="btn" href="https://outlook.office.com/calendar/" target="_blank" rel="noopener noreferrer"><i data-lucide="external-link"></i>Open Outlook</a>
+        <button type="button" class="btn btn-accent" id="calendar-check-btn"><i data-lucide="calendar-days"></i>Check today</button>
+        <button type="button" class="btn btn-icon" data-private-work-settings aria-label="Private work sources settings" title="Private work sources settings"><i data-lucide="settings"></i></button>
+      </div>
+      <p id="calendar-feedback" role="status" aria-live="polite"></p>
     </div>
   </section>
 
@@ -668,7 +674,7 @@
 
       <section class="settings-section local-setup" id="local-setup" aria-labelledby="setup-title">
         <div class="setup-heading"><h2 class="settings-section-title" id="setup-title"><i data-lucide="hard-drive-download" aria-hidden="true"></i>Local voice</h2><span class="badge" id="setup-status">Not checked</span></div>
-        <p class="setup-estimate">5-6 GB download, plus Python dependencies. At least 12 GB free space required; dependencies may need more.</p>
+        <p class="setup-estimate">7-8 GB download, plus Python dependencies. Allow at least 18 GB free space; retained models and dependencies may need more.</p>
         <p id="setup-message" role="status" aria-live="polite">Setup status is available when Settings is open.</p>
         <p id="setup-warning" class="setup-warning" role="status" hidden></p>
         <p id="setup-error" role="alert" hidden></p>
@@ -779,6 +785,8 @@
 
       <details class="settings-section config-section">
         <summary class="settings-section-title"><i data-lucide="plus-circle" aria-hidden="true"></i>Integrations</summary>
+        <p class="field-hint">Teams MCP starts automatically when Agency is installed. Sign in to Agency with your work account. For Teams and calendar research, set Private work sources to Read-only, then Save config.</p>
+        <div class="utility-toolbar"><button type="button" class="btn" data-private-work-settings><i data-lucide="settings"></i>Private work sources</button><a href="https://aka.ms/agency" target="_blank" rel="noopener noreferrer">Agency setup</a></div>
         <div class="settings-actions">
           <span id="agency-check-feedback" class="settings-feedback" role="status" aria-live="polite"></span>
           <button type="button" class="btn" id="agency-check-btn"><i data-lucide="refresh-cw" aria-hidden="true"></i>Check connections</button>
@@ -798,6 +806,14 @@
           </table>
         </div>
       </details>
+      <section class="settings-section application-data" aria-labelledby="application-data-title">
+        <h2 class="settings-section-title" id="application-data-title"><i data-lucide="database" aria-hidden="true"></i>Application data</h2>
+        <p class="field-hint">Permanently remove Invoke settings, saved keys, history, managed worktrees, downloaded models and caches. External repositories, custom files and Agency account credentials are kept.</p>
+        <p id="application-data-feedback" class="settings-feedback" role="status" aria-live="polite">Available in the installed desktop app.</p>
+        <div class="utility-toolbar">
+          <button type="button" class="btn btn-danger" id="application-data-clear" disabled><i data-lucide="trash-2" aria-hidden="true"></i>Clear application data</button>
+        </div>
+      </section>
     </div>
   </section>
   </div>

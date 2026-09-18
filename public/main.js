@@ -3,7 +3,7 @@ import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 import {
   Activity, AppWindow, AudioLines, Bell, BellOff, CalendarDays, Check, CheckCheck, CheckSquare, ChevronLeft, ChevronRight, CircleDashed, ClipboardCheck, createIcons, Edit2, Folder,
-  ExternalLink, File, FileText, FlaskConical, FolderKanban, HardDriveDownload, House, KeyRound, Keyboard,
+  Database, ExternalLink, File, FileText, FlaskConical, FolderKanban, HardDriveDownload, House, KeyRound, Keyboard,
   LayoutDashboard, MessageSquare, MessageSquarePlus, Mic, MicOff, PanelLeftClose, Palette, Play, Plus,
   PhoneOff, PlusCircle, Radio, RefreshCw, Save, ScanSearch, Send, Settings,
   SlidersHorizontal, Sparkles, Square, Trash2, X, Heart, MessagesSquare, Orbit, Radar, Terminal, Volume2, Zap,
@@ -15,7 +15,7 @@ import './theme.css';
 window.DOMPurify = DOMPurify;
 window.marked = marked;
 const appIcons = { Activity, AppWindow, Folder, AudioLines, Bell, Check, CheckCheck, PhoneOff, ChevronLeft, ChevronRight, ClipboardCheck, Heart, MessagesSquare, Orbit, Radar, Terminal, Volume2, Zap, BellOff, CalendarDays, CheckSquare, CircleDashed, Edit2, ExternalLink,
-  File, FileText, FlaskConical, FolderKanban, HardDriveDownload, House, KeyRound, Keyboard, LayoutDashboard,
+  Database, File, FileText, FlaskConical, FolderKanban, HardDriveDownload, House, KeyRound, Keyboard, LayoutDashboard,
   MessageSquare, MessageSquarePlus, Mic, MicOff, PanelLeftClose, Palette, Play, Plus, PlusCircle, Radio, RefreshCw,
   Save, ScanSearch, Send, Settings, SlidersHorizontal, Sparkles, Square, Trash2, X };
 window.lucide = { createIcons: () => {

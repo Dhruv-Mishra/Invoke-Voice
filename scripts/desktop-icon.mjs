@@ -4,7 +4,7 @@ import path from 'node:path';
 import sharp from 'sharp';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
-const source = path.join(root, 'public', 'invoke.svg');
+const source = path.join(root, 'public', 'copilot-icon.webp');
 const sizes = [16, 24, 32, 48, 64, 128, 256];
 const images = await Promise.all(sizes.map(size => sharp(source).resize(size, size, { fit: 'contain', background: '#00000000' }).png().toBuffer()));
 const header = Buffer.alloc(6 + sizes.length * 16);

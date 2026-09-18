@@ -13,6 +13,7 @@ import { createLocalVoice, localConfiguration, warmLocalVoice } from './local-vo
 import { createLocalSetup } from './local-setup.mjs';
 import { createRuntimeConfig } from './runtime-config.mjs';
 import { sessionThemeOptions } from './theme-session.mjs';
+import { createAgencyMcp } from './agency-mcp.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const publicDir = path.join(root, 'public');
@@ -88,7 +89,8 @@ export async function startSupervisor(options = {}) {
   const inbox = path.join(dataDir, 'inbox');
   mkdirSync(inbox, { recursive: true });
   const runtimeConfig = createRuntimeConfig({ dataDir });
-  const supervisor = options.supervisor || new Supervisor({ dataDir, bridge: createVSCodeBridge(dataDir) });
+  const agencyMcp = options.agencyMcp || createAgencyMcp();
+  const supervisor = options.supervisor || new Supervisor({ dataDir, bridge: createVSCodeBridge(dataDir, process.env, { agencyMcp }) });
   const setup = options.setup || createLocalSetup();
   let changingRecognition = false;
   const clients = new Set();
@@ -151,7 +153,7 @@ export async function startSupervisor(options = {}) {
       { id: 'long_context', label: 'Long (up to 1M tokens)' },
     ], integrations: [
       { id: 'azure-devops', label: 'Azure DevOps MCP', status: 'planned', mode: 'read-only first' },
-      { id: 'teams', label: 'Teams MCP', status: 'planned', mode: 'confirm sends' },
+      ...agencyMcp.snapshot(),
       { id: 'zvec-grep', label: 'zvec-grep MCP', status: 'workspace_configured', mode: 'search_only' },
     ], providers: providerProfiles(), voiceModes: [
       { id: 'gemini-live', label: 'Gemini Live', configured: Boolean(process.env.GEMINI_API_KEY), model: process.env.GEMINI_LIVE_MODEL || DEFAULT_GEMINI_LIVE_MODEL },
@@ -365,6 +367,7 @@ export async function startSupervisor(options = {}) {
   console.log(`Voice Work Supervisor (${mode}): http://${host}:${actualPort}`);
   if (process.send) process.send({ type: 'supervisor-ready', url: `http://${host}:${actualPort}` });
 
+  if (options.prewarm !== false) void agencyMcp.start();
   if (process.env.SUPERVISOR_DESKTOP === '1') setup.resume?.();
   if (setup.snapshot().status !== 'running' && options.prewarm !== false && (process.env.DEFAULT_VOICE_MODE || 'local') === 'local' && process.env.PREWARM_LOCAL_VOICE !== '0') {
     void warmLocalVoice().then(warmed => { if (warmed) console.log('Local speech models are warm.'); }).catch(error => console.warn(`Local voice warmup deferred: ${error.message}`));
@@ -375,6 +378,8 @@ export async function startSupervisor(options = {}) {
     clearInterval(observer);
     for (const controller of activeChatControllers) controller.abort();
     activeChatControllers.clear();
+    await supervisor.close?.();
+    await agencyMcp.close();
     await setup.close();
     for (const client of websocket.clients) {
       try { client.close(); } catch {}

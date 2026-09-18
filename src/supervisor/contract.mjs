@@ -7,7 +7,7 @@ const choice = (description, values) => ({ type: 'string', ...(description ? { d
 export const supervisorTools = [
   definition('list_work', 'Find saved tasks and current status by query; omit query for areas and recent tasks.', { query: text('Task keywords, e.g. document; max 200 characters') }),
   definition('start_work', 'Delegate coding, skills, research or work-data questions; returns taskId.', { areaId: text('From list_work; omit for default'), objective: text('Original request and constraints'), readOnly: { type: 'boolean', description: 'True for external questions; no changes' }, backend: choice('Omit for default', ['copilot', 'agency']), model: text('Omit for default'), agent: text('Area agent ID; omit for area default'), context: choice('Omit for default', ['default', 'long_context']) }, ['objective']),
-  definition('send_work_message', 'Resume when status actions allow it.', { taskId: text('From list_work'), message: text('Next prompt') }, ['taskId', 'message']),
+  definition('send_work_message', 'Resume or queue after active work (FIFO); same session evaluates conditions against prior results. Failure/restart pauses queue.', { taskId: text('From list_work'), message: text('Next request, including any conditions') }, ['taskId', 'message']),
   definition('get_work_status', 'Read state, allowed actions, and latest outcome.', { taskId: text('From list_work or start_work') }, ['taskId']),
   definition('open_work', 'Open when status actions allow it.', { taskId: text('From list_work') }, ['taskId']),
   definition('delete_work', 'Delete one finished or stale task, or one unused area; pass exactly one ID.', { taskId: text('Finished or stale task ID'), areaId: text('Unused area ID') }),

@@ -48,26 +48,32 @@ Cloud stages require the **Allow cloud processing** setting. Provider changes ap
 
 New installations default to Agency; saved backend choices are unchanged. The existing `start_work` tool delegates coding, skills, research, and work-data questions using the original request. External questions use its optional `readOnly: true` flag and always run through Agency. The worker chooses its tools; answers, notifications, and follow-ups use the same task flow. Status reads never start another investigation. The voice model still has seven task tools, with no MCP catalog or scenario-specific tools.
 
-Public `msft-learn` documentation reads are enabled by default. For enterprise questions, set **Settings > Config > Coding tools > Agency work data (cloud, saved history, spoken answers)** to **Allow Teams, calendar and people reads**. This defaults to Off (`AGENCY_WORK_DATA_ACCESS=disabled`; opt in with `read-only`). Confirm the intended account is signed in to Agency and your organization permits this processing. Agency itself must be separately installed and authenticated; the app does not install it or grant account permissions.
+At startup, the app launches Bluebird, WorkIQ, and Teams through `agency mcp --transport http --port 0`. Task sessions reuse these loopback listeners; the app stops owned task processes and proxies on shutdown. Startup does not wait for authentication or query work data. Missing Agency does not block the app; task launches fall back to Agency's native STDIO proxies when a shared listener is unavailable. Listening status is not proof of account access. Coding sessions enable these servers plus Microsoft Learn and any repository MCPs, letting Agency select tools without another coordinator session.
 
-When a read-only task starts, the app automatically registers built-in MCPs through `agency config set --local --profile <task-profile> --mcp ...`. Agency supplies the proxies; no separate server package installation or global configuration change is needed. With consent, the profile includes `msft-learn`, `teams`, `calendar`, and `m365-user`. The worker launches with `--profile-only`, an exact 20-operation read allowlist plus its completion tool, and no shell, filesystem, URL, repository, or mutation tools. Other default MCPs and configured plugins are disabled. Read tasks use an isolated app-data directory, not a Git worktree; coding tasks retain their existing permissions and worktree behavior.
+Read-only tasks allow public Microsoft Learn by default. Enable enterprise research in **Settings > Config > Coding tools > Agency work data** with **Allow WorkIQ, Teams, calendar and people reads** (`AGENCY_WORK_DATA_ACCESS=read-only`). Fresh installations default to Off. Confirm the intended account is signed in to Agency and your organization permits this processing. This setting governs the restricted research profile, not the ordinary coding session's tools or shell permissions.
+
+Research runs in an isolated app-data directory with an automatically registered task-local Agency profile, exact 24-operation read allowlist, and no shell, filesystem, URL, repository, or mutation tools. WorkIQ contributes `retrieve`, `fetch`, `search_paths`, and `get_schema`; its `ask` tool can delegate mutations and is deliberately excluded. Teams, calendar, people, and public Learn reads remain available. Shared WorkIQ/Teams connections retain the same filters. Other default MCPs and plugins are excluded from research; coding retains its worktree and publishing boundaries.
 
 A question such as "What is my latest message on the PDF group from yesterday?" needs no special flow. Agency receives the original request, UTC time and local timezone, instructions to clarify ambiguous identities, distinguish missing access from no matches, and return a short answer first with sources afterward. Source scope and a five-page retrieval limit are prompt instructions, not enforced authorization or an evidence-validation system. Account/tenant binding and per-resource consent are not implemented. Turning access Off affects subsequent launches; sessions prepared under different access settings cannot resume. It does not cancel an in-flight read or erase retained history.
 
 Read-only tasks hide raw tool progress from app observations/logs and do not request Hub reporting, but the question and final answer remain in task history, and Agency retains its own session data. Answers may be spoken aloud. Local voice does not make delegated Agency processing local-only. Read sessions have a three-minute execution deadline.
 
-Run `npm run agency:read:check` with Agency installed to verify CLI profile setup, rejected shell/write calls, a public Learn read, final-answer delivery, and same-session follow-up using a local synthetic model. It does not read Teams, calendar, or people content. `npm run agency:check` checks the ordinary coding backend.
+`send_work_message` resumes finished tasks or queues up to ten messages while work runs. Messages persist and execute FIFO in the original session, which evaluates natural-language conditions against its prior results. Queuing acknowledges receipt, not completion. Failure, shutdown, or restart pauses pending messages; nothing automatically replays after restart. Send a corrective follow-up to recover, then the remaining queue drains after success, or delete the inactive task to discard its queue. Task details show pending messages. No condition parser or extra Luna coordinator is involved.
+
+Run `npm run agency:read:check` to verify shared HTTP connections, rejected shell/write/WorkIQ `ask` calls, a public Learn read, WorkIQ path metadata, and queued same-session follow-up using a local synthetic model. It reads no business content. `npm run agency:check` checks a real hosted coding session and a queued conditional follow-up on a disposable repository, with short context by default.
 
 ## Local Voice
 
 Local setup is opt-in and requires explicit download consent. It provisions:
 
 - Ling through llama.cpp for local chat and tool calls.
-- Whisper Small with CPU INT8 inference and Silero VAD by default.
-- Moonshine/CrispASR as an optional streaming recognizer.
+- Moonshine Streaming Tiny Q4_K through CrispASR with Silero VAD by default (English).
+- Whisper Small with CPU INT8 inference as an optional multilingual recognizer.
 - Kokoro in an isolated Python 3.12 environment for speech synthesis.
 
 Files are stored under `%LOCALAPPDATA%\VoiceSupervisor` in `models`, `runtimes`, and cache directories. Verified files are reused; partial or mismatched downloads are never reported ready. Setup does not edit `.env`, system Python, or `PATH`. If speech setup fails, verified local chat remains available.
+
+Moonshine uses JSON streaming, 500 ms steps, a 4-second rolling window/partial cadence, 800 ms end silence, and full-utterance final redecoding. Existing saved provider choices and explicit environment overrides still win; source users upgrading from Small should update `MOONSHINE_MODEL` and stale streaming overrides to match [example.env](example.env). Partial text is provisional. The Tiny model and tokenizer share a pinned, verified upstream revision.
 
 For individual source-workflow downloads:
 

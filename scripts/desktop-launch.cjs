@@ -11,7 +11,7 @@ function serverLaunch({ executable, appRoot, resourcesPath, packaged, dataDir, e
 
 const externalSources = new Set([
   'https://huggingface.co/SC117/Ling-3.0-tiny-abliterated-APEX-GGUF',
-  'https://huggingface.co/cstr/moonshine-streaming-small-GGUF',
+  'https://huggingface.co/cstr/moonshine-streaming-tiny-GGUF',
   'https://huggingface.co/Systran/faster-whisper-small',
   'https://huggingface.co/ggml-org/whisper-vad',
   'https://huggingface.co/hexgrad/Kokoro-82M',

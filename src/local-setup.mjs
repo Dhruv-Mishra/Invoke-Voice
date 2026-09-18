@@ -135,7 +135,7 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
   const paths = stackPaths(env);
   const selectedAssets = () => localSetupAssets(env).filter(asset => asset.id !== 'uv' || !paths.pythonBase);
   const whisperReady = () => pythonReady(paths, 'whisper-complete.json', whisperReceiptVersion);
-  const sttLabel = () => localSttProvider(env) === 'whisper' ? 'Whisper Small INT8' : 'Moonshine Small streaming';
+  const sttLabel = () => localSttProvider(env) === 'whisper' ? 'Whisper Small INT8' : 'Moonshine Tiny streaming';
   const completionFile = path.join(paths.home, 'local-setup.json');
   const saved = readJson(completionFile);
   const pathInputs = Object.fromEntries(['LOCAL_LLM_PATH', 'MOONSHINE_MODEL', 'WHISPER_MODEL_DIR', 'LLAMA_SERVER_BIN', 'CRISPASR_BIN', 'VAD_MODEL', 'PYTHON_BIN'].map(key => [key, env[key] || '']));

@@ -32,7 +32,7 @@ const voiceNotifications = [];
 let notificationReadRace = false;
 const fixtureTasks = [
   { id: 'finished-task', title: 'Completed coding work', state: 'completed', result: '**Ready for review**', createdAt: '2026-09-16T09:00:00Z' },
-  { id: 'active-task', title: '<img src=x onerror=alert(1)> coding task', state: 'running', createdAt: '2026-09-16T10:00:00Z' },
+  { id: 'active-task', title: '<img src=x onerror=alert(1)> coding task', state: 'running', canMessage: true, queued: 1, queuePaused: false, turns: [{ state: 'queued', message: 'If successful, summarize <img src=x onerror=alert(1)>.' }], createdAt: '2026-09-16T10:00:00Z' },
 ];
 const setup = {
   platform: 'win32', supported: true, cacheDir: 'C:\\VoiceSupervisor\\cache', runtimeDir: 'C:\\VoiceSupervisor\\runtime',
@@ -55,7 +55,7 @@ const config = {
     { key: 'OPENAI_BASE_URL', label: 'OpenAI URL', group: 'Fixture', type: 'url', secret: false, value: 'https://example.test' },
     { key: 'LLAMA_THREADS', label: 'Threads', group: 'Fixture', type: 'number', secret: false, value: '8', min: 1, max: 128 },
     { key: 'OPENAI_API_KEY', label: 'OpenAI key', group: 'Fixture', type: 'password', secret: true, configured: true },
-    { key: 'LOCAL_STT_PROVIDER', label: 'Local speech recognition', group: 'Local speech', type: 'select', value: 'whisper', options: [{ value: 'whisper', label: 'Whisper Small (INT8)' }, { value: 'moonshine', label: 'Moonshine Small (streaming)' }] },
+    { key: 'LOCAL_STT_PROVIDER', label: 'Local speech recognition', group: 'Local speech', type: 'select', value: 'whisper', options: [{ value: 'whisper', label: 'Whisper Small (INT8)' }, { value: 'moonshine', label: 'Moonshine Tiny (streaming)' }] },
   ] },
 };
 
@@ -693,10 +693,14 @@ try {
   await waitFor(() => document.querySelectorAll('.history-entry').length === 2);
   await click('.history-entry');
   assert.equal(await evaluate(() => document.getElementById('task-detail-dialog').open && document.getElementById('detail-content').textContent.includes('coding task')), true);
+  assert.equal(await evaluate(() => document.getElementById('detail-content').textContent.includes('1 queued')), true);
+  assert.equal(await evaluate(() => document.querySelector('#detail-content img') === null), true);
   assert.equal(await evaluate(() => [...document.querySelectorAll('#detail-content details')].every(details => !details.open)), true);
   await pointerClick('#detail-content details:last-child summary');
   assert.equal(await evaluate(() => document.querySelector('#detail-content details:last-child').open), true);
-  await click('#detail-dialog-close');
+  await pointerClick('#detail-continue-task-btn');
+  assert.equal(await checkEditableInputs('#continue-thread-dialog'), 1);
+  await pointerClick('#continue-dialog-close');
   await pointerClick('.history-entry[data-task-id="finished-task"]');
   await pointerClick('#detail-continue-task-btn');
   assert.equal(await checkEditableInputs('#continue-thread-dialog'), 1);

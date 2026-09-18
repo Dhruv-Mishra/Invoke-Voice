@@ -124,6 +124,13 @@ test('delegated questions retain original intent, date context and a bounded spo
   assert.match(prompt, /source links, dates/);
   assert.match(prompt, /access is unavailable/);
   assert.match(copilotPrompt({ ...task, turns: [{ createdAt: Date.parse('2026-09-19T12:00:00Z') }] }, area), /2026-09-19T12:00:00.000Z/);
+  const recovered = copilotPrompt({ ...task, turns: [
+    { state: 'dispatching', createdAt: Date.parse('2026-09-18T13:00:00Z') },
+    { state: 'queued', createdAt: Date.parse('2026-09-18T14:00:00Z') },
+    { state: 'result_ready', createdAt: Date.parse('2026-09-19T12:00:00Z') },
+  ] }, area);
+  assert.match(recovered, /2026-09-18T13:00:00.000Z/);
+  assert.ok(prompt.length - objective.length < 950);
 });
 
 test('builds explicit Copilot and Agency start and resume commands', () => {
@@ -134,9 +141,9 @@ test('builds explicit Copilot and Agency start and resume commands', () => {
   assert.deepEqual(copilot.args.slice(-4), ['--session-id', base.sessionId, '--agent', 'builder']);
   const agency = sessionLaunch({ ...base, backend: 'agency' }, area, { AGENCY_CLI: 'agency-test' }, { resume: true });
   assert.equal(agency.executable, 'agency-test');
-  assert.deepEqual(agency.args.slice(0, 5), ['copilot', '--hub', '--no-default-mcps', '--mcp', 'msft-learn']);
+  assert.deepEqual(agency.args.slice(0, 11), ['copilot', '--hub', '--no-default-mcps', '--mcp', 'bluebird', '--mcp', 'workiq', '--mcp', 'teams', '--mcp', 'msft-learn']);
   assert.equal(copilot.args.includes('--mcp'), false);
-  assert.equal(agency.args.includes('teams'), false);
+  assert.equal(agency.args.includes('workiq'), true);
   assert.ok(agency.args.includes(`--resume=${base.sessionId}`));
   assert.equal(agency.args.includes('--session-id'), false);
 });
@@ -171,7 +178,8 @@ test('read-only Agency launch exposes only curated MCP reads and rejects changed
       assert.ok(launch.args.includes('--deny-tool=shell,write,read,url'));
       assert.equal(launch.args.includes('--additional-mcp-config'), false);
       const policy = agencyReadPolicy(env);
-      assert.deepEqual(Object.keys(policy.tools), ['voice-msft-learn', 'voice-teams', 'voice-calendar', 'voice-m365-user']);
+      assert.deepEqual(Object.keys(policy.tools), ['voice-msft-learn', 'voice-workiq', 'voice-teams', 'voice-calendar', 'voice-m365-user']);
+      assert.deepEqual(policy.tools['voice-workiq'], ['retrieve', 'fetch', 'search_paths', 'get_schema']);
       assert.ok(policy.tools['voice-teams'].includes('ListChatMessages'));
       assert.ok(policy.tools['voice-m365-user'].includes('GetMyDetails'));
       const available = launch.args.find(arg => arg.startsWith('--available-tools=')).slice('--available-tools='.length).split(',');

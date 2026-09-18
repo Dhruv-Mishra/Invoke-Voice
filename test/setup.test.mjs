@@ -13,6 +13,7 @@ import { approvedPythonProbe, createLocalSetup, isolatedEnvironment, runSetupCom
 import { startSupervisor } from '../src/server.mjs';
 import { createRuntimeConfig } from '../src/runtime-config.mjs';
 import { downloadVoicePack, resolveVoicePack } from '../src/voice-pack.mjs';
+import { localConfiguration, localSttArguments } from '../src/local-voice.mjs';
 
 function fixture(context) {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'voice-setup-'));
@@ -20,16 +21,24 @@ function fixture(context) {
   return { directory, paths: stackPaths({ LOCALAPPDATA: directory }, path.join(directory, 'app')) };
 }
 
-test('local STT defaults to Whisper and Moonshine requires an explicit selection', () => {
-  assert.equal(localSttProvider({}), 'whisper');
-  assert.equal(localSttProvider({ LOCAL_STT_PROVIDER: 'moonshine' }), 'moonshine');
+test('local STT defaults to Moonshine Tiny streaming and Whisper remains optional', () => {
+  assert.equal(localSttProvider({}), 'moonshine');
+  assert.equal(localSttProvider({ LOCAL_STT_PROVIDER: 'whisper' }), 'whisper');
   assert.throws(() => localSttProvider({ LOCAL_STT_PROVIDER: 'browser' }), /LOCAL_STT_PROVIDER/);
   const defaults = localSetupAssets({}).map(asset => asset.id);
-  assert.ok(defaults.includes('whisperModel'));
-  for (const id of ['moonshine', 'tokenizer', 'vad', 'crispasr']) assert.equal(defaults.includes(id), false);
-  const moonshine = localSetupAssets({ LOCAL_STT_PROVIDER: 'moonshine' }).map(asset => asset.id);
-  assert.ok(moonshine.includes('moonshine') && moonshine.includes('crispasr'));
-  assert.equal(moonshine.some(id => id.startsWith('whisper')), false);
+  assert.equal(defaults.some(id => id.startsWith('whisper')), false);
+  for (const id of ['moonshine', 'tokenizer', 'vad', 'crispasr']) assert.ok(defaults.includes(id));
+  const whisper = localSetupAssets({ LOCAL_STT_PROVIDER: 'whisper' }).map(asset => asset.id);
+  assert.ok(whisper.includes('whisperModel'));
+  assert.equal(whisper.includes('moonshine'), false);
+  assert.equal(ASSETS[1].name, 'moonshine-streaming-tiny-q4_k.gguf');
+  assert.equal(ASSETS[1].revision, ASSETS[2].revision);
+  const config = localConfiguration({});
+  assert.equal(path.basename(config.moonshineModel), ASSETS[1].name);
+  const args = localSttArguments(config, {});
+  for (const flag of ['moonshine-streaming', '--stream', '--stream-json', '--vad']) assert.ok(args.includes(flag));
+  assert.equal(args[args.indexOf('--stream-step') + 1], '500');
+  assert.equal(args[args.indexOf('--stream-final-on-silence-ms') + 1], '800');
 });
 
 test('Whisper model assets are pinned, verified and reusable offline', async context => {
@@ -256,7 +265,7 @@ test('compressed bundled setup retains the hash-locked install and removes only 
 });
 
 test('Whisper setup installs only selected models and verifies INT8 dependencies', windowsSetup, async context => {
-  const { setup, provisioned, commands, env } = localFixture(context, { env: { LOCAL_STT_PROVIDER: '' } });
+  const { setup, provisioned, commands, env } = localFixture(context, { env: { LOCAL_STT_PROVIDER: 'whisper' } });
   setup.start({ consent: true });
   const snapshot = await setup.settled();
   assert.equal(snapshot.status, 'ready', snapshot.message);
@@ -1165,19 +1174,19 @@ test('setup API is same-origin, consent-gated and returns 202 without waiting fo
   } finally { release(); await app.close(); }
 });
 
-test('speech settings expose Whisper by default and persist Moonshine without a restart', context => {
+test('speech settings expose Moonshine by default and persist Whisper without a restart', context => {
   const { directory } = fixture(context);
   const env = {};
   const config = createRuntimeConfig({ dataDir: directory, env });
   const field = config.snapshot().fields.find(field => field.key === 'LOCAL_STT_PROVIDER');
-  assert.equal(field.value, 'whisper');
-  assert.deepEqual(field.options.map(option => option.value), ['whisper', 'moonshine']);
+  assert.equal(field.value, 'moonshine');
+  assert.deepEqual(field.options.map(option => option.value), ['moonshine', 'whisper']);
   assert.equal(field.restartRequired, false);
-  config.update({ values: { LOCAL_STT_PROVIDER: 'moonshine' } });
-  assert.equal(env.LOCAL_STT_PROVIDER, 'moonshine');
+  config.update({ values: { LOCAL_STT_PROVIDER: 'whisper' } });
+  assert.equal(env.LOCAL_STT_PROVIDER, 'whisper');
   const restored = {};
   createRuntimeConfig({ dataDir: directory, env: restored });
-  assert.equal(restored.LOCAL_STT_PROVIDER, 'moonshine');
+  assert.equal(restored.LOCAL_STT_PROVIDER, 'whisper');
   assert.throws(() => config.update({ values: { LOCAL_STT_PROVIDER: 'chrome' } }), /unsupported value/);
 });
 

@@ -14,7 +14,7 @@ import desktopLaunch from '../scripts/desktop-launch.cjs';
 const worker = fileURLToPath(new URL('../scripts/kokoro_worker.py', import.meta.url));
 const whisperWorker = fileURLToPath(new URL('../scripts/whisper_worker.py', import.meta.url));
 const bundledPython = fileURLToPath(new URL('../.venv/Scripts/python.exe', import.meta.url));
-const defaultMoonshineModel = fileURLToPath(new URL('../../LocalVoiceStack/STT_Models/moonshine-streaming-small-q4_k.gguf', import.meta.url));
+const defaultMoonshineModel = fileURLToPath(new URL('../../LocalVoiceStack/STT_Models/moonshine-streaming-tiny-q4_k.gguf', import.meta.url));
 let kokoroRuntimePromise;
 let sttRuntimePromise;
 let kokoroProcess;
@@ -195,13 +195,13 @@ export async function closeLocalVoice() {
 export function localConfiguration(env = process.env) {
   const paths = stackPaths(env);
   const sttProvider = localSttProvider(env);
-  const sttLabel = sttProvider === 'whisper' ? 'Whisper Small INT8' : 'Moonshine Small streaming';
+  const sttLabel = sttProvider === 'whisper' ? 'Whisper Small INT8' : 'Moonshine Tiny streaming';
   const whisperModelDir = paths.whisperDir;
   const crispasrBin = paths.crispasr;
   const requestedMoonshineModel = env.MOONSHINE_MODEL ? path.resolve(env.MOONSHINE_MODEL) : defaultMoonshineModel;
   const unsupportedQ8 = path.basename(requestedMoonshineModel).toLowerCase() === 'moonshine-streaming-small-q8_0.gguf';
   const moonshineModel = env.MOONSHINE_EFFECTIVE_MODEL || (existsSync(paths.moonshine) ? paths.moonshine : requestedMoonshineModel);
-  const sttWarning = sttProvider === 'moonshine' && unsupportedQ8 && moonshineModel !== requestedMoonshineModel ? 'Small Q8_0 crashes CrispASR 0.8.32; using canonical Small Q4_K.' : null;
+  const sttWarning = sttProvider === 'moonshine' && unsupportedQ8 && moonshineModel !== requestedMoonshineModel ? 'Small Q8_0 crashes CrispASR 0.8.32; using canonical Tiny Q4_K.' : null;
   const siblingTokenizer = path.join(path.dirname(moonshineModel), 'tokenizer.bin');
   const moonshineTokenizer = env.MOONSHINE_TOKENIZER || (existsSync(siblingTokenizer) ? siblingTokenizer : paths.tokenizer);
   const vadModel = paths.vad;

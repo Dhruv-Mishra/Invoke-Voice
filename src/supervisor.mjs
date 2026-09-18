@@ -67,6 +67,9 @@ export class Supervisor extends EventEmitter {
       if (['dispatching', 'running'].includes(task.state)) {
         task.state = 'agent_stopped';
         task.error = 'The app restarted before this task reported completion. Check the worktree, then continue or delete it.';
+        for (const turn of task.turns) {
+          if (['dispatching', 'running'].includes(turn.state)) turn.state = 'agent_stopped';
+        }
       }
     }
     if (!this.state.settings || typeof this.state.settings !== 'object' || Array.isArray(this.state.settings)) this.state.settings = {};
@@ -226,27 +229,31 @@ export class Supervisor extends EventEmitter {
     const stale = ['dispatching', 'running'].includes(task.state) && this.now() - lastActivityAt > 120000;
     const state = task.state === 'dispatching' && this.now() - (task.dispatchStartedAt || task.createdAt) > 30000 ? 'dispatch_unconfirmed' : stale && task.state === 'running' ? 'unknown' : task.state;
     const deletable = !this.activeTasks.has(id) && (TERMINAL_STATES.has(state) || stale);
-    return { ...task, state, lastObservedState: task.state, stale, deletable, observations: task.observations.slice(-8) };
+    const canMessage = !this.closed && (this.activeTasks.has(id) || RESUMABLE_STATES.has(state));
+    const queued = task.turns.filter(turn => turn.state === 'queued').length;
+    return { ...task, state, lastObservedState: task.state, stale, deletable, canMessage, ...(queued ? { queued, queuePaused: !this.activeTasks.has(id) } : {}), observations: task.observations.slice(-8) };
   }
 
   toolStatus(id) {
     const source = this.task(id);
     const task = this.status(id);
-    const currentTurn = source.turns.at(-1);
+    const currentTurn = source.turns.find(turn => ['dispatching', 'running'].includes(turn.state)) ?? source.turns.findLast(turn => turn.state !== 'queued');
     const latest = currentTurn
-      ? source.observations.filter(observation => observation.at >= currentTurn.createdAt).at(-1)
+      ? source.observations.filter(observation => observation.at >= (currentTurn.startedAt ?? currentTurn.createdAt)).at(-1)
       : source.observations.at(-1);
     const actions = [];
-    if (!this.activeTasks.has(id) && RESUMABLE_STATES.has(task.state)) actions.push('send_work_message');
+    if (task.canMessage) actions.push('send_work_message');
     if (task.worktree) actions.push('open_work');
     if (task.deletable) actions.push('delete_work');
     const result = task.result && String(task.result);
     const error = task.error && String(task.error);
+    const queued = task.queued;
     const update = latest?.summary && latest.summary !== result && latest.summary !== error ? String(latest.summary).slice(0, 600) : null;
     return {
       taskId: task.id,
       state: task.state,
       actions,
+      ...(queued ? { queued, ...(!this.activeTasks.has(id) ? { queuePaused: true } : {}) } : {}),
       ...(task.stale ? { stale: true } : {}),
       ...(update ? { update } : {}),
       ...(result ? { result: result.slice(0, 1200), ...(result.length > 1200 ? { resultTruncated: true } : {}) } : {}),
@@ -301,6 +308,7 @@ export class Supervisor extends EventEmitter {
 
   async callTool(name, args = {}, context = {}) {
     if (!tools.some(tool => tool.function.name === name)) throw new Error('Unknown tool');
+    if (this.closed && ['start_work', 'send_work_message', 'invoke_vscode'].includes(name)) throw new Error('Application is shutting down');
     if (name === 'list_work' && args.query !== undefined) return this.searchWork(args.query);
     if (name === 'list_work') return { defaultAreaId: this.state.settings.defaultAreaId, areas: this.state.areas.map(({ id, name, aliases }) => ({ id, name, aliases })), tasks: this.state.tasks.slice(-25).map(task => { const status = this.status(task.id); return { id: status.id, title: status.title, areaId: status.areaId, backend: status.backend, state: status.state }; }) };
     if (name === 'send_work_message') {
@@ -310,20 +318,17 @@ export class Supervisor extends EventEmitter {
       const duplicate = task.turns.find(turn => turn.requestId === requestId);
       if (duplicate) {
         if (duplicate.message !== message) throw new Error('Request ID already used for another message');
-        return { taskId: task.id, state: this.status(task.id).state, duplicate: true };
+        return { taskId: task.id, state: duplicate.state === 'queued' ? 'queued' : this.status(task.id).state, duplicate: true };
       }
-      if (this.activeTasks.has(task.id) || !RESUMABLE_STATES.has(this.status(task.id).state)) throw new Error('Task is not ready for a follow-up');
+      const active = this.activeTasks.has(task.id);
+      if (!active && !RESUMABLE_STATES.has(this.status(task.id).state)) throw new Error('Task is not ready for a follow-up');
       const area = this.resolveArea(task.areaId);
-      const turn = { requestId, message, createdAt: this.now(), state: 'dispatching' };
+      if (active && task.turns.filter(turn => turn.state === 'queued').length >= 10) throw new Error('Task queue is full (10 messages)');
+      const turn = { requestId, message, createdAt: this.now(), state: active ? 'queued' : 'dispatching' };
       task.turns.push(turn);
-      task.state = 'dispatching';
-      task.dispatchStartedAt = this.now();
-      task.turnObservationStart = task.observations.length;
-      delete task.result;
-      delete task.error;
-      this.save();
-      this.continueTask(task, { ...area }, turn).catch(error => this.failTask(task, error, turn));
-      return { taskId: task.id, state: 'dispatching' };
+      if (active) this.save();
+      else this.startTurn(task, { ...area }, turn);
+      return { taskId: task.id, state: active ? 'queued' : 'dispatching' };
     }
     if (name === 'get_work_status') return this.toolStatus(requiredText(args.taskId, 'task ID', 200));
     if (name === 'delete_work') {
@@ -368,24 +373,56 @@ export class Supervisor extends EventEmitter {
     }
     const task = { id: randomUUID(), requestId, areaId: area.id, title: objective.slice(0, 90), objective, backend, model, agent, readOnly, context: selectedContext, state: 'dispatching', createdAt: this.now(), dispatchStartedAt: this.now(), lastObservedAt: null, sessionId: randomUUID(), worktree: null, branch: null, observations: [], turnObservationStart: 0, turns: [] };
     this.state.tasks.push(task);
+    this.activeTasks.add(task.id);
     this.save();
-    this.dispatch(task, { ...area }).catch(error => this.failTask(task, error));
+    this.dispatch(task, { ...area });
     return { taskId: task.id, state: 'dispatching' };
+  }
+
+  startTurn(task, area, turn) {
+    this.activeTasks.add(task.id);
+    turn.state = 'dispatching';
+    turn.startedAt = this.now();
+    task.state = 'dispatching';
+    task.dispatchStartedAt = this.now();
+    task.turnObservationStart = task.observations.length;
+    delete task.result;
+    delete task.error;
+    this.save();
+    this.continueTask(task, area, turn);
+  }
+
+  drainQueue(task, area) {
+    if (this.closed) return;
+    const turn = task.turns.find(item => item.state === 'queued');
+    if (turn) this.startTurn(task, area, turn);
+  }
+
+  async close() {
+    this.closed = true;
+    await this.bridge?.close?.();
   }
 
   async dispatch(task, area) {
     this.activeTasks.add(task.id);
     let acceptingEvents = true;
+    let completed = false;
     try {
       const prepared = await this.bridge.prepare(task, area);
       Object.assign(task, prepared);
       this.save();
       const result = await this.bridge.dispatch(task, area, event => { if (acceptingEvents) this.recordAgentEvent(task, event); });
       acceptingEvents = false;
-      if (result) this.completeTask(task, result);
+      if (result) {
+        this.completeTask(task, result);
+        completed = true;
+      }
+    } catch (error) {
+      this.failTask(task, error);
     } finally {
       acceptingEvents = false;
       this.activeTasks.delete(task.id);
+      if (completed) this.drainQueue(task, area);
       this.emit('change', this.snapshot());
     }
   }
@@ -393,13 +430,20 @@ export class Supervisor extends EventEmitter {
   async continueTask(task, area, turn) {
     this.activeTasks.add(task.id);
     let acceptingEvents = true;
+    let completed = false;
     try {
       const result = await this.bridge.continue(task, area, turn.message, event => { if (acceptingEvents) this.recordAgentEvent(task, event); });
       acceptingEvents = false;
-      if (result) this.completeTask(task, result, turn);
+      if (result) {
+        this.completeTask(task, result, turn);
+        completed = true;
+      }
+    } catch (error) {
+      this.failTask(task, error, turn);
     } finally {
       acceptingEvents = false;
       this.activeTasks.delete(task.id);
+      if (completed) this.drainQueue(task, area);
       this.emit('change', this.snapshot());
     }
   }

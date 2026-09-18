@@ -411,7 +411,7 @@ test('settling tasks cannot be deleted and late worker logs cannot corrupt a fol
   await new Promise(setImmediate);
   reportOld({ kind: 'result_ready', summary: 'Finishing' });
   assert.equal(supervisor.status(receipt.taskId).deletable, false);
-  assert.equal(supervisor.toolStatus(receipt.taskId).actions.includes('send_work_message'), false);
+  assert.equal(supervisor.toolStatus(receipt.taskId).actions.includes('send_work_message'), true);
   assert.throws(() => supervisor.deleteTask(receipt.taskId), /Only finished/);
   finishFirst({ result: 'First done' });
   await new Promise(setImmediate);
@@ -426,6 +426,113 @@ test('settling tasks cannot be deleted and late worker logs cannot corrupt a fol
   reportNew({ kind: 'progress', summary: 'Late new log' });
   assert.equal(supervisor.task(receipt.taskId).observations.at(-1).summary, 'Next done');
   assert.equal(supervisor.snapshot().notifications.length, 2);
+});
+
+test('active follow-ups are persisted, idempotent and drain FIFO in the same session', async context => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-queue-'));
+  context.after(() => rmSync(dataDir, { recursive: true, force: true }));
+  const pending = [];
+  const calls = [];
+  const run = (task, message) => {
+    calls.push({ sessionId: task.sessionId, message, readOnly: task.readOnly });
+    return new Promise((resolve, reject) => pending.push({ resolve, reject }));
+  };
+  const supervisor = new Supervisor({ dataDir, bridge: {
+    prepare: async () => ({ directory: dataDir }),
+    dispatch: task => run(task, task.objective),
+    continue: (task, _area, message) => run(task, message),
+  } });
+  const receipt = await supervisor.callTool('start_work', { objective: 'Read the result', readOnly: true }, { requestId: 'initial' });
+  await new Promise(setImmediate);
+  const conditional = 'When done, if the result is A explain A; otherwise explain B.';
+  const send = (message, requestId) => supervisor.callTool('send_work_message', { taskId: receipt.taskId, message }, { requestId });
+  assert.equal((await send(conditional, 'next')).state, 'queued');
+  assert.deepEqual(await send(conditional, 'next'), { taskId: receipt.taskId, state: 'queued', duplicate: true });
+  await assert.rejects(send('Changed', 'next'), /already used/);
+  await send('Then summarize', 'last');
+  assert.equal(calls.length, 1);
+  assert.equal(supervisor.toolStatus(receipt.taskId).queued, 2);
+  assert.equal(JSON.parse(readFileSync(supervisor.file)).tasks[0].turns[0].message, conditional);
+  pending.shift().resolve({ result: 'A' });
+  await new Promise(setImmediate);
+  assert.equal(calls[1].message, conditional);
+  assert.equal(supervisor.toolStatus(receipt.taskId).queued, 1);
+  assert.equal(supervisor.status(receipt.taskId).deletable, false);
+  pending.shift().resolve({ result: 'Explained A' });
+  await new Promise(setImmediate);
+  assert.equal(calls[2].message, 'Then summarize');
+  assert.equal(new Set(calls.map(call => call.sessionId)).size, 1);
+  assert.ok(calls.every(call => call.readOnly));
+  pending.shift().resolve({ result: 'Summary' });
+  await new Promise(setImmediate);
+  assert.equal(supervisor.toolStatus(receipt.taskId).result, 'Summary');
+  assert.equal(supervisor.toolStatus(receipt.taskId).queued, undefined);
+});
+
+test('queue is bounded and pauses on failure and restart without replaying messages', async context => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-queue-paused-'));
+  context.after(() => rmSync(dataDir, { recursive: true, force: true }));
+  let rejectRun;
+  let continuations = 0;
+  const bridge = {
+    prepare: async () => ({}),
+    dispatch: () => new Promise((_resolve, reject) => { rejectRun = reject; }),
+    continue: async () => { continuations += 1; throw new Error('Still unavailable'); },
+  };
+  const supervisor = new Supervisor({ dataDir, bridge });
+  const { taskId } = await supervisor.callTool('start_work', { objective: 'Initial' }, { requestId: 'initial' });
+  await new Promise(setImmediate);
+  for (let index = 0; index < 10; index++) {
+    await supervisor.callTool('send_work_message', { taskId, message: `Follow-up ${index}` }, { requestId: `queued-${index}` });
+  }
+  await assert.rejects(supervisor.callTool('send_work_message', { taskId, message: 'Overflow' }, { requestId: 'overflow' }), /queue is full/);
+  const restarted = new Supervisor({ dataDir, bridge });
+  assert.equal(restarted.toolStatus(taskId).state, 'agent_stopped');
+  assert.equal(restarted.toolStatus(taskId).queuePaused, true);
+  assert.equal(restarted.toolStatus(taskId).queued, 10);
+  assert.equal(continuations, 0);
+  rejectRun(new Error('Unavailable'));
+  await new Promise(setImmediate);
+  assert.equal(supervisor.toolStatus(taskId).state, 'agent_failed');
+  assert.equal(supervisor.toolStatus(taskId).queuePaused, true);
+  await supervisor.callTool('send_work_message', { taskId, message: 'Retry with this correction' }, { requestId: 'retry' });
+  await new Promise(setImmediate);
+  assert.equal(continuations, 1);
+  assert.equal(supervisor.toolStatus(taskId).queued, 10);
+});
+
+test('a correction recovers a paused queue in order and shutdown leaves pending work untouched', async context => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-queue-recovery-'));
+  context.after(() => rmSync(dataDir, { recursive: true, force: true }));
+  const messages = [];
+  let finish;
+  const supervisor = new Supervisor({ dataDir, bridge: {
+    prepare: async () => ({}),
+    dispatch: () => new Promise((_resolve, reject) => { finish = reject; }),
+    continue: async (_task, _area, message) => {
+      messages.push(message);
+      return message === 'Last' ? new Promise(resolve => { finish = resolve; }) : { result: message };
+    },
+  } });
+  const { taskId } = await supervisor.callTool('start_work', { objective: 'Initial' }, { requestId: 'initial' });
+  const send = (message, requestId) => supervisor.callTool('send_work_message', { taskId, message }, { requestId });
+  await send('First queued', 'first');
+  await send('Last', 'last');
+  finish(new Error('Failed'));
+  await new Promise(setImmediate);
+  await send('Correction', 'correction');
+  await new Promise(setImmediate);
+  assert.deepEqual(messages, ['Correction', 'First queued', 'Last']);
+  await send('Do not run after shutdown', 'pending');
+  await supervisor.close();
+  finish({ result: 'Last done' });
+  await new Promise(setImmediate);
+  assert.deepEqual(messages, ['Correction', 'First queued', 'Last']);
+  assert.equal(supervisor.toolStatus(taskId).queuePaused, true);
+  assert.equal(supervisor.toolStatus(taskId).queued, 1);
+  await assert.rejects(send('Late', 'late'), /shutting down/);
+  const restarted = new Supervisor({ dataDir, bridge: {} });
+  assert.equal(restarted.toolStatus(taskId).queued, 1);
 });
 
 test('announces completed and failed work', async () => {

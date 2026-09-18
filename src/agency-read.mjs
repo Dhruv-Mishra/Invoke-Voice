@@ -6,6 +6,7 @@ import { promisify } from 'node:util';
 const execute = promisify(execFile);
 const READ_TOOLS = {
   'msft-learn': ['microsoft_docs_search', 'microsoft_code_sample_search', 'microsoft_docs_fetch'],
+  workiq: ['retrieve', 'fetch', 'search_paths', 'get_schema'],
   teams: ['ListChats', 'GetChat', 'ListChatMembers', 'ListChatMessages', 'GetChatMessage', 'ListTeams', 'ListChannels', 'ListChannelMessages', 'ListChannelMessageReplies', 'SearchTeamMessagesQueryParameters'],
   calendar: ['ListCalendarView', 'GetUserDateAndTimeZoneSettings'],
   'm365-user': ['GetMyDetails', 'GetUserDetails', 'GetMultipleUsersDetails', 'GetManagerDetails', 'GetDirectReportsDetails'],

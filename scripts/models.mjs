@@ -11,8 +11,8 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const hf = (id, label, repo, revision, name) => ({ id, label, repo, revision, name, sourceUrl: `https://huggingface.co/${repo}/resolve/${revision}/${name}` });
 export const ASSETS = Object.freeze([
   hf('ling', 'Ling Compact GGUF', 'SC117/Ling-3.0-tiny-abliterated-APEX-GGUF', 'b923d16fcf28261f12be9ece2b520ed442403f70', 'Ling-3.0-tiny-abliterated-APEX-I-Compact.gguf'),
-  hf('moonshine', 'Moonshine Small Q4_K', 'cstr/moonshine-streaming-small-GGUF', '205725dab4909029e6dee86626d0312f872d7084', 'moonshine-streaming-small-q4_k.gguf'),
-  hf('tokenizer', 'Moonshine tokenizer', 'cstr/moonshine-streaming-small-GGUF', '205725dab4909029e6dee86626d0312f872d7084', 'tokenizer.bin'),
+  hf('moonshine', 'Moonshine Tiny Q4_K', 'cstr/moonshine-streaming-tiny-GGUF', '34ac435a44ab618d426a72346987b68ce07bbf44', 'moonshine-streaming-tiny-q4_k.gguf'),
+  hf('tokenizer', 'Moonshine tokenizer', 'cstr/moonshine-streaming-tiny-GGUF', '34ac435a44ab618d426a72346987b68ce07bbf44', 'tokenizer.bin'),
   hf('vad', 'Silero VAD 6.2.0', 'ggml-org/whisper-vad', '9ffd54a1e1ee413ddf265af9913beaf518d1639b', 'ggml-silero-v6.2.0.bin'),
   hf('kokoroConfig', 'Kokoro configuration', 'hexgrad/Kokoro-82M', 'f3ff3571791e39611d31c381e3a41a3af07b4987', 'config.json'),
   hf('kokoroModel', 'Kokoro 82M weights', 'hexgrad/Kokoro-82M', 'f3ff3571791e39611d31c381e3a41a3af07b4987', 'kokoro-v1_0.pth'),
@@ -43,7 +43,7 @@ export function setupError(message) {
 }
 
 export function localSttProvider(env = process.env) {
-  const provider = env.LOCAL_STT_PROVIDER || 'whisper';
+  const provider = env.LOCAL_STT_PROVIDER || 'moonshine';
   if (!['whisper', 'moonshine'].includes(provider)) throw setupError('LOCAL_STT_PROVIDER must be whisper or moonshine.');
   return provider;
 }

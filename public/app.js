@@ -1919,7 +1919,7 @@ function isTaskDeletable(task) {
   return task?.deletable === true;
 }
 function isTaskResumable(task) {
-  return RESUMABLE_STATES.has(task?.state);
+  return task?.canMessage ?? RESUMABLE_STATES.has(task?.state);
 }
 
 async function deleteTask(taskId, taskTitle = 'task') {
@@ -2019,6 +2019,13 @@ function renderTasks() {
     stateBadge.textContent = (task.state || 'unknown').replaceAll('_', ' ');
     titleGroup.appendChild(stateBadge);
 
+    if (task.queued) {
+      const queueBadge = document.createElement('span');
+      queueBadge.className = 'badge badge-accent';
+      queueBadge.textContent = `${task.queued} queued${task.queuePaused ? ' (paused)' : ''}`;
+      titleGroup.appendChild(queueBadge);
+    }
+
     if (isStale) {
       const staleBadge = document.createElement('span');
       staleBadge.className = 'badge badge-warning';
@@ -2067,7 +2074,7 @@ function renderTasks() {
       const continueBtn = document.createElement('button');
       continueBtn.className = 'btn';
       continueBtn.type = 'button';
-      continueBtn.title = 'Continue Thread';
+      continueBtn.title = isTaskFinished(task) ? 'Continue Thread' : 'Queue Message';
       continueBtn.setAttribute('aria-label', `Continue thread for ${task.title}`);
       const continueIcon = document.createElement('i');
       continueIcon.setAttribute('data-lucide', 'message-square-plus');
@@ -2167,6 +2174,19 @@ function showTaskDetail(task) {
   title.textContent = task.title || task.objective || 'Task';
   detailContent.appendChild(title);
   addField('Status', (task.state || 'unknown').replaceAll('_', ' '));
+  if (task.queued) {
+    const queue = document.createElement('details');
+    queue.className = 'advanced-disclosure';
+    const summary = document.createElement('summary');
+    summary.textContent = `${task.queued} queued${task.queuePaused ? ' (paused)' : ''}`;
+    queue.appendChild(summary);
+    for (const turn of task.turns.filter(item => item.state === 'queued')) {
+      const message = document.createElement('p');
+      message.textContent = turn.message;
+      queue.appendChild(message);
+    }
+    detailContent.appendChild(queue);
+  }
   if (task.stale) addField('Attention', 'Status may be out of date');
   if (task.error) addField('Error', task.error);
   if (task.result) {
@@ -2336,7 +2356,7 @@ if (continueThreadForm) {
       continueThreadDialog.close();
       appendMessage('user', `Continue [${taskName}]: ${message}`);
       appendMessage('tool', `Tool [send_work_message]: ${JSON.stringify(receipt)}`, { plain: true });
-      appendMessage('system', `Follow-up sent for task "${taskName}". State: ${receipt.state || 'dispatching'}.`);
+      appendMessage('system', `${receipt.state === 'queued' ? 'Message queued' : 'Follow-up sent'} for task "${taskName}".`);
       await loadState();
     } catch (err) {
       await showAppAlert(`Failed to send follow-up message: ${err.message}`, 'Could not send message');

@@ -10,7 +10,7 @@ export function localThreadDefault(cap, parallelism = availableParallelism()) {
 const fields = Object.freeze([
   { key: 'DEFAULT_PROVIDER', label: 'Default text provider', group: 'Defaults', type: 'select', defaultValue: 'local', options: [['local', 'Local'], ['openai', 'OpenAI'], ['gemini', 'Google']] },
   { key: 'DEFAULT_VOICE_MODE', label: 'Default voice mode', group: 'Defaults', type: 'select', defaultValue: 'local', options: [['local', 'Local'], ['gemini-live', 'Gemini Live'], ['openai-realtime', 'OpenAI Realtime']] },
-  { key: 'LOCAL_STT_PROVIDER', label: 'Local speech recognition', group: 'Local speech', type: 'select', defaultValue: 'whisper', options: [['whisper', 'Whisper Small (INT8)'], ['moonshine', 'Moonshine Small (streaming)']] },
+  { key: 'LOCAL_STT_PROVIDER', label: 'Local speech recognition', group: 'Local speech', type: 'select', defaultValue: 'moonshine', options: [['moonshine', 'Moonshine Tiny (streaming)'], ['whisper', 'Whisper Small (INT8)']] },
   { key: 'WHISPER_LANGUAGE', label: 'Whisper spoken language', group: 'Local speech', type: 'select', defaultValue: 'auto', options: [['auto', 'Automatic'], ['en', 'English'], ['hi', 'Hindi'], ['es', 'Spanish'], ['fr', 'French'], ['de', 'German'], ['ja', 'Japanese'], ['zh', 'Chinese']], restartRequired: true },
   { key: 'GEMINI_API_KEY', label: 'Google API key', group: 'Provider keys', type: 'password', secret: true },
   { key: 'OPENAI_API_KEY', label: 'OpenAI API key', group: 'Provider keys', type: 'password', secret: true },
@@ -30,7 +30,7 @@ const fields = Object.freeze([
   { key: 'LOCAL_SPACY_MODEL_URL', label: 'spaCy English 3.8.0 wheel URL (optional)', group: 'Local setup network', type: 'url' },
   { key: 'COPILOT_CLI', label: 'Copilot CLI executable', group: 'Coding tools', type: 'text', defaultValue: 'copilot.exe' },
   { key: 'AGENCY_CLI', label: 'Agency executable', group: 'Coding tools', type: 'text', defaultValue: 'agency.exe' },
-  { key: 'AGENCY_WORK_DATA_ACCESS', label: 'Agency work data (cloud, saved history, spoken answers)', group: 'Coding tools', type: 'select', defaultValue: 'disabled', options: [['disabled', 'Off'], ['read-only', 'Allow Teams, calendar and people reads']] },
+  { key: 'AGENCY_WORK_DATA_ACCESS', label: 'Agency work data (cloud, saved history, spoken answers)', group: 'Coding tools', type: 'select', defaultValue: 'disabled', options: [['disabled', 'Off'], ['read-only', 'Allow WorkIQ, Teams, calendar and people reads']] },
   { key: 'COPILOT_REASONING', label: 'Copilot reasoning effort', group: 'Coding tools', type: 'select', defaultValue: 'medium', options: [['low', 'Low'], ['medium', 'Medium'], ['high', 'High']] },
   { key: 'LLAMA_THREADS', label: 'Ling threads', group: 'Local performance', type: 'number', defaultValue: localThreadDefault(8), min: 1, max: 128, restartRequired: true },
   { key: 'LLAMA_CONTEXT', label: 'Ling context size', group: 'Local performance', type: 'number', defaultValue: '4096', min: 1024, max: 131072, restartRequired: true },

@@ -8,6 +8,7 @@ import { refreshPillbars } from './pillbar.js';
 import { createVoiceCaptionBridge } from './captions/voice-bridge.js';
 import { createToolCatalog } from './tools/tool-catalog.js';
 import { createLocalSetupController } from './setup/local-setup.js';
+import { createSettingsRenderer } from './settings/renderer.js';
 
 let appConfig = null;
 let appState = { areas: [], tasks: [] };
@@ -168,6 +169,24 @@ const applicationUpdate = document.getElementById('application-update');
 const applicationUpdateStatus = document.getElementById('application-update-status');
 const applicationUpdateBtn = document.getElementById('application-update-btn');
 const applicationUpdateLabel = document.getElementById('application-update-label');
+
+const settingsRenderer = createSettingsRenderer({
+  getConfig: () => appConfig,
+  getState: () => appState,
+  getCodingBackends,
+  defaultArea: settingsDefaultArea,
+  defaultBackend: settingsDefaultBackend,
+  copilotModel: settingsCopilotModel,
+  copilotContext: settingsCopilotContext,
+  notifyCompleted: settingsNotifyCompleted,
+  notifyNeedsInput: settingsNotifyNeedsInput,
+  notifyFailed: settingsNotifyFailed,
+  voiceNotifications: settingsVoiceNotifications,
+  browserNotifications: settingsBrowserNotifications,
+  integrationsTableBody,
+  configFields,
+  configFeedback,
+});
 
 const chatMessages = document.getElementById('chat-messages');
 const partialTranscript = document.getElementById('partial-transcript');
@@ -966,7 +985,6 @@ async function startVoiceSession() {
           clearPlayback();
           appendMessage('system', '[Speech interrupted]');
         } else if (data.type === 'tool') {
-          console.debug('Voice tool completed', data.name);
           showToolActivity();
         } else if (data.type === 'state') {
           isVoiceThinking = data.state === 'thinking';
@@ -1262,211 +1280,19 @@ setInterval(() => {
 }, 750);
 
 function populateSettingsOptions() {
-  if (!appConfig) return;
-  if (settingsDefaultBackend) {
-    settingsDefaultBackend.replaceChildren();
-    getCodingBackends().forEach(b => {
-      const opt = document.createElement('option');
-      opt.value = b.id;
-      opt.textContent = b.label || b.id;
-      settingsDefaultBackend.appendChild(opt);
-    });
-  }
-
-  if (settingsCopilotModel) {
-    settingsCopilotModel.replaceChildren();
-    (appConfig.copilotModels || []).forEach(m => {
-      const opt = document.createElement('option');
-      opt.value = m.id;
-      opt.textContent = m.label || m.id;
-      settingsCopilotModel.appendChild(opt);
-    });
-  }
-
-  if (settingsCopilotContext) {
-    settingsCopilotContext.replaceChildren();
-    (appConfig.copilotContexts || []).forEach(c => {
-      const opt = document.createElement('option');
-      opt.value = c.id;
-      opt.textContent = c.label || c.id;
-      settingsCopilotContext.appendChild(opt);
-    });
-  }
+  settingsRenderer.populateOptions();
 }
 
 function populateIntegrationsTable() {
-  if (!appConfig || !integrationsTableBody) return;
-  integrationsTableBody.replaceChildren();
-  const list = appConfig.integrations || [];
-  if (list.length === 0) {
-    const tr = document.createElement('tr');
-    const td = document.createElement('td');
-    td.colSpan = 3;
-    td.className = 'empty-detail';
-    td.textContent = 'No integrations reported.';
-    tr.appendChild(td);
-    integrationsTableBody.appendChild(tr);
-    return;
-  }
-  list.forEach(item => {
-    const tr = document.createElement('tr');
-
-    const tdName = document.createElement('td');
-    tdName.textContent = item.label || item.id;
-
-    const tdStatus = document.createElement('td');
-    const statusBadge = document.createElement('span');
-    const isOk = ['configured', 'workspace_configured'].includes(item.status);
-    statusBadge.className = `badge ${isOk ? 'badge-success' : 'badge-warning'}`;
-    statusBadge.textContent = item.status || 'unknown';
-    tdStatus.appendChild(statusBadge);
-
-    const tdMode = document.createElement('td');
-    const modeBadge = document.createElement('span');
-    modeBadge.className = 'badge';
-    modeBadge.textContent = item.mode || 'read_only';
-    tdMode.appendChild(modeBadge);
-
-    tr.append(tdName, tdStatus, tdMode);
-    integrationsTableBody.appendChild(tr);
-  });
+  settingsRenderer.populateIntegrations();
 }
 
 function populateSettingsView() {
-  if (!settingsDefaultArea) return;
-  settingsDefaultArea.replaceChildren();
-  const emptyOpt = document.createElement('option');
-  emptyOpt.value = '';
-  emptyOpt.textContent = '(No default area)';
-  settingsDefaultArea.appendChild(emptyOpt);
-
-  (appState.areas || []).forEach(area => {
-    const opt = document.createElement('option');
-    opt.value = area.id;
-    opt.textContent = area.name;
-    settingsDefaultArea.appendChild(opt);
-  });
-
-  settingsDefaultArea.value = appState.settings?.defaultAreaId || '';
-
-  if (settingsDefaultBackend) {
-    if (settingsDefaultBackend.options.length === 0) {
-      getCodingBackends().forEach(b => {
-        const opt = document.createElement('option');
-        opt.value = b.id;
-        opt.textContent = b.label || b.id;
-        settingsDefaultBackend.appendChild(opt);
-      });
-    }
-    settingsDefaultBackend.value = appState.settings?.defaultBackend || appConfig?.defaults?.codingBackend || 'copilot';
-  }
-
-  if (appConfig) {
-    if (settingsCopilotModel.options.length === 0) populateSettingsOptions();
-    if (appState.settings?.copilotModel) {
-      settingsCopilotModel.value = appState.settings.copilotModel;
-    } else if (appConfig.defaults?.copilotModel) {
-      settingsCopilotModel.value = appConfig.defaults.copilotModel;
-    }
-
-    if (appState.settings?.copilotContext) {
-      settingsCopilotContext.value = appState.settings.copilotContext;
-    } else if (appConfig.defaults?.copilotContext) {
-      settingsCopilotContext.value = appConfig.defaults.copilotContext;
-    }
-  }
-  const s = appState.settings || {};
-  if (settingsNotifyCompleted) settingsNotifyCompleted.checked = s.notifyCompleted !== false;
-  if (settingsNotifyNeedsInput) settingsNotifyNeedsInput.checked = s.notifyNeedsInput !== false;
-  if (settingsNotifyFailed) settingsNotifyFailed.checked = s.notifyFailed !== false;
-  if (settingsVoiceNotifications) settingsVoiceNotifications.checked = s.voiceNotifications !== false;
-  if (settingsBrowserNotifications) settingsBrowserNotifications.checked = s.browserNotifications !== false;
-
-  populateIntegrationsTable();
+  settingsRenderer.populateView();
 }
 
 function renderApplicationConfig() {
-  if (!configFields) return;
-  configFields.replaceChildren();
-  const warnings = Array.isArray(appConfig?.configuration?.warnings) ? appConfig.configuration.warnings : [];
-  if (warnings.length && configFeedback && !configFeedback.textContent) {
-    configFeedback.textContent = warnings.join(' ');
-    configFeedback.className = 'settings-feedback error';
-  }
-  const fields = Array.isArray(appConfig?.configuration?.fields) ? appConfig.configuration.fields : [];
-  if (!fields.length) {
-    const unavailable = document.createElement('p');
-    unavailable.className = 'field-hint';
-    unavailable.textContent = 'Application configuration is unavailable.';
-    configFields.appendChild(unavailable);
-    return;
-  }
-  const groups = new Map();
-  for (const field of fields) {
-    if (!groups.has(field.group)) groups.set(field.group, []);
-    groups.get(field.group).push(field);
-  }
-  for (const [groupName, groupFields] of groups) {
-    const group = document.createElement('fieldset');
-    group.className = 'config-group';
-    const legend = document.createElement('legend');
-    legend.textContent = groupName;
-    const grid = document.createElement('div');
-    grid.className = 'config-grid';
-    for (const field of groupFields) {
-      const secret = field.secret === true || field.type === 'password';
-      const wrapper = document.createElement('div');
-      wrapper.className = 'config-field';
-      const id = `config-${field.key.toLowerCase().replaceAll('_', '-')}`;
-      const label = document.createElement('label');
-      label.htmlFor = id;
-      label.textContent = field.label;
-      wrapper.appendChild(label);
-      if (field.restartRequired) {
-        const restart = document.createElement('span');
-        restart.className = 'config-restart';
-        restart.textContent = field.pendingRestart ? 'Restart required - change pending' : 'Restart required';
-        wrapper.appendChild(restart);
-      }
-      let control;
-      if (field.type === 'select') {
-        control = document.createElement('select');
-        control.dataset.pillbar = '';
-        if (['DEFAULT_PROVIDER', 'DEFAULT_VOICE_MODE', 'LOCAL_STT_PROVIDER'].includes(field.key)) control.dataset.providerIcons = '';
-        for (const option of field.options || []) {
-          const element = document.createElement('option');
-          element.value = option.value;
-          element.textContent = option.label;
-          control.appendChild(element);
-        }
-      } else {
-        control = document.createElement('input');
-        control.type = secret ? 'password' : field.type === 'number' ? 'number' : field.type === 'url' ? 'url' : 'text';
-        if (field.min !== undefined) control.min = String(field.min);
-        if (field.max !== undefined) control.max = String(field.max);
-        if (secret) {
-          control.autocomplete = 'new-password';
-          control.spellcheck = false;
-          control.placeholder = field.configured ? 'Saved - enter a replacement' : 'Enter API key';
-        }
-      }
-      control.id = id;
-      control.dataset.configKey = field.key;
-      control.dataset.configSecret = String(secret);
-      if (!secret) control.value = field.value || '';
-      wrapper.appendChild(control);
-      if (secret && field.configured) {
-        const saved = document.createElement('span');
-        saved.className = 'config-saved';
-        saved.textContent = 'Saved on this device';
-        wrapper.appendChild(saved);
-      }
-      grid.appendChild(wrapper);
-    }
-    group.append(legend, grid);
-    configFields.appendChild(group);
-  }
-  refreshPillbars();
+  settingsRenderer.renderApplicationConfig();
 }
 
 if (configForm) {

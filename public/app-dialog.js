@@ -32,8 +32,8 @@ export function createAppDialog(dialog) {
     alert(text, heading = 'Notice') {
       return enqueue({ heading, text, acceptLabel: 'OK' });
     },
-    confirm(text, { heading = 'Confirm', acceptLabel = 'Continue', danger = false } = {}) {
-      return enqueue({ heading, text, acceptLabel, cancelLabel: 'Cancel', danger });
+    confirm(text, { heading = 'Confirm', acceptLabel = 'Continue', cancelLabel = 'Cancel', danger = false } = {}) {
+      return enqueue({ heading, text, acceptLabel, cancelLabel, danger });
     },
   };
 }

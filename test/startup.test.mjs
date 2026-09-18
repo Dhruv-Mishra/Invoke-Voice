@@ -232,11 +232,11 @@ test('release mode serves built frontend assets with accurate MIME types and own
 
   try {
     // Root HTML
-    const indexRes = await fetch(`${baseUrl}/`);
+      const indexRes = await fetch(`${baseUrl}/`, { signal: AbortSignal.timeout(5000) });
     assert.equal(indexRes.status, 200);
     assert.ok(indexRes.headers.get('content-type')?.includes('text/html'));
     const indexHtml = await indexRes.text();
-    assert.ok(indexHtml.includes('<title>Voice Work Supervisor</title>'));
+      assert.ok(indexHtml.includes('<title>Invoke</title>'));
 
     // Capture worklet from public dir
     const workletRes = await fetch(`${baseUrl}/capture-worklet.js`);
@@ -336,12 +336,15 @@ test('shutdown aborts active chat streams', { timeout: 5000 }, async () => {
   try {
     await providerRequested;
     const chatResponse = await chat;
+    assert.equal(chatResponse.headers.get('content-type'), 'text/event-stream');
     await app.close();
     await chatResponse.text();
     assert.equal(app.server.listening, false);
   } finally {
     if (previousUrl === undefined) delete process.env.LOCAL_LLM_URL;
     else process.env.LOCAL_LLM_URL = previousUrl;
+    await app.close();
+    provider.closeAllConnections();
     await new Promise(resolve => provider.close(resolve));
     rmSync(dataDir, { recursive: true, force: true });
   }
@@ -368,7 +371,7 @@ test('debug mode serves same-origin routes and closes during cold dependency opt
     assert.ok(indexRes.headers.get('content-type')?.includes('text/html'));
     const indexHtml = await indexRes.text();
     assert.ok(indexHtml.includes('/@vite/client'), 'Debug HTML must include Vite client script');
-    assert.ok(indexHtml.includes('<title>Voice Work Supervisor</title>'));
+    assert.ok(indexHtml.includes('<title>Invoke</title>'));
 
     // Direct module serving from source
     const mainRes = await fetch(`${baseUrl}/main.js`, { signal: AbortSignal.timeout(5000) });

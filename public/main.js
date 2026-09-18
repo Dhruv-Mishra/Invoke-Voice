@@ -251,7 +251,7 @@ const VoiceHome = {
           h('button', { class: 'assistant-appearance btn btn-icon', type: 'button', popovertarget: 'appearance-popover', title: 'Change appearance', 'aria-label': 'Change appearance' }, [icon('palette')]),
         ]),
         h('div', { class: 'presence-copy', role: 'status', 'aria-live': 'polite' }, [
-          h('h1', { key: state.value }, stateCopy[state.value]),
+          h('h1', { key: state.value }, state.value === 'idle' ? 'Invoke' : stateCopy[state.value]),
         ]),
       ]),
       h('nav', { class: 'suggestions', 'aria-label': 'Quick actions' }, [

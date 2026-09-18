@@ -66,7 +66,7 @@ export function compactToolResult(result, limit = 6000) {
   const value = result ?? {};
   const serialized = JSON.stringify(value);
   if (serialized.length <= limit) return value;
-  const truth = Object.fromEntries(['taskId', 'id', 'state', 'status', 'stale', 'actions', 'error', 'duplicate', 'receipt', 'opened', 'invoked', 'deleted']
+  const truth = Object.fromEntries(['taskId', 'id', 'state', 'status', 'stale', 'actions', 'error', 'duplicate', 'receipt', 'opened', 'invoked', 'deleted', 'saved', 'action', 'value']
     .filter(key => value[key] !== undefined)
     .map(key => [key, value[key]]));
   if (Array.isArray(value.tasks)) {
@@ -364,7 +364,6 @@ export async function* streamReply({
         } else if (event.type === 'content_block_delta') {
           if (event.delta?.type === 'text_delta' && event.delta.text) {
             roundText += event.delta.text;
-            yield { type: 'text', text: event.delta.text };
           } else if (event.delta?.type === 'input_json_delta' && event.delta.partial_json) {
             const target = toolCalls[event.index] || currentTool;
             if (target) target.arguments += event.delta.partial_json;
@@ -398,7 +397,6 @@ export async function* streamReply({
           const text = (provider === 'local' || provider === 'custom') ? reasoningFilter.process(delta.content) : delta.content;
           if (text) {
             roundText += text;
-            yield { type: 'text', text };
           }
         }
         if (delta?.tool_calls) {
@@ -417,7 +415,6 @@ export async function* streamReply({
         const remaining = reasoningFilter.flush();
         if (remaining) {
           roundText += remaining;
-          yield { type: 'text', text: remaining };
         }
       }
     }
@@ -429,6 +426,7 @@ export async function* streamReply({
         const reason = isAnthropic ? stopReason : finishReason;
         throw new Error(`Response stream ended before completion (${reason || 'no finish reason'})`);
       }
+      if (roundText) yield { type: 'text', text: roundText };
       completed = true;
       break;
     }

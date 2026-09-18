@@ -123,7 +123,7 @@ export function createVSCodeBridge(dataDir, env = process.env, { agencyMcp } = {
         });
         if (!head) {
           const { stdout: tree } = await managedGit(['hash-object', '-t', 'tree', '-w', '--stdin']);
-          const { stdout: commit } = await managedGit(['-c', 'user.name=Voice Supervisor', '-c', 'user.email=workspace@localhost', '-c', 'commit.gpgsign=false', 'commit-tree', tree.trim(), '-m', 'Initialize local workspace']);
+          const { stdout: commit } = await managedGit(['-c', 'user.name=Invoke', '-c', 'user.email=workspace@localhost', '-c', 'commit.gpgsign=false', 'commit-tree', tree.trim(), '-m', 'Initialize local workspace']);
           await managedGit(['update-ref', 'HEAD', commit.trim(), '0'.repeat(commit.trim().length)]);
         }
       })().catch(error => { workspaceReady = undefined; throw error; });

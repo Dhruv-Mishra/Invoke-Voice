@@ -217,7 +217,7 @@ try {
         if (request.url === '/api/agency/check' && request.method === 'POST') {
           agencyChecks += 1;
           response.writeHead(200, { 'Content-Type': 'application/json' });
-          response.end(JSON.stringify({ workDataAccess: 'disabled', results: [{ id: 'workiq', status: 'authentication_required' }], integrations: [{ id: 'workiq', label: 'WorkIQ', status: 'authentication_required', mode: 'agency', message: 'Sign in again. <img src=x onerror=alert(1)>' }] }));
+          response.end(JSON.stringify({ workDataAccess: 'disabled', results: [{ id: 'workiq', status: 'authentication_required', message: 'Sign in with Agency, then retry.' }], integrations: [{ id: 'workiq', label: 'WorkIQ', status: 'authentication_required', mode: 'agency', message: 'Sign in again. <img src=x onerror=alert(1)>' }] }));
           return;
         }
         if (request.url === '/api/settings' && request.method === 'POST') {
@@ -240,6 +240,18 @@ try {
           for (const item of fixtureNotifications) if (ids.includes(item.id)) item.read = true;
           response.writeHead(200, { 'Content-Type': 'application/json' });
           response.end(JSON.stringify({ notifications: fixtureNotifications }));
+          return;
+        }
+        if (request.url === '/api/tools' && request.method === 'POST') {
+          let body = '';
+          for await (const chunk of request) body += chunk;
+          const input = JSON.parse(body);
+          assert.equal(input.name, 'control_app');
+          assert.equal(input.args.action, 'clear_notifications');
+          fixtureNotifications.length = 0;
+          eventResponse.write(`data: ${JSON.stringify({ type: 'state', state: { areas: [], tasks: fixtureTasks, settings, notifications: fixtureNotifications } })}\n\n`);
+          response.writeHead(200, { 'Content-Type': 'application/json' });
+          response.end(JSON.stringify({ saved: true, action: 'clear_notifications' }));
           return;
         }
         if (request.url === '/api/config') {
@@ -307,7 +319,7 @@ try {
   console.log('Browser fixture: checking appearance');
   await waitFor(() => document.getElementById('route-status-badge').textContent.includes('Ready'));
   console.log('Browser fixture: route ready');
-  assert.equal(await evaluate(() => ['end-call-btn', 'notifications-btn', 'notifications-read'].every(id => document.getElementById(id).querySelector('svg'))), true, 'call and inbox buttons must render registered icons');
+  assert.equal(await evaluate(() => ['end-call-btn', 'notifications-btn', 'notifications-read', 'notifications-clear'].every(id => document.getElementById(id).querySelector('svg'))), true, 'call and inbox buttons must render registered icons');
 
   assert.equal(await evaluate(() => document.querySelectorAll('.appearance-options input').length), 0);
   assert.equal(await evaluate(() => document.querySelector('.top-bar').getBoundingClientRect().width), 248);
@@ -1112,6 +1124,14 @@ try {
 
   await click('#mic-toggle-btn');
   await waitFor(() => document.getElementById('agent-sprite').dataset.state === 'listening');
+  assert.equal(await evaluate(() => {
+    const probe = document.createElement('span');
+    probe.style.color = 'var(--cp-danger)';
+    document.body.append(probe);
+    const matches = getComputedStyle(probe).color === getComputedStyle(document.getElementById('end-call-btn')).color;
+    probe.remove();
+    return matches;
+  }), true, 'active hang-up uses the danger color');
   await voice({ type: 'tool', name: 'list_work', result: { ok: true } });
   voiceSocket.close();
   await waitFor(() => document.getElementById('agent-sprite').dataset.state === 'idle');
@@ -1124,12 +1144,20 @@ try {
   await pointerClick('#notifications-btn');
   assert.equal(await evaluate(() => document.querySelectorAll('#notifications-list .notification-item').length), 2);
   assert.equal(await evaluate(() => document.querySelectorAll('#notifications-list img').length), 0);
-  assert.equal(await evaluate(() => [...document.querySelectorAll('.chat-bubble.system')].filter(item => item.textContent.includes('[Notification]')).length), 2, 'state catch-up and SSE events deduplicate');
+  assert.equal(await evaluate(() => [...document.querySelectorAll('.chat-bubble.system')].filter(item => item.textContent.includes('[Notification]')).length), 0, 'inbox updates do not clutter chat');
+  assert.equal(await evaluate(() => [...document.querySelectorAll('.notification-item strong')].every(item => item.textContent.endsWith(': completed'))), true);
+  assert.equal(await evaluate(() => document.querySelectorAll('.notification-item span').length), 0);
   await screenshot('notification-inbox');
   notificationReadRace = true;
   await pointerClick('#notifications-read');
   await waitFor(() => document.getElementById('notifications-count').textContent === '1');
   assert.equal(fixtureNotifications.at(-1).read, false);
+  await pointerClick('#notifications-clear');
+  await waitFor(() => document.querySelector('#notifications-list').textContent.includes('No notifications'));
+  assert.equal(fixtureNotifications.length, 0);
+  settings.appearanceTheme = 'jarvis';
+  eventResponse.write(`data: ${JSON.stringify({ type: 'state', state: { areas: [], tasks: fixtureTasks, settings, notifications: fixtureNotifications } })}\n\n`);
+  await waitFor(() => document.querySelector('button[data-appearance="jarvis"]').getAttribute('aria-pressed') === 'true');
   await press('Escape');
   console.log('Browser fixture: keyboard and reset');
   await evaluate(() => document.getElementById('settings-tab').dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true })));
@@ -1140,11 +1168,28 @@ try {
   assert.equal(await evaluate(() => document.querySelectorAll('.history-entry').length), 2);
   assert.equal(await evaluate(() => document.getElementById('closed-caption').hidden), true);
   assert.equal(await evaluate(() => document.getElementById('history-empty').hidden), true);
+  settings.defaultBackend = 'agency';
+  settings.agencySetupPrompted = false;
+  settings.localSetupPrompted = true;
+  setup.status = 'ready';
+  setup.hardware.warning = null;
+  const previousChecks = agencyChecks;
+  await browser.loadURL(url);
+  await waitFor(() => document.getElementById('app-dialog').open);
+  assert.equal(agencyChecks, previousChecks + 1);
+  assert.match(await evaluate(() => document.querySelector('[data-app-dialog-message]').textContent), /Sign in with Agency/);
+  assert.equal(await evaluate(() => document.querySelector('[data-app-dialog-cancel]').textContent), 'Later');
+  await click('[data-app-dialog-cancel]');
+  await waitFor(() => !document.getElementById('app-dialog').open);
   assert.deepEqual(errors, []);
   console.log('Frontend browser checks passed: real toggle/input events and painted surfaces, two overlay captions, persisted transparency, setup lifecycle, unchanged voice/SSE ownership, themes and five viewports.');
 } catch (error) {
   console.error(error.stack);
   console.error('Browser console:', JSON.stringify(errors));
+  if (browser && !browser.isDestroyed()) console.error('Theme state:', await evaluate(() => ({
+    live: window.getThemeSessionOptions?.(),
+    controls: [...document.querySelectorAll('[data-appearance]')].map(button => [button.dataset.appearance, button.getAttribute('aria-pressed')]),
+  })));
   if (browser && !browser.isDestroyed()) console.error('Browser viewport:', {
     contentSize: browser.getContentSize(), maximized: browser.isMaximized(), minimized: browser.isMinimized(),
     renderer: await evaluate(() => ({ width: innerWidth, height: innerHeight, desktop: matchMedia('(min-width: 761px)').matches })),

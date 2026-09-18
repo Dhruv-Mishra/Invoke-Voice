@@ -1,6 +1,3 @@
-// Voice Work Supervisor Frontend Application
-// Follows Clawpilot theme and local-only zero-build plain JS architecture
-
 import { createConversationUI } from './captions/controller.js';
 import captureWorkletUrl from './capture-worklet.js?url';
 import { createIdleCallTimer, shouldForwardCapturedAudio } from './voice-session.js';
@@ -165,6 +162,7 @@ const settingsNotifyNeedsInput = document.getElementById('settings-notify-needs-
 const settingsNotifyFailed = document.getElementById('settings-notify-failed');
 const settingsVoiceNotifications = document.getElementById('settings-voice-notifications');
 const settingsBrowserNotifications = document.getElementById('settings-browser-notifications');
+const settingsGreetOnConnect = document.getElementById('settings-greet-on-connect');
 const settingsAutoEndCall = document.getElementById('settings-auto-end-call');
 const settingsIdleWarning = document.getElementById('settings-idle-warning');
 const settingsIdleEnd = document.getElementById('settings-idle-end');
@@ -193,6 +191,7 @@ const settingsRenderer = createSettingsRenderer({
   notifyFailed: settingsNotifyFailed,
   voiceNotifications: settingsVoiceNotifications,
   browserNotifications: settingsBrowserNotifications,
+  greetOnConnect: settingsGreetOnConnect,
   autoEndCall: settingsAutoEndCall,
   idleWarning: settingsIdleWarning,
   idleEnd: settingsIdleEnd,
@@ -302,6 +301,13 @@ function applyState(state) {
   if (!Array.isArray(appState.areas)) appState.areas = [];
   if (!Array.isArray(appState.tasks)) appState.tasks = [];
   if (!appState.settings || typeof appState.settings !== 'object') appState.settings = {};
+  if (appState.settings.appearanceTheme && appState.settings.appearanceTheme !== window.getThemeSessionOptions?.().theme) {
+    window.dispatchEvent(new CustomEvent('voice-supervisor:theme', { detail: { id: appState.settings.appearanceTheme, saved: true } }));
+  }
+  const unread = new Set((appState.notifications || []).filter(item => !item.read).map(item => item.id));
+  for (let index = pendingNotifications.length - 1; index >= 0; index--) {
+    if (pendingNotifications[index].id !== idleNotificationId && !unread.has(pendingNotifications[index].id)) pendingNotifications.splice(index, 1);
+  }
   renderNotifications();
   for (const notification of appState.notifications || []) if (!notification.read) handleNotification(notification);
   renderAreas();
@@ -310,6 +316,14 @@ function applyState(state) {
   if (!settingsDirty) populateSettingsView();
   updateIcons();
 }
+
+window.addEventListener('voice-supervisor:theme', async event => {
+  if (event.detail?.saved) return;
+  try {
+    const response = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ appearanceTheme: event.detail.id }) });
+    if (!response.ok) throw new Error('Could not save the theme.');
+  } catch (error) { await showAppAlert(error.message); }
+});
 
 // Safe icon refreshment
 function updateIcons() {
@@ -365,7 +379,7 @@ function activateView(viewName) {
   if (viewName === 'settings') {
     populateSettingsView();
   }
-  document.getElementById('view-dialog-title').textContent = viewTitles[viewName] || 'Supervisor';
+  document.getElementById('view-dialog-title').textContent = viewTitles[viewName] || 'Invoke';
   syncViewPresentation();
   if (previous !== viewName && viewName !== 'home') {
     if (desktopViews.matches) document.getElementById('close-view-btn').focus({ preventScroll: true });
@@ -1278,6 +1292,11 @@ function isNotificationScenarioEnabled(state) {
   return true;
 }
 
+function notificationHeading(notification) {
+  const outcome = { result_ready: 'completed', completed: 'completed', agent_failed: 'failed', failed: 'failed', needs_input: 'needs your input' }[notification.state] || 'updated';
+  return `${notification.title || 'Task'}: ${outcome}`;
+}
+
 function handleNotification(n) {
   if (!n) return;
   if (n.id && seenNotifications.has(n.id)) return;
@@ -1287,21 +1306,14 @@ function handleNotification(n) {
   }
   const settings = appState?.settings || {};
 
-  if (isNotificationScenarioEnabled(n.state)) {
-    const text = `[Notification] ${n.title}: ${n.text || n.state}`;
-    appendMessage('system', text);
-  }
-
   if (settings.browserNotifications && isNotificationScenarioEnabled(n.state) && typeof window.Notification !== 'undefined' && Notification.permission === 'granted') {
     try {
-      new Notification(n.title || 'Voice Supervisor', {
-        body: n.text || n.state || 'Task update'
-      });
+      new Notification(notificationHeading(n), { tag: n.id });
     } catch (_) {}
   }
 
   if (settings.voiceNotifications !== false && isNotificationScenarioEnabled(n.state) && !isQuietMode) {
-    pendingNotifications.push({ id: n.id || crypto.randomUUID(), text: `${n.title}: ${n.text || n.state}` });
+    pendingNotifications.push({ id: n.id || crypto.randomUUID(), text: notificationHeading(n) });
     if (pendingNotifications.length > 100) pendingNotifications.shift();
   }
 }
@@ -1317,6 +1329,7 @@ function renderNotifications() {
   button.setAttribute('aria-label', `Notifications, ${unread} unread`);
   document.getElementById('notifications-count').textContent = unread || '';
   document.getElementById('notifications-read').disabled = !unread;
+  document.getElementById('notifications-clear').disabled = !notifications.length;
   const list = document.getElementById('notifications-list');
   list.replaceChildren();
   if (!notifications.length) {
@@ -1331,15 +1344,13 @@ function renderNotifications() {
     item.className = 'notification-item';
     item.dataset.unread = String(!notification.read);
     const title = document.createElement('strong');
-    title.textContent = notification.title;
-    const text = document.createElement('span');
-    text.textContent = notification.text;
+    title.textContent = notificationHeading(notification);
     const time = document.createElement('time');
     time.dateTime = new Date(notification.at).toISOString();
-    time.textContent = new Date(notification.at).toLocaleString();
-    item.append(title, text, time);
+    time.textContent = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(notification.at));
+    item.append(title, time);
     const task = tasks.get(notification.taskId);
-    item.disabled = !task;
+    item.title = task ? 'Open task' : 'Mark read';
     item.addEventListener('click', () => {
       document.getElementById('notifications-popover').hidePopover();
       void markNotificationsRead([notification.id]);
@@ -1360,6 +1371,12 @@ async function markNotificationsRead(ids) {
 
 document.getElementById('notifications-read').addEventListener('click', () => {
   void markNotificationsRead((appState.notifications || []).filter(item => !item.read).map(item => item.id));
+});
+
+document.getElementById('notifications-clear').addEventListener('click', async () => {
+  try {
+    await callSupervisorTool('control_app', { action: 'clear_notifications' });
+  } catch (error) { await showAppAlert(error.message); }
 });
 
 setInterval(() => {
@@ -1478,6 +1495,7 @@ if (settingsForm) {
           notifyNeedsInput,
           notifyFailed,
           voiceNotifications,
+          greetOnConnect: settingsGreetOnConnect.checked,
           autoEndCall: settingsAutoEndCall.checked,
           idleWarningSeconds: Number(settingsIdleWarning.value),
           idleEndSeconds: Number(settingsIdleEnd.value),
@@ -1512,7 +1530,7 @@ if (window.voiceSupervisorUpdates && applicationUpdate && applicationUpdateBtn) 
     applicationUpdateBtn.disabled = true;
     try {
       if (updateAvailable) {
-        const install = await showAppConfirm(`Install Voice Work Supervisor ${availableVersion}?`, { heading: 'Install update', acceptLabel: 'Install' });
+        const install = await showAppConfirm(`Install Invoke ${availableVersion}?`, { heading: 'Install update', acceptLabel: 'Install' });
         if (!install) {
           applicationUpdateStatus.textContent = 'Update installation cancelled.';
           return;
@@ -1547,7 +1565,14 @@ if (window.voiceSupervisorUpdates && applicationUpdate && applicationUpdateBtn) 
 }
 
 const agencyCheckBtn = document.getElementById('agency-check-btn');
-agencyCheckBtn?.addEventListener('click', async () => {
+let agencyCheckRequest;
+async function checkAgencyConnections() {
+  if (agencyCheckRequest) return agencyCheckRequest;
+  agencyCheckRequest = runAgencyCheck().finally(() => { agencyCheckRequest = null; });
+  return agencyCheckRequest;
+}
+
+async function runAgencyCheck() {
   const feedback = document.getElementById('agency-check-feedback');
   agencyCheckBtn.disabled = true;
   feedback.textContent = 'Checking connections...';
@@ -1562,11 +1587,35 @@ agencyCheckBtn?.addEventListener('click', async () => {
     feedback.textContent = failures.length ? 'Some connections need attention.' : 'Tool catalogs verified.';
     if (result.workDataAccess === 'disabled') feedback.textContent += ' Private work-data access is off.';
     feedback.className = `settings-feedback${failures.length ? ' error' : ''}`;
+    return result;
   } catch (error) {
     feedback.textContent = error.message || 'Connection check failed.';
     feedback.className = 'settings-feedback error';
+    return { results: [{ status: 'unavailable', message: 'Connection check failed. Check Agency and your network, then retry in Settings > Integrations.' }] };
   } finally { agencyCheckBtn.disabled = false; }
-});
+}
+agencyCheckBtn?.addEventListener('click', () => { void checkAgencyConnections(); });
+
+async function checkAgencyOnEntry() {
+  if (appState.settings.defaultBackend !== 'agency') return;
+  const result = await checkAgencyConnections();
+  const messages = [...new Set(result.results.filter(item => item.status !== 'ready').map(item => item.message))];
+  if (result.workDataAccess === 'disabled' && !appState.settings.agencySetupPrompted) messages.push('Private work-data access is off. Enable Agency work data in Settings > Config > Coding tools for work-data research.');
+  if (!messages.length) return;
+  while (document.querySelector('dialog[open]')) {
+    await new Promise(resolve => document.querySelector('dialog[open]').addEventListener('close', resolve, { once: true }));
+  }
+  const openSettings = await showAppConfirm(messages.join('\n\n'), { heading: 'Agency setup', acceptLabel: 'Open settings', cancelLabel: 'Later' });
+  if (openSettings) {
+    activateView('settings');
+    agencyCheckBtn.closest('details').open = true;
+    agencyCheckBtn.scrollIntoView({ block: 'center' });
+  }
+  try {
+    const response = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agencySetupPrompted: true }) });
+    if (!response.ok) throw new Error('Setup preference was not saved.');
+  } catch (error) { document.getElementById('agency-check-feedback').textContent = error.message; }
+}
 
 // REST: Config and State Loading
 async function loadConfig(preserveSelection = false) {
@@ -2752,6 +2801,7 @@ async function initialize() {
   await localSetup.initialize();
   await toolCatalog.load();
   initEventSource();
+  void checkAgencyOnEntry();
 }
 
 if (document.readyState === 'loading') {

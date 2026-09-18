@@ -13,7 +13,7 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 test('packaged child uses bundled Electron Node mode, physical unpacked sources and writable config', () => {
   const resourcesPath = path.join(root, 'release', 'win-unpacked', 'resources');
   const dataDir = path.join(os.tmpdir(), 'Voice Supervisor launch fixture');
-  const executable = path.join(root, 'release', 'win-unpacked', 'Voice Work Supervisor.exe');
+  const executable = path.join(root, 'release', 'win-unpacked', 'Invoke.exe');
   const spec = desktopLaunch.serverLaunch({ executable, resourcesPath, appRoot: root, packaged: true, dataDir, env: { NODE_OPTIONS: '--inspect=0.0.0.0', NODE_PATH: 'untrusted', PORT: '4317' } });
   assert.equal(spec.executable, executable);
   assert.equal(spec.options.cwd, dataDir);
@@ -54,9 +54,10 @@ test('installer includes physical runtime dependencies, excludes private data an
   assert.ok(config.build.files.includes('!**/.env*'));
   assert.ok(config.build.files.includes('!**/*.{gguf,pth,pt}'));
   assert.ok(config.build.files.indexOf('artifacts/voice-pack/descriptor.json') > config.build.files.indexOf('!**/{test,tests,artifacts,state,.git,.venv,__pycache__}/**'));
-  assert.equal(config.build.win.icon, 'build/copilot.ico');
+  assert.equal(config.build.productName, 'Invoke');
+  assert.equal(config.build.win.icon, 'build/invoke.ico');
   assert.equal(config.build.win.signAndEditExecutable, true);
-  assert.ok(config.build.files.includes('build/copilot.png'));
+  assert.ok(config.build.files.includes('build/invoke.png'));
   assert.equal(config.build.nsis.oneClick, true);
   assert.equal(config.build.nsis.perMachine, false);
   assert.equal(config.build.nsis.allowElevation, false);
@@ -92,6 +93,11 @@ test('beta publisher builds before atomically pushing its version tag and prerel
   const localPublisher = readFileSync(path.join(root, 'scripts', 'publish-beta-local.mjs'), 'utf8');
   assert.equal(config.scripts['release:beta'], 'node scripts/publish-beta.mjs');
   assert.equal(config.scripts['release:beta:local'], 'node scripts/publish-beta-local.mjs');
+  assert.equal(config.scripts['release:stable:local'], 'node scripts/publish-beta-local.mjs stable');
+  assert.match(localPublisher, /semver\.prerelease\(config\.version\)/);
+  assert.match(localPublisher, /'--latest', '--notes-file'/);
+  assert.match(localPublisher, /invoke-update\.json/);
+  assert.match(localPublisher, /runNpm\(\['audit', '--omit=dev'\]\)/);
   assert.match(workflow, /actions\/setup-python@v5[\s\S]*python-version: '3\.12'[\s\S]*architecture: x64/);
   assert.match(publisher, /git', \['status', '--porcelain'/);
   assert.match(publisher, /releaseBranch = process\.env\.RELEASE_BRANCH \|\| 'master'/);
@@ -109,6 +115,7 @@ test('beta publisher builds before atomically pushing its version tag and prerel
 test('desktop allows setup documentation sources but rejects arbitrary URLs and protocols', context => {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'voice-desktop-links-'));
   context.after(() => rmSync(directory, { recursive: true, force: true }));
+  for (const url of ['https://aka.ms/agency', 'https://github.com/Dhruv-Mishra/VoiceOrchestration/releases', 'https://github.com/Dhruv-Mishra/VoiceOrchestration/releases/latest']) assert.equal(desktopLaunch.allowedExternal(url), true);
   for (const provider of ['whisper', 'moonshine']) {
     const setup = createLocalSetup({ env: { LOCALAPPDATA: directory, LOCAL_STT_PROVIDER: provider } });
     for (const component of setup.snapshot().components) assert.equal(desktopLaunch.allowedExternal(component.sourceUrl), true, component.sourceUrl);
@@ -136,7 +143,7 @@ test('built Windows app starts its packaged backend without an external Node ins
   assert.equal(probe.status, 0, probe.error?.message || probe.stderr);
   assert.match(probe.stdout, /cpu/);
   const { listPackage } = await import('@electron/asar');
-  assert.ok(listPackage(path.join(resourcesPath, 'app.asar')).some(filename => filename.replaceAll('\\', '/') === '/build/copilot.png'));
+  assert.ok(listPackage(path.join(resourcesPath, 'app.asar')).some(filename => filename.replaceAll('\\', '/') === '/build/invoke.png'));
   const spec = desktopLaunch.serverLaunch({ executable, appRoot: root, resourcesPath, packaged: true, dataDir, env: { SystemRoot: process.env.SystemRoot, TEMP: os.tmpdir(), TMP: os.tmpdir(), PATH: path.join(process.env.SystemRoot, 'System32'), PREWARM_LOCAL_VOICE: '0' } });
   spec.options.env.SUPERVISOR_DESKTOP = '0';
   const child = spawn(spec.executable, spec.args, { ...spec.options, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });

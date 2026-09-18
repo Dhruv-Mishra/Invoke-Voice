@@ -539,7 +539,7 @@ test('local rejects oversized latest instructions before HTTP and leaves cloud h
   } finally { await new Promise(resolve => server.close(resolve)); }
 });
 
-test('voice requests include spoken instructions and preserve streamed response text', async () => {
+test('voice requests include spoken instructions and preserve final response text', async () => {
   let requestBody;
   const chunks = ['The requested identifier is `11111111-1111-', '4111-8111-111111111111`', ' and the status is result_ready.'];
   const server = http.createServer(async (req, res) => {
@@ -555,14 +555,14 @@ test('voice requests include spoken instructions and preserve streamed response 
     const env = { LOCAL_LLM_URL: `http://127.0.0.1:${server.address().port}/v1`, LOCAL_LLM_MODEL: 'test-local' };
     const events = [];
     for await (const event of streamReply({ provider: 'local', profile: 'voice', messages: [{ role: 'user', content: 'Read the identifier and status exactly.' }], env })) events.push(event);
-    assert.equal(requestBody.tools.length, 8);
+    assert.equal(requestBody.tools.length, 9);
     assert.equal(requestBody.tools.at(-1).function.name, 'end_call');
     assert.equal(requestBody.max_tokens, 512);
     assert.equal(requestBody.temperature, 0.2);
     assert.equal(requestBody.cache_prompt, true);
     assert.equal(requestBody.messages[0].content, voiceInstructions);
     assert.ok(voiceInstructions.startsWith(supervisorInstructions));
-    assert.deepEqual(events.filter(event => event.type === 'text').map(event => event.text), chunks);
+    assert.deepEqual(events.filter(event => event.type === 'text').map(event => event.text), [chunks.join('')]);
   } finally {
     await new Promise(resolve => server.close(resolve));
   }
@@ -719,7 +719,7 @@ test('local and hybrid voice execute tools before playback and retain real answe
       session.playbackDone(ended.responseId, index === 1 ? 'failed' : 'played');
     }
     assert.equal(requests.length, 7);
-    assert.ok(requests.every(request => request.tools.length === 8 && request.messages[0].content === voiceInstructions));
+    assert.ok(requests.every(request => request.tools.length === 9 && request.messages[0].content === voiceInstructions));
     assert.match(requests[1].messages[0].content, /Read fresh status, not chat history/);
     assert.match(requests[1].messages[0].content, /list_work\(query\).*get_work_status/);
     assert.ok(requests[1].messages.some(message => message.role === 'assistant' && message.content === answers[0]));
@@ -824,6 +824,32 @@ test('task reads preserve empty and failed status evidence without mutations', a
   }
 });
 
+test('multiple action rounds publish only the final receipt-backed response without rewriting prose', async context => {
+  const requests = [];
+  const executed = [];
+  const answer = 'Two tasks were deleted. The running task could not be deleted.';
+  context.mock.method(globalThis, 'fetch', async (_url, options) => {
+    requests.push(JSON.parse(options.body));
+    const round = requests.length;
+    const delta = round <= 3 ? {
+      content: 'All tasks are deleted.',
+      tool_calls: [{ index: 0, id: `delete-${round}`, function: { name: 'delete_work', arguments: JSON.stringify({ taskId: `task-${round}` }) } }],
+    } : { content: answer };
+    return new Response(`data: ${JSON.stringify({ choices: [{ delta, finish_reason: round <= 3 ? 'tool_calls' : 'stop' }] })}\n\ndata: [DONE]\n\n`, { headers: { 'Content-Type': 'text/event-stream' } });
+  });
+  const events = [];
+  for await (const event of streamReply({ provider: 'local', profile: 'voice', messages: [{ role: 'user', content: 'Delete the three tasks.' }], env: { LOCAL_LLM_URL: 'http://127.0.0.1:1/v1' }, callTool: async (_name, args) => {
+    executed.push(args.taskId);
+    if (args.taskId === 'task-3') throw new Error('Task is running');
+    return { deleted: true, taskId: args.taskId };
+  } })) events.push(event);
+  assert.deepEqual(executed, ['task-1', 'task-2', 'task-3']);
+  assert.deepEqual(events.filter(event => event.type === 'text'), [{ type: 'text', text: answer }]);
+  assert.deepEqual(events.filter(event => event.type === 'tool').map(event => event.result), [{ deleted: true, taskId: 'task-1' }, { deleted: true, taskId: 'task-2' }, { error: 'Task is running' }]);
+  assert.equal(requests.at(-1).messages.filter(message => message.role === 'tool').length, 3);
+  assert.equal(events.at(-1).type, 'done');
+});
+
 test('normal local tool/result roundtrip verifies thinking false, tools roundtrip and no reasoning output across split tags', async () => {
   let requestCount = 0;
   let receivedThinkingFlag = null;
@@ -900,7 +926,7 @@ test('normal local tool/result roundtrip verifies thinking false, tools roundtri
     const fullText = textEvents.map(e => e.text).join('');
     assert.ok(!fullText.includes('Internal thought process'), 'Reasoning content must not be output');
     assert.ok(!fullText.includes('think'), 'Thinking tags must not be output');
-    assert.ok(fullText.includes('Checking existing work registered.'), 'Answer after split tag must be output');
+    assert.ok(!fullText.includes('Checking existing work registered.'), 'Tool-round prose must not be published as an outcome');
     assert.ok(fullText.includes('Here are the work areas.'), 'Followup text must be output');
 
     const toolEvents = events.filter(e => e.type === 'tool');
@@ -1017,7 +1043,7 @@ test('truncated tool call stream does NOT invoke callback', async () => {
   }
 });
 
-test('incomplete text streams preserve partial text but do not report success', async () => {
+test('incomplete text streams do not publish unverified answers or report success', async () => {
   const server = http.createServer(async (req, res) => {
     for await (const _ of req) {}
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
@@ -1033,7 +1059,7 @@ test('incomplete text streams preserve partial text but do not report success', 
         env: { LOCAL_LLM_URL: `http://127.0.0.1:${server.address().port}/v1` },
       })) events.push(event);
     }, /before completion/i);
-    assert.equal(events.map(event => event.text || '').join(''), 'Partial answer');
+    assert.equal(events.map(event => event.text || '').join(''), '');
     assert.equal(events.some(event => event.type === 'done'), false);
   } finally {
     await new Promise(resolve => server.close(resolve));

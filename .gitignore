@@ -6,6 +6,8 @@ dist/
 release/
 build/copilot.ico
 build/copilot.png
+build/invoke.ico
+build/invoke.png
 
 # Local configuration and secrets
 .env
@@ -26,6 +28,9 @@ playwright-report/
 blob-report/
 .playwright-mcp/
 screenshots/
+!docs/screenshots/
+docs/screenshots/*
+!docs/screenshots/*.webp
 artifacts/
 
 # Logs and diagnostics

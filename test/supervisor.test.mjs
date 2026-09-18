@@ -13,7 +13,7 @@ test('exports the canonical LLM tool schemas', () => {
   assert.equal(tools, contractTools);
   assert.equal(supervisorTools, contractSupervisorTools);
   assert.equal(supervisorInstructions, contractSupervisorInstructions);
-  assert.deepEqual(tools.map(tool => tool.function.name), ['list_work', 'start_work', 'send_work_message', 'get_work_status', 'open_work', 'delete_work', 'invoke_vscode']);
+  assert.deepEqual(tools.map(tool => tool.function.name), ['list_work', 'start_work', 'send_work_message', 'get_work_status', 'open_work', 'delete_work', 'invoke_vscode', 'control_app']);
   assert.equal(Object.hasOwn(tools[0].function.parameters, 'required'), false);
   assert.equal(tools[0].function.parameters.properties.query.type, 'string');
   assert.ok(supervisorInstructions.length < 1350);
@@ -665,4 +665,23 @@ test('follow-up status uses current-turn observations after retention', () => {
     supervisor.state.tasks.push(task);
     assert.equal(supervisor.toolStatus(task.id).update, 'Update 99');
   } finally { rmSync(dataDir, { recursive: true, force: true }); }
+});
+
+test('app controls persist allowlisted preferences and inbox changes without modifying tasks or consent', async context => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'invoke-controls-'));
+  context.after(() => rmSync(dataDir, { recursive: true, force: true }));
+  const supervisor = new Supervisor({ dataDir, bridge: {} });
+  supervisor.publishNotification({ id: 'task', title: 'Draft', state: 'result_ready' }, 'Full answer');
+  await supervisor.callTool('control_app', { action: 'read_notifications' });
+  assert.equal(supervisor.state.notifications[0].read, true);
+  await supervisor.callTool('control_app', { action: 'set_theme', value: 'jarvis' });
+  await supervisor.callTool('control_app', { action: 'set_spoken_updates', value: 'off' });
+  const restored = new Supervisor({ dataDir, bridge: {} });
+  assert.equal(restored.state.settings.appearanceTheme, 'jarvis');
+  assert.equal(restored.state.settings.voiceNotifications, false);
+  const before = JSON.stringify(restored.state);
+  for (const args of [{ action: 'set_theme', value: 'unknown' }, { action: 'set_spoken_updates', value: true }, { action: 'enable_work_data' }, { action: 'clear_notifications', value: 'on' }]) await assert.rejects(restored.callTool('control_app', args));
+  assert.equal(JSON.stringify(restored.state), before);
+  assert.deepEqual(await restored.callTool('control_app', { action: 'clear_notifications' }), { saved: true, action: 'clear_notifications' });
+  assert.deepEqual(restored.snapshot().notifications, []);
 });

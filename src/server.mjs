@@ -154,9 +154,7 @@ export async function startSupervisor(options = {}) {
       { id: 'default', label: 'Short (default)' },
       { id: 'long_context', label: 'Long (up to 1M tokens)' },
     ], integrations: [
-      { id: 'azure-devops', label: 'Azure DevOps MCP', status: 'planned', mode: 'read-only first' },
       ...agencyMcp.snapshot(),
-      { id: 'zvec-grep', label: 'zvec-grep MCP', status: 'workspace_configured', mode: 'search_only' },
     ], providers: providerProfiles(), voiceModes: [
       { id: 'gemini-live', label: 'Gemini Live', configured: Boolean(process.env.GEMINI_API_KEY), model: process.env.GEMINI_LIVE_MODEL || DEFAULT_GEMINI_LIVE_MODEL },
       { id: 'openai-realtime', label: 'OpenAI Realtime', configured: Boolean(process.env.OPENAI_API_KEY), model: process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime' },
@@ -241,6 +239,7 @@ export async function startSupervisor(options = {}) {
           controller.abort();
         });
         response.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' });
+        response.flushHeaders();
         try {
           for await (const event of streamReply({ provider: input.provider, model: input.model, messages: input.messages, ...sessionThemeOptions(input), requestId: input.requestId || randomUUID(), signal: controller.signal, callTool: supervisor.callTool.bind(supervisor) })) sse(response, event);
         } catch (error) { if (!controller.signal.aborted) sse(response, { type: 'error', message: error.message }); }
@@ -312,6 +311,7 @@ export async function startSupervisor(options = {}) {
           session = message.mode === 'local' ? await createLocalVoice(options) : await createRealtimeVoice(options);
           starting = false;
           if (cancelled || socket.readyState !== 1) { session.close(); if (voiceOwner === socket) voiceOwner = null; }
+          else if (supervisor.snapshot().settings.greetOnConnect !== false) session.notify('Hello. What would you like to do?', `greeting-${randomUUID()}`);
         } else if (message.type === 'stop') { session?.close(); socket.close(); }
         else if (message.type === 'audio') {
           if (typeof message.data !== 'string' || message.data.length > 40000 || Buffer.from(message.data, 'base64').length % 2) throw new Error('Invalid PCM frame');
@@ -375,7 +375,7 @@ export async function startSupervisor(options = {}) {
   });
 
   const actualPort = server.address().port;
-  console.log(`Voice Work Supervisor (${mode}): http://${host}:${actualPort}`);
+  console.log(`Invoke (${mode}): http://${host}:${actualPort}`);
   if (process.send) process.send({ type: 'supervisor-ready', url: `http://${host}:${actualPort}` });
 
   if (options.prewarm !== false) void agencyMcp.start();

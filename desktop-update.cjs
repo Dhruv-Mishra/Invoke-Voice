@@ -7,8 +7,9 @@ const semver = require('semver');
 
 const OWNER = 'Dhruv-Mishra';
 const REPOSITORY = 'VoiceOrchestration';
-const PRODUCT_NAME = 'Voice Work Supervisor';
+const PRODUCT_NAME = 'Invoke';
 const RELEASES_URL = `https://api.github.com/repos/${OWNER}/${REPOSITORY}/releases?per_page=100`;
+const UPDATE_MANIFEST_URL = `https://github.com/${OWNER}/${REPOSITORY}/releases/latest/download/invoke-update.json`;
 const MAX_INSTALLER_BYTES = 1024 * 1024 * 1024;
 const MAX_CHECKSUM_BYTES = 4096;
 const DOWNLOAD_HOSTS = new Set(['github.com', 'objects.githubusercontent.com', 'release-assets.githubusercontent.com']);
@@ -69,20 +70,40 @@ function validateFinalDownloadUrl(value) {
 
 async function fetchReleaseAsset(asset, tag, fetchImpl, signal) {
   const url = validateReleaseAssetUrl(asset.url, tag, asset.name);
-  const response = await fetchImpl(url, { headers: { Accept: 'application/octet-stream', 'User-Agent': 'Voice-Work-Supervisor-Updater' }, redirect: 'follow', signal });
+  const response = await fetchImpl(url, { headers: { Accept: 'application/octet-stream', 'User-Agent': 'Invoke-Updater' }, redirect: 'follow', signal });
   if (!response.ok) throw new Error(`GitHub returned HTTP ${response.status} for ${asset.name}.`);
   validateFinalDownloadUrl(response.url || url);
   return response;
 }
 
-async function checkForUpdate(currentVersion, { fetchImpl = fetch, signal = AbortSignal.timeout(20000), edition = 'bundled' } = {}) {
-  const response = await fetchImpl(RELEASES_URL, {
-    headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'Voice-Work-Supervisor-Updater', 'X-GitHub-Api-Version': '2022-11-28' },
-    redirect: 'error',
-    signal,
-  });
-  if (!response.ok) throw new Error(`GitHub returned HTTP ${response.status} while checking for updates.`);
-  const update = selectUpdate(await response.json(), currentVersion, edition);
+async function checkForUpdate(currentVersion, { fetchImpl = fetch, signal, edition = 'bundled' } = {}) {
+  const requestSignal = () => signal ? AbortSignal.any([signal, AbortSignal.timeout(20000)]) : AbortSignal.timeout(20000);
+  let releases;
+  try {
+    signal?.throwIfAborted();
+    const response = await fetchImpl(RELEASES_URL, {
+      headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'Invoke-Updater', 'X-GitHub-Api-Version': '2022-11-28' },
+      redirect: 'error', signal: requestSignal(),
+    });
+    if (!response.ok) throw new Error(`GitHub API returned HTTP ${response.status}.`);
+    releases = await response.json();
+    if (!Array.isArray(releases)) throw new Error('GitHub returned an invalid release list.');
+  } catch {
+    signal?.throwIfAborted();
+    const response = await fetchImpl(UPDATE_MANIFEST_URL, { headers: { Accept: 'application/json' }, redirect: 'follow', signal: requestSignal() });
+    if (!response.ok) throw new Error(`Update service unavailable (HTTP ${response.status}). Open GitHub Releases or retry later.`);
+    validateFinalDownloadUrl(response.url || UPDATE_MANIFEST_URL);
+    const manifest = await response.text();
+    if (manifest.length > 65536) throw new Error('Update manifest exceeds the size limit.');
+    const release = JSON.parse(manifest);
+    if (!releaseVersion(release.tag_name) || !Array.isArray(release.assets) || release.prerelease || release.draft) throw new Error('Invalid stable update manifest.');
+    releases = [release];
+  }
+  const update = selectUpdate(releases, currentVersion, edition);
+  if (update) {
+    validateReleaseAssetUrl(update.installer.url, update.tag, update.installer.name);
+    validateReleaseAssetUrl(update.checksum.url, update.tag, update.checksum.name);
+  }
   return update ? { available: true, currentVersion, ...update } : { available: false, currentVersion };
 }
 
@@ -137,4 +158,4 @@ async function downloadUpdate(update, directory, { fetchImpl = fetch, signal = A
   }
 }
 
-module.exports = { RELEASES_URL, checkForUpdate, downloadUpdate, publicUpdate, selectUpdate, validateReleaseAssetUrl };
+module.exports = { RELEASES_URL, UPDATE_MANIFEST_URL, checkForUpdate, downloadUpdate, publicUpdate, selectUpdate, validateReleaseAssetUrl };

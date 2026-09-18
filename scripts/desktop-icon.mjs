@@ -4,7 +4,7 @@ import path from 'node:path';
 import sharp from 'sharp';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
-const source = path.join(root, 'public', 'copilot-icon.webp');
+const source = path.join(root, 'public', 'invoke.svg');
 const sizes = [16, 24, 32, 48, 64, 128, 256];
 const images = await Promise.all(sizes.map(size => sharp(source).resize(size, size, { fit: 'contain', background: '#00000000' }).png().toBuffer()));
 const header = Buffer.alloc(6 + sizes.length * 16);
@@ -21,6 +21,6 @@ for (const [index, size] of sizes.entries()) {
   offset += images[index].length;
 }
 mkdirSync(path.join(root, 'build'), { recursive: true });
-writeFileSync(path.join(root, 'build', 'copilot.ico'), Buffer.concat([header, ...images]));
-writeFileSync(path.join(root, 'build', 'copilot.png'), images.at(-1));
-console.log('Generated Copilot desktop icon (16-256px).');
+writeFileSync(path.join(root, 'build', 'invoke.ico'), Buffer.concat([header, ...images]));
+writeFileSync(path.join(root, 'build', 'invoke.png'), images.at(-1));
+console.log('Generated Invoke desktop icon (16-256px).');

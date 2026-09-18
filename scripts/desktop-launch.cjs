@@ -21,6 +21,9 @@ const externalSources = new Set([
   'https://pypi.org/project/kokoro/0.9.4/',
   'https://pypi.org/project/faster-whisper/1.2.1/',
   'https://docs.github.com/en/copilot',
+  'https://aka.ms/agency',
+  'https://github.com/Dhruv-Mishra/VoiceOrchestration/releases',
+  'https://github.com/Dhruv-Mishra/VoiceOrchestration/releases/latest',
 ]);
 
 function allowedExternal(value) {

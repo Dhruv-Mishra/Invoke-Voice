@@ -1,10 +1,15 @@
 {
-  "name": "voice-work-supervisor",
-  "version": "0.1.1-beta.11",
+  "name": "invoke-desktop",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "main": "desktop.cjs",
-  "description": "Local voice and coding work supervisor",
+  "description": "Invoke - From Voice to Agency. Local-first voice orchestration for coding, research and work.",
+  "homepage": "https://github.com/Dhruv-Mishra/VoiceOrchestration",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Dhruv-Mishra/VoiceOrchestration.git"
+  },
   "author": {
     "name": "Dhruv Mishra",
     "email": "dhruvmishra.id@gmail.com"
@@ -29,6 +34,7 @@
     "dist:win:online": "node scripts/dist-win.mjs online",
     "release:beta": "node scripts/publish-beta.mjs",
     "release:beta:local": "node scripts/publish-beta-local.mjs",
+    "release:stable:local": "node scripts/publish-beta-local.mjs stable",
     "models": "node --env-file-if-exists=.env scripts/models.mjs",
     "search": "zg query",
     "search:index": "zg index --embedding local/potion-code-16m-v2",
@@ -53,13 +59,16 @@
   "devDependencies": {
     "@zvec/zvec-grep": "^0.2.2",
     "electron": "41.10.7",
-    "electron-builder": "26.0.12",
-    "sharp": "^0.34.1",
+    "electron-builder": "26.15.3",
+    "sharp": "0.35.4",
     "vite": "^7.1.5"
   },
+  "overrides": {
+    "sharp": "$sharp"
+  },
   "build": {
-    "appId": "local.voice-supervisor.desktop",
-    "productName": "Voice Work Supervisor",
+    "appId": "com.dhruvmishra.invoke",
+    "productName": "Invoke",
     "directories": {
       "output": "release"
     },
@@ -78,7 +87,7 @@
       "scripts/kokoro_worker.py",
       "scripts/whisper_worker.py",
       "scripts/voice_pack.py",
-      "build/copilot.png",
+      "build/invoke.png",
       "requirements-local.txt",
       "requirements-whisper.txt",
       "!**/.env*",
@@ -109,7 +118,7 @@
           ]
         }
       ],
-      "icon": "build/copilot.ico",
+      "icon": "build/invoke.ico",
       "signAndEditExecutable": true,
       "artifactName": "${productName}-Setup-${version}.${ext}"
     },

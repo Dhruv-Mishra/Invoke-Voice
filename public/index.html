@@ -3,8 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <link rel="icon" href="./copilot-icon.webp" />
-  <title>Voice Work Supervisor</title>
+  <meta name="description" content="Invoke: From Voice to Agency. Local-first voice orchestration for coding, research and work.">
+  <link rel="icon" href="./invoke.svg" />
+  <title>Invoke</title>
   <script>
     (() => {
       const param = new URLSearchParams(window.location.search).get("scoutTheme");
@@ -474,10 +475,10 @@
   </dialog>
   <header class="top-bar">
     <div class="sidebar-heading">
-      <div class="sidebar-brand"><i data-lucide="sparkles" aria-hidden="true"></i><span>Supervisor</span></div>
+      <div class="sidebar-brand"><img src="./invoke.svg" width="24" height="24" alt=""><span>Invoke</span></div>
       <button class="btn btn-icon" id="sidebar-toggle" type="button" aria-label="Collapse sidebar" title="Collapse sidebar" aria-expanded="true" aria-controls="sidebar-history"><i data-lucide="panel-left-close" aria-hidden="true"></i></button>
     </div>
-    <nav class="view-tabs" role="tablist" aria-label="Supervisor views">
+    <nav class="view-tabs" role="tablist" aria-label="Invoke views">
       <button class="view-tab" id="home-tab" type="button" role="tab" title="Home" aria-selected="true" aria-controls="voice-personality-app" data-view="home">
         <i data-lucide="house"></i><span>Home</span>
       </button>
@@ -642,6 +643,7 @@
         <p id="application-update-status" class="field-hint" role="status" aria-live="polite">Version status not checked.</p>
         <div class="utility-toolbar">
           <button class="btn" type="button" id="application-update-btn"><i data-lucide="refresh-cw" aria-hidden="true"></i><span id="application-update-label">Check for updates</span></button>
+          <a href="https://github.com/Dhruv-Mishra/VoiceOrchestration/releases" target="_blank" rel="noopener noreferrer">GitHub Releases</a>
         </div>
       </section>
       <section class="settings-section">
@@ -747,7 +749,11 @@
         </section>
 
         <section class="settings-section">
-          <h2 class="settings-section-title"><i data-lucide="phone-off" aria-hidden="true"></i>Idle calls</h2>
+          <h2 class="settings-section-title"><i data-lucide="phone-off" aria-hidden="true"></i>Calls</h2>
+          <label class="form-row-checkbox toggle-control" for="settings-greet-on-connect">
+            <input type="checkbox" id="settings-greet-on-connect" checked>
+            <span class="toggle-track" aria-hidden="true"></span><span>Greet when a call connects</span>
+          </label>
           <label class="form-row-checkbox toggle-control" for="settings-auto-end-call">
             <input type="checkbox" id="settings-auto-end-call" checked>
             <span class="toggle-track" aria-hidden="true"></span><span>End inactive calls automatically</span>
@@ -805,7 +811,7 @@
       <button type="button" class="btn btn-icon" aria-label="Dismiss your caption" title="Dismiss your caption"><i data-lucide="x"></i></button>
     </div>
     <div id="closed-caption" class="closed-caption" data-role="assistant" hidden>
-      <span id="caption-speaker" class="caption-speaker sr-only">Supervisor</span>
+      <span id="caption-speaker" class="caption-speaker sr-only">Invoke</span>
       <p id="caption-text" class="caption-text" tabindex="0" aria-labelledby="caption-speaker caption-content"><span id="caption-content" class="caption-content"></span></p>
       <button type="button" id="dismiss-caption-btn" class="btn btn-icon" aria-label="Dismiss caption" title="Dismiss caption"><i data-lucide="x"></i></button>
     </div>
@@ -813,7 +819,7 @@
   </div>
 
   <dialog id="conversation-dialog" aria-labelledby="conversation-title">
-    <section class="conversation-pane" aria-label="Supervisor Conversation">
+    <section class="conversation-pane" aria-label="Invoke conversation">
       <div class="section-header">
         <h2 class="section-title" id="conversation-title">Conversation</h2>
         <div class="conversation-actions">
@@ -1028,7 +1034,7 @@
 
   <button type="button" class="btn btn-icon notifications-button" id="notifications-btn" popovertarget="notifications-popover" aria-label="Notifications" title="Notifications"><i data-lucide="bell" aria-hidden="true"></i><span id="notifications-count"></span></button>
   <section id="notifications-popover" class="notifications-popover" popover aria-label="Notifications">
-    <header><h2>Notifications</h2><button type="button" class="btn btn-icon" id="notifications-read" title="Mark all read" aria-label="Mark all notifications read"><i data-lucide="check-check" aria-hidden="true"></i></button></header>
+    <header><h2>Notifications</h2><button type="button" class="btn btn-icon" id="notifications-read" title="Mark all read" aria-label="Mark all notifications read"><i data-lucide="check-check" aria-hidden="true"></i></button><button type="button" class="btn btn-icon" id="notifications-clear" title="Clear notifications" aria-label="Clear notifications"><i data-lucide="trash-2" aria-hidden="true"></i></button></header>
     <div id="notifications-list"></div>
   </section>
   <div id="idle-call-notice" class="idle-call-notice" role="status" hidden><span id="idle-call-text"></span><button class="btn" type="button" id="idle-call-stay">Stay connected</button></div>

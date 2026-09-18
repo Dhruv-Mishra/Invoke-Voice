@@ -1,8 +1,12 @@
-# Voice Work Supervisor
+# Invoke
 
-Local-first Windows desktop app for talking through work, delegating coding and research tasks, and following their progress. The Vue UI talks only to a loopback Node server and supports local models, hosted voice providers, GitHub Copilot CLI, and Agency.
+**From Voice to Agency**
 
-![Voice Work Supervisor home](docs/screenshots/home.webp)
+Invoke is a voice-first orchestration platform that transforms spoken intent into action, routing tasks across local and cloud models and initiating agentic sessions on the user's behalf.
+
+[Download for Windows](https://github.com/Dhruv-Mishra/VoiceOrchestration/releases/latest) | [Setup and operations](docs/operations.md) | [Demo guide](VIDEO_OVERVIEW.md)
+
+![Invoke home](docs/screenshots/home.webp)
 
 <table>
 	<tr>
@@ -20,6 +24,8 @@ Local-first Windows desktop app for talking through work, delegating coding and 
 - Keeps the server, state, models, and credentials local unless a selected provider or delegated tool requires external processing.
 
 ## Requirements
+
+Download **Invoke-Setup-1.0.0.exe** for the bundled Python dependency pack, or **Invoke-Setup-1.0.0-Online.exe** for a smaller installer that downloads that pack during consented setup. Neither edition bundles voice models. Verify the accompanying SHA-256 checksum. Installers are unsigned; follow Windows and organizational security policy.
 
 - Node.js 22+ and npm to run from source.
 - Windows x64 for the packaged desktop app and managed local voice setup.
@@ -63,6 +69,8 @@ Agency is the fresh-install default; saved backend choices are preserved. Coding
 
 Follow-ups reuse the original task session. Up to ten messages can queue while work runs; interrupted queues pause until a corrective follow-up resumes them. See [docs/operations.md](docs/operations.md#agency-delegation) before enabling WorkIQ, Teams, calendar, or people access.
 
+Invoke starts its Agency connections and checks tool catalogs on entry. A concise setup dialog identifies missing installation, sign-in, connectivity, or optional access steps. Catalog readiness is not proof of authorization to read a particular account or source. Consent is never enabled silently.
+
 ## Local Voice
 
 Local setup is opt-in and provisions:
@@ -75,7 +83,11 @@ Downloads are pinned and hash-verified. Working chat remains available if speech
 
 ## Calls And Notifications
 
-Idle calls check in after 40 seconds and end after 60 seconds by default; both values are configurable. Task announcements are queued and deduplicated, and the inbox retains the latest 100 updates. Quiet mode suppresses speech without removing history.
+Calls open with an optional short greeting. The red hang-up control ends an active call. Idle calls check in after 40 seconds and end after 60 seconds by default; both values are configurable.
+
+The inbox shows concise task-outcome headings; full answers stay in task details. Announcements are queued and deduplicated. Text chat and local/hybrid voice withhold tool-round prose until the final response; native hosted realtime speech remains provider-controlled. The inbox retains the latest 100 updates; quiet mode suppresses speech without removing history.
+
+Ask Invoke to switch themes, clear notifications, mark them read, or turn spoken updates on or off. These controls use the same persisted state as the UI and cannot change credentials or Agency access consent.
 
 ## Data And Security
 
@@ -97,6 +109,8 @@ npm run dist:win
 ```
 
 Outputs under `release/` include Bundled and Online installers plus SHA-256 sidecars. Use `npm run dist:win:bundled` or `npm run dist:win:online` for one edition. Publishing and pack requirements are in [docs/operations.md](docs/operations.md#windows-distribution).
+
+`npm run release:stable:local` validates and publishes the committed stable version from clean `master`. The updater uses Electron's proxy-aware networking, preserves the installed edition, and falls back to a public release manifest when the GitHub API is unavailable. Downloads require matching SHA-256 sidecars.
 
 ## Themes
 

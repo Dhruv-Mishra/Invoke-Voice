@@ -83,6 +83,7 @@ export class Supervisor extends EventEmitter {
       notifyFailed: true,
       voiceNotifications: true,
       browserNotifications: false,
+      greetOnConnect: true,
       autoEndCall: true,
       idleWarningSeconds: 40,
       idleEndSeconds: 60,
@@ -151,6 +152,10 @@ export class Supervisor extends EventEmitter {
 
   updateSettings(input = {}) {
     const next = { ...this.state.settings };
+    if (Object.hasOwn(input, 'appearanceTheme')) {
+      if (!['alpine', 'jarvis', 'baymax'].includes(input.appearanceTheme)) throw new Error('Invalid theme');
+      next.appearanceTheme = input.appearanceTheme;
+    }
     if (Object.hasOwn(input, 'defaultAreaId')) {
       if (input.defaultAreaId !== null && !this.state.areas.some(area => area.id === input.defaultAreaId)) throw new Error('Unknown default work area');
       next.defaultAreaId = input.defaultAreaId || null;
@@ -164,7 +169,7 @@ export class Supervisor extends EventEmitter {
       if (!CONTEXTS.includes(input.copilotContext)) throw new Error('Invalid context tier');
       next.copilotContext = input.copilotContext;
     }
-    for (const key of ['notifyCompleted', 'notifyNeedsInput', 'notifyFailed', 'voiceNotifications', 'browserNotifications', 'localSetupPrompted', 'autoEndCall']) {
+    for (const key of ['notifyCompleted', 'notifyNeedsInput', 'notifyFailed', 'voiceNotifications', 'browserNotifications', 'localSetupPrompted', 'agencySetupPrompted', 'greetOnConnect', 'autoEndCall']) {
       if (Object.hasOwn(input, key)) next[key] = input[key] === true;
     }
     for (const key of ['idleWarningSeconds', 'idleEndSeconds']) {
@@ -309,6 +314,21 @@ export class Supervisor extends EventEmitter {
   async callTool(name, args = {}, context = {}) {
     if (!tools.some(tool => tool.function.name === name)) throw new Error('Unknown tool');
     if (this.closed && ['start_work', 'send_work_message', 'invoke_vscode'].includes(name)) throw new Error('Application is shutting down');
+    if (name === 'control_app') {
+      if (args.action === 'set_theme') {
+        const appearanceTheme = { copilot: 'alpine', jarvis: 'jarvis', baymax: 'baymax' }[args.value];
+        this.updateSettings({ appearanceTheme });
+      } else if (args.action === 'set_spoken_updates') {
+        if (!['on', 'off'].includes(args.value)) throw new Error('Expected on or off');
+        this.updateSettings({ voiceNotifications: args.value === 'on' });
+      } else if (args.action === 'clear_notifications' || args.action === 'read_notifications') {
+        if (args.value !== undefined) throw new Error('Inbox actions do not accept a value');
+        if (args.action === 'clear_notifications') this.state.notifications = [];
+        else for (const notification of this.state.notifications) notification.read = true;
+        this.save();
+      } else throw new Error('Unknown app action');
+      return { saved: true, action: args.action, ...(args.value === undefined ? {} : { value: args.value }) };
+    }
     if (name === 'list_work' && args.query !== undefined) return this.searchWork(args.query);
     if (name === 'list_work') return { defaultAreaId: this.state.settings.defaultAreaId, areas: this.state.areas.map(({ id, name, aliases }) => ({ id, name, aliases })), tasks: this.state.tasks.slice(-25).map(task => { const status = this.status(task.id); return { id: status.id, title: status.title, areaId: status.areaId, backend: status.backend, state: status.state }; }) };
     if (name === 'send_work_message') {

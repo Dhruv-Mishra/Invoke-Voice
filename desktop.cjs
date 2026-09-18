@@ -1,7 +1,7 @@
 const { spawn } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
-const { app, BrowserWindow, session, dialog, shell, ipcMain } = require('electron');
+const { app, BrowserWindow, session, dialog, shell, ipcMain, net } = require('electron');
 const { serverLaunch, allowedExternal } = require('./scripts/desktop-launch.cjs');
 const { checkForUpdate, downloadUpdate, publicUpdate } = require('./desktop-update.cjs');
 
@@ -30,7 +30,7 @@ function fail(message) {
   if (failed || closing) return;
   failed = true;
   clearTimeout(startupTimer);
-  dialog.showErrorBox('Voice Work Supervisor could not start', `${message}\n\nClose and reopen the app. Check security software and the local log:\n${logFile}`);
+  dialog.showErrorBox('Invoke could not start', `${message}\n\nClose and reopen the app. Check security software and the local log:\n${logFile}`);
   app.quit();
 }
 
@@ -52,11 +52,11 @@ ipcMain.handle('updates:check', async event => {
   if (!trustedRenderer(event)) return { supported: false, error: 'Update requests are available only from the local application.' };
   if (!app.isPackaged) return { supported: false, currentVersion: app.getVersion() };
   try {
-    pendingUpdate = await checkForUpdate(app.getVersion(), { edition: require('./package.json').distributionEdition || 'bundled' });
+    pendingUpdate = await checkForUpdate(app.getVersion(), { fetchImpl: net.fetch.bind(net), edition: require('./package.json').distributionEdition || 'bundled' });
     return { supported: true, ...publicUpdate(pendingUpdate) };
   } catch (error) {
     logDesktopError('Update check failed', error);
-    return { supported: true, error: 'Could not check GitHub Releases. Check your network or proxy access and try again.' };
+    return { supported: true, error: 'GitHub update services could not be reached. Retry later or open GitHub Releases below to download the installer.' };
   }
 });
 
@@ -66,7 +66,7 @@ ipcMain.handle('updates:install', async event => {
   if (!pendingUpdate?.available) return { started: false, error: 'Check for updates before installing.' };
   installingUpdate = true;
   try {
-    const installer = await downloadUpdate(pendingUpdate, path.join(app.getPath('temp'), 'VoiceSupervisor', 'updates'));
+    const installer = await downloadUpdate(pendingUpdate, path.join(app.getPath('temp'), 'VoiceSupervisor', 'updates'), { fetchImpl: net.fetch.bind(net) });
     const installerChild = spawn(installer, [], { detached: true, stdio: 'ignore', windowsHide: false, shell: false });
     await new Promise((resolve, reject) => {
       installerChild.once('spawn', resolve);
@@ -86,8 +86,8 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 840,
-    title: 'Voice Work Supervisor',
-    icon: path.join(__dirname, 'build', 'copilot.png'),
+    title: 'Invoke',
+    icon: path.join(__dirname, 'build', 'invoke.png'),
     show: false,
     autoHideMenuBar: true,
     backgroundColor: '#f5f7f6',

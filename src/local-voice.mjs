@@ -629,7 +629,7 @@ export async function createLocalVoice({ send, callTool, provider = 'local', stt
           acceptedNotifications.add(notificationId);
           if (acceptedNotifications.size > 1000) acceptedNotifications.delete(acceptedNotifications.values().next().value);
         }
-        queueAnnouncement(text, { notificationId });
+        queueAnnouncement(text, { notificationId, transcript: true });
         return true;
       },
       close,

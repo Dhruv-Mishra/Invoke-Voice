@@ -73,7 +73,11 @@ The first uses a local synthetic model and reads no business content. The second
 
 Idle calls check in after 40 seconds and end after 60 seconds by default. Both values can be changed or automatic hang-up can be disabled. User speech and **Stay connected** reset the timer; active generation and playback are allowed to finish.
 
-Task announcements are queued and deduplicated. The inbox keeps the latest 100 updates across restarts. Quiet mode suppresses spoken announcements without deleting inbox history.
+Task announcements are queued and deduplicated. The inbox keeps the latest 100 heading-only updates across restarts; full answers stay in task details. Clear/read actions remove pending announcements for those entries. Quiet mode suppresses spoken announcements without deleting inbox history.
+
+Calls greet once after connection unless **Settings > Calls > Greet when a call connects** is off. Local greetings use speech synthesis without an LLM request. Text chat and local/hybrid voice retain tool-round text as internal context, publishing only the final completed tool-free response; incomplete streams fail without speaking an unverified answer. This trades some first-audio latency for evidence-backed outcomes. Native hosted realtime speech remains provider-controlled.
+
+The compact `control_app` tool allows theme changes, clearing/reading notifications, and enabling/disabling spoken updates. It cannot change credentials, Agency consent, or download consent.
 
 ## Security Boundaries
 
@@ -94,7 +98,15 @@ npm run dist:win
 
 Use `npm run dist:win:bundled` or `npm run dist:win:online` for one edition. Outputs are written to `release/` with SHA-256 sidecars. The in-app updater preserves the installed edition.
 
-From a clean `master` branch, publish a beta with either:
+From a clean `master` branch with a committed stable package version and matching release notes:
+
+```powershell
+npm run release:stable:local
+```
+
+The local publisher audits runtime dependencies, builds and tests the UI, builds both installers, smoke-tests packaged runtimes, checks archives, then atomically pushes the version tag and publishes a non-prerelease. It also publishes `invoke-update.json` for API-independent update checks. Electron networking uses the system proxy; downloads still require trusted URLs and matching checksums. No GitHub token is stored by the application. Beta installs require a manual Invoke install.
+
+To publish a beta instead:
 
 ```powershell
 npm run release:beta:local
@@ -114,7 +126,7 @@ node --test test/setup.test.mjs test/desktop.test.mjs
 To check an already-built executable:
 
 ```powershell
-$env:SUPERVISOR_PACKAGED_EXE = (Resolve-Path '.\release\win-unpacked\Voice Work Supervisor.exe').Path
+$env:SUPERVISOR_PACKAGED_EXE = (Resolve-Path '.\release\win-unpacked\Invoke.exe').Path
 node --test test/desktop.test.mjs
 Remove-Item Env:SUPERVISOR_PACKAGED_EXE
 ```

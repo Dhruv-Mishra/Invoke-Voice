@@ -287,7 +287,7 @@ export async function start(options = {}) {
   const shutdown = async () => {
     if (shuttingDown) return;
     shuttingDown = true;
-    console.log('Shutting down Voice Supervisor...');
+    console.log('Shutting down Invoke...');
     try {
       await supervisorInstance.close();
     } catch (error) {

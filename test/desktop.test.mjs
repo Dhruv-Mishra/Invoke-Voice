@@ -51,12 +51,12 @@ test('installer includes physical runtime dependencies, excludes private data an
   assert.equal(config.build.nsis.allowElevation, false);
 });
 
-test('Kokoro pack recipe targets Python 3.12 Windows x64 and verifies a hash-locked offline install', () => {
+test('local voice pack targets Python 3.12 Windows x64 and verifies a hash-locked offline install', () => {
   const recipe = readFileSync(path.join(root, 'requirements-kokoro-pack.in'), 'utf8');
   const builder = readFileSync(path.join(root, 'scripts', 'build-kokoro-pack.mjs'), 'utf8');
-  for (const requirement of ['torch==2.8.0', 'kokoro==0.9.4', 'soundfile==0.13.1', 'spacy>=3.8,<3.9', 'docopt==0.6.2', 'en_core_web_sm-3.8.0-py3-none-any.whl']) assert.ok(recipe.includes(requirement));
+  for (const requirement of ['torch==2.8.0', 'kokoro==0.9.4', 'soundfile==0.13.1', 'spacy>=3.8,<3.9', 'docopt==0.6.2', 'en_core_web_sm-3.8.0-py3-none-any.whl', 'faster-whisper==1.2.1', 'ctranslate2==4.6.0', 'onnxruntime==1.23.2', 'setuptools==80.9.0']) assert.ok(recipe.includes(requirement));
   for (const target of ["'win_amd64'", "'cp312'", "'3.12'"]) assert.ok(builder.includes(target));
-  for (const verification of ["'--no-index'", "'--require-hashes'", "'check'", 'torch.version.cuda is None', 'verifyKokoroPack']) assert.ok(builder.includes(verification));
+  for (const verification of ["'--no-index'", "'--require-hashes'", "'check'", 'torch.version.cuda is None', 'verifyKokoroPack', 'verifyWhisperPack', 'get_supported_compute_types']) assert.ok(builder.includes(verification));
   assert.ok(builder.indexOf("'torch==2.8.0'") < builder.indexOf("'-r', recipe"));
 });
 

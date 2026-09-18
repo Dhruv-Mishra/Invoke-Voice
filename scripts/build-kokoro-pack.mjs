@@ -4,13 +4,14 @@ import { copyFileSync, createReadStream, mkdirSync, readdirSync, renameSync, rmS
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import yauzl from 'yauzl';
-import { verifyKokoroPack } from '../src/kokoro-pack.mjs';
+import { verifyKokoroPack, verifyWhisperPack } from '../src/kokoro-pack.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const recipe = path.join(root, 'requirements-kokoro-pack.in');
 const output = path.join(root, 'artifacts', 'kokoro-offline-pack');
 const torchIndex = process.env.LOCAL_TORCH_INDEX_URL || 'https://download.pytorch.org/whl/cpu';
 const pythonIndex = process.env.LOCAL_PYPI_INDEX_URL || 'https://pypi.org/simple';
+const replacedPackages = new Set(['setuptools']);
 
 function run(executable, args, options = {}) {
   const result = spawnSync(executable, args, { cwd: root, encoding: 'utf8', stdio: options.capture ? 'pipe' : 'inherit', ...options });
@@ -96,7 +97,7 @@ async function verifyInstall(python, packDir) {
   run(python.executable, [...python.prefix, '-I', '-m', 'venv', verifyDir]);
   run(verifyPython, ['-I', '-m', 'pip', '--isolated', '--disable-pip-version-check', '--no-input', 'install', '--no-index', '--find-links', path.join(packDir, 'wheelhouse'), '--only-binary', ':all:', '--require-hashes', '-r', path.join(packDir, 'requirements.lock')]);
   run(verifyPython, ['-I', '-m', 'pip', 'check']);
-  run(verifyPython, ['-I', '-c', 'import en_core_web_sm,kokoro,soundfile,spacy,torch; assert kokoro.__version__ == "0.9.4"; assert soundfile.__version__ == "0.13.1"; assert spacy.__version__.startswith("3.8."); assert en_core_web_sm.__version__ == "3.8.0"; assert torch.__version__ == "2.8.0+cpu" and torch.version.cuda is None and not torch.cuda.is_available(); en_core_web_sm.load()']);
+  run(verifyPython, ['-I', '-c', 'import ctranslate2,en_core_web_sm,faster_whisper,kokoro,onnxruntime,soundfile,spacy,torch; from faster_whisper.vad import get_vad_model; assert faster_whisper.__version__ == "1.2.1"; assert ctranslate2.__version__ == "4.6.0"; assert onnxruntime.__version__ == "1.23.2"; assert "int8" in ctranslate2.get_supported_compute_types("cpu"); assert kokoro.__version__ == "0.9.4"; assert soundfile.__version__ == "0.13.1"; assert spacy.__version__.startswith("3.8."); assert en_core_web_sm.__version__ == "3.8.0"; assert torch.__version__ == "2.8.0+cpu" and torch.version.cuda is None and not torch.cuda.is_available(); get_vad_model(); en_core_web_sm.load()']);
   rmSync(verifyDir, { recursive: true, force: true });
 }
 
@@ -118,26 +119,38 @@ async function main() {
   if (process.platform !== 'win32' || process.arch !== 'x64') throw new Error('Kokoro pack builds are supported only on Windows x64.');
   const recipeSha256 = await sha256(recipe);
   const existing = await verifyKokoroPack(output);
-  if (!process.argv.includes('--force') && existing?.manifest.recipeSha256 === recipeSha256) {
-    console.log(`Verified Kokoro offline pack is current: ${output}`);
+  const complete = await verifyWhisperPack(output);
+  if (!process.argv.includes('--force') && complete?.manifest.recipeSha256 === recipeSha256) {
+    console.log(`Verified local voice offline pack is current: ${output}`);
     return;
   }
 
   const python = findPython();
   const staging = `${output}.staging-${process.pid}`;
   const wheelhouse = path.join(staging, 'wheelhouse');
+  const constraints = path.join(staging, 'existing-constraints.txt');
   rmSync(staging, { recursive: true, force: true });
   mkdirSync(wheelhouse, { recursive: true });
   try {
-    run(python.executable, [...python.prefix, '-I', '-m', 'pip', 'download', '--disable-pip-version-check', '--no-deps', '--only-binary', ':all:', '--platform', 'win_amd64', '--python-version', '3.12', '--implementation', 'cp', '--abi', 'cp312', '--index-url', torchIndex, '--dest', wheelhouse, 'torch==2.8.0']);
-    run(python.executable, [...python.prefix, '-I', '-m', 'pip', 'wheel', '--disable-pip-version-check', '--no-deps', '--wheel-dir', wheelhouse, 'docopt==0.6.2']);
-    run(python.executable, [...python.prefix, '-I', '-m', 'pip', 'download', '--disable-pip-version-check', '--only-binary', ':all:', '--platform', 'win_amd64', '--python-version', '3.12', '--implementation', 'cp', '--abi', 'cp312', '--index-url', pythonIndex, '--find-links', wheelhouse, '--dest', wheelhouse, '-r', recipe]);
+    if (existing) {
+      for (const wheel of existing.manifest.wheels) {
+        if (!replacedPackages.has(wheel.name.toLowerCase().replace(/[_.]+/g, '-'))) copyFileSync(path.join(existing.wheelhouse, wheel.filename), path.join(wheelhouse, wheel.filename));
+      }
+      writeFileSync(constraints, existing.manifest.wheels
+        .filter(wheel => !replacedPackages.has(wheel.name.toLowerCase().replace(/[_.]+/g, '-')))
+        .map(wheel => `${wheel.name}==${wheel.version}`).join('\n') + '\n', 'utf8');
+    } else {
+      run(python.executable, [...python.prefix, '-I', '-m', 'pip', 'download', '--disable-pip-version-check', '--no-deps', '--only-binary', ':all:', '--platform', 'win_amd64', '--python-version', '3.12', '--implementation', 'cp', '--abi', 'cp312', '--index-url', torchIndex, '--dest', wheelhouse, 'torch==2.8.0']);
+      run(python.executable, [...python.prefix, '-I', '-m', 'pip', 'wheel', '--disable-pip-version-check', '--no-deps', '--wheel-dir', wheelhouse, 'docopt==0.6.2']);
+    }
+    run(python.executable, [...python.prefix, '-I', '-m', 'pip', 'download', '--disable-pip-version-check', '--only-binary', ':all:', '--platform', 'win_amd64', '--python-version', '3.12', '--implementation', 'cp', '--abi', 'cp312', '--index-url', pythonIndex, '--find-links', wheelhouse, ...(existing ? ['--constraint', constraints] : []), '--dest', wheelhouse, '-r', recipe]);
+    rmSync(constraints, { force: true });
     await buildManifest(staging);
-    if (!await verifyKokoroPack(staging)) throw new Error('Generated Kokoro pack failed manifest verification.');
+    if (!await verifyKokoroPack(staging) || !await verifyWhisperPack(staging)) throw new Error('Generated local voice pack failed manifest verification.');
     await verifyInstall(python, staging);
     publishPack(staging);
-    if (!await verifyKokoroPack(output)) throw new Error('Published Kokoro pack failed manifest verification.');
-    console.log(`Built and verified Kokoro offline pack: ${output}`);
+    if (!await verifyKokoroPack(output) || !await verifyWhisperPack(output)) throw new Error('Published local voice pack failed manifest verification.');
+    console.log(`Built and verified local voice offline pack: ${output}`);
   } catch (error) {
     rmSync(staging, { recursive: true, force: true });
     throw error;

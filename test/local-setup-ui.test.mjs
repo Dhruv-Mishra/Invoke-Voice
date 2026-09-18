@@ -412,8 +412,11 @@ test('createLocalSetupController renders error badges, retry labels, and handles
   assert.equal(elements.status.textContent, 'Chat ready');
   assert.equal(elements.status.className, 'badge badge-warning');
   assert.equal(elements['install-label'].textContent, 'Retry voice setup');
-  assert.equal(elements.error.hidden, false);
-  assert.ok(elements.error.textContent.includes('Local chat is ready. Voice setup needs attention: Kokoro installation failed'));
+  assert.equal(elements.message.textContent, 'Local chat is ready. Voice setup needs attention.');
+  assert.equal(elements['chat-status'].textContent, 'Ready');
+  assert.equal(elements['voice-status'].textContent, 'Needs attention');
+  assert.equal(elements.error.hidden, true);
+  assert.equal(elements.error.textContent, '');
   // Component link with invalid URL is hidden
   assert.equal(elements.components.children[0].children[2].hidden, true);
   // Log details shown
@@ -426,7 +429,7 @@ test('createLocalSetupController renders error badges, retry labels, and handles
   await controller.requestSetup();
   assert.equal(elements.status.textContent, 'Status unavailable');
   assert.equal(elements['install-btn'].disabled, true);
-  assert.ok(elements.error.textContent.includes('Refresh status before retrying installation.'));
+  assert.equal(elements.error.textContent, 'Could not refresh setup status. Try again.');
 
   // 3. Unsupported platform
   shouldFail = false;

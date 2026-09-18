@@ -7,7 +7,7 @@ import { stripVTControlCharacters } from 'node:util';
 import { ASSETS, assetReady, ensureAsset, localSetupAssets, localSttProvider, readJson, setupError, stackPaths, withSetupLock, writeJson } from '../scripts/models.mjs';
 import { createSetup } from './setup.mjs';
 import { closeLocalVoice, isLocalVoiceWarm, localConfiguration, onLocalVoiceRuntimeExit, warmLocalVoice } from './local-voice.mjs';
-import { verifyKokoroPack } from './kokoro-pack.mjs';
+import { verifyKokoroPack, verifyWhisperPack } from './kokoro-pack.mjs';
 import desktopLaunch from '../scripts/desktop-launch.cjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -292,7 +292,8 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
           const torchIndex = packageIndex(env.LOCAL_TORCH_INDEX_URL, 'https://download.pytorch.org/whl/cpu', 'PyTorch package index');
           const pythonIndex = packageIndex(env.LOCAL_PYPI_INDEX_URL, 'https://pypi.org/simple', 'Python package index');
           const modelUrl = packageIndex(env.LOCAL_SPACY_MODEL_URL, englishModel, 'spaCy model URL');
-          const offlinePack = await verifyKokoroPack(offlinePackDir);
+          const bundledWhisperPack = await verifyWhisperPack(offlinePackDir);
+          const offlinePack = bundledWhisperPack || await verifyKokoroPack(offlinePackDir);
           if (paths.pythonBase) {
             if (!existsSync(paths.pythonBase)) throw setupError('Configured PYTHON_BIN was not found. Set it to the full path of an IT-approved Python 3.12 x64 interpreter and restart the app. No downloaded Python or uv fallback will be attempted.');
             await command(paths.pythonBase, ['-I', '-c', approvedPythonProbe], 'python', 'Checking approved full CPython 3.12 x64 with venv, pip bootstrap and SSL. No Python runtime will be downloaded.');
@@ -321,7 +322,7 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
           if (offlinePack) {
             const offlineArgs = ['--no-index', '--find-links', offlinePack.wheelhouse, '--only-binary', ':all:', '--require-hashes', '-r', offlinePack.lockFile];
             const args = paths.pythonBase ? [...installArgs, ...offlineArgs] : [installArgs[0], '--offline', ...installArgs.slice(1), ...offlineArgs];
-            await command(installer, args, 'kokoro', 'Installing verified bundled Kokoro dependencies without network access.');
+            await command(installer, args, 'kokoro', bundledWhisperPack ? 'Installing verified bundled local voice dependencies without network access.' : 'Installing verified bundled Kokoro dependencies without network access.');
           } else {
             const install = async (args, message) => {
               try {
@@ -341,6 +342,10 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
           }
           await command(paths.python, ['-I', '-c', 'import kokoro, soundfile, en_core_web_sm, spacy, torch; assert kokoro.__version__ == "0.9.4"; assert soundfile.__version__ == "0.13.1"; assert spacy.__version__.startswith("3.8."); assert torch.__version__.startswith("2.8.0") and torch.version.cuda is None; assert en_core_web_sm.__version__ == "3.8.0"'], 'kokoro', 'Checking installed speech dependencies.');
           recordPython(paths, 'complete.json', receiptVersion);
+          if (bundledWhisperPack) {
+            await command(paths.python, ['-I', '-c', 'import faster_whisper, ctranslate2, onnxruntime; from faster_whisper.vad import get_vad_model; assert faster_whisper.__version__ == "1.2.1"; assert ctranslate2.__version__ == "4.6.0"; assert onnxruntime.__version__ == "1.23.2"; assert "int8" in ctranslate2.get_supported_compute_types("cpu"); get_vad_model()'], 'whisper', 'Checking bundled Whisper INT8 and Silero VAD.');
+            recordPython(paths, 'whisper-complete.json', whisperReceiptVersion);
+          }
         } catch (error) {
           voiceReady = false;
           voiceMessage = error.setupMessage || error.message || 'Kokoro speech dependencies failed to install. Retry setup to complete speech.';
@@ -348,20 +353,27 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
         }
       }
       if (localSttProvider(env) === 'whisper' && !whisperReady()) {
-        const pythonIndex = packageIndex(env.LOCAL_PYPI_INDEX_URL, 'https://pypi.org/simple', 'Python package index');
         const installer = paths.pythonBase ? paths.python : paths.uv;
         const args = paths.pythonBase
           ? ['-I', '-m', 'pip', '--isolated', '--disable-pip-version-check', '--no-input', '--cache-dir', commandEnv.PIP_CACHE_DIR, '--use-feature=truststore', 'install']
           : ['--no-config', 'pip', 'install', '--python', paths.python];
         const command = (executable, commandArgs, message) => run(executable, commandArgs, { env: commandEnv, redactEnv: env, cwd: paths.home, signal, report, stage: 'whisper', message });
-        const installArgs = [...args, '--index-url', pythonIndex, '--only-binary', ':all:', '-r', whisperRequirements];
-        try {
-          await command(installer, installArgs, 'Installing faster-whisper CPU INT8 dependencies.');
-        } catch (onlineError) {
-          if (paths.pythonBase || signal?.aborted) throw onlineError;
+        const offlinePack = await verifyWhisperPack(offlinePackDir);
+        if (offlinePack) {
+          const offlineArgs = ['--no-index', '--find-links', offlinePack.wheelhouse, '--only-binary', ':all:', '--require-hashes', '-r', offlinePack.lockFile];
+          const installArgs = paths.pythonBase ? [...args, ...offlineArgs] : [args[0], '--offline', ...args.slice(1), ...offlineArgs];
+          await command(installer, installArgs, 'Installing verified bundled Whisper dependencies without network access.');
+        } else {
+          const pythonIndex = packageIndex(env.LOCAL_PYPI_INDEX_URL, 'https://pypi.org/simple', 'Python package index');
+          const installArgs = [...args, '--index-url', pythonIndex, '--only-binary', ':all:', '-r', whisperRequirements];
           try {
-            await command(installer, [installArgs[0], '--offline', ...installArgs.slice(1)], 'Installing faster-whisper from the local package cache.');
-          } catch { throw onlineError; }
+            await command(installer, installArgs, 'Installing faster-whisper CPU INT8 dependencies.');
+          } catch (onlineError) {
+            if (paths.pythonBase || signal?.aborted) throw onlineError;
+            try {
+              await command(installer, [installArgs[0], '--offline', ...installArgs.slice(1)], 'Installing faster-whisper from the local package cache.');
+            } catch { throw onlineError; }
+          }
         }
         await command(paths.python, ['-I', '-c', 'import faster_whisper, ctranslate2, onnxruntime; from faster_whisper.vad import get_vad_model; assert faster_whisper.__version__ == "1.2.1"; assert ctranslate2.__version__ == "4.6.0"; assert onnxruntime.__version__ == "1.23.2"; assert "int8" in ctranslate2.get_supported_compute_types("cpu"); get_vad_model()'], 'Checking Whisper INT8 and bundled Silero VAD.');
         recordPython(paths, 'whisper-complete.json', whisperReceiptVersion);

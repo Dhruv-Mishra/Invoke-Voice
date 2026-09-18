@@ -69,7 +69,7 @@ function controller(options = {}) {
   return createSetup({ platform: 'win32', arch: 'x64', cacheDir: 'cache', runtimeDir: 'runtime', inspect: () => [{ id: 'fixture', label: 'Fixture', ready: false, sourceUrl: 'https://huggingface.co' }], install: async () => {}, activate: async () => {}, ...options });
 }
 
-function offlinePackFixture(directory) {
+function offlinePackFixture(directory, extraWheels = []) {
   const packDir = path.join(directory, 'kokoro-offline-pack');
   const wheelhouse = path.join(packDir, 'wheelhouse');
   mkdirSync(wheelhouse, { recursive: true });
@@ -79,6 +79,7 @@ function offlinePackFixture(directory) {
     ['spacy', '3.8.7', 'spacy-3.8.7-cp312-cp312-win_amd64.whl'],
     ['en-core-web-sm', '3.8.0', 'en_core_web_sm-3.8.0-py3-none-any.whl'],
     ['soundfile', '0.13.1', 'soundfile-0.13.1-py2.py3-none-win_amd64.whl'],
+    ...extraWheels,
   ].map(([name, version, filename]) => {
     const contents = Buffer.from(`${name}-${version}`);
     writeFileSync(path.join(wheelhouse, filename), contents);
@@ -196,6 +197,37 @@ test('local setup installs a verified bundled pack without contacting package in
   assert.equal(installs.length, 1);
   assert.deepEqual(installs[0].args, ['--no-config', '--offline', 'pip', 'install', '--python', paths.python, '--no-index', '--find-links', wheelhouse, '--only-binary', ':all:', '--require-hashes', '-r', path.join(packDir, 'requirements.lock')]);
   assert.equal(installs[0].options.message, 'Installing verified bundled Kokoro dependencies without network access.');
+});
+
+test('Whisper setup uses the verified bundle with approved Python and no package network access', windowsSetup, async context => {
+  const { directory } = fixture(context);
+  const pythonBase = path.join(directory, 'approved-python.exe');
+  writeFileSync(pythonBase, 'approved interpreter fixture');
+  const whisperWheels = [
+    ['faster-whisper', '1.2.1', 'faster_whisper-1.2.1-py3-none-any.whl'],
+    ['ctranslate2', '4.6.0', 'ctranslate2-4.6.0-cp312-cp312-win_amd64.whl'],
+    ['onnxruntime', '1.23.2', 'onnxruntime-1.23.2-cp312-cp312-win_amd64.whl'],
+    ['setuptools', '80.9.0', 'setuptools-80.9.0-py3-none-any.whl'],
+  ];
+  const { packDir, wheelhouse } = offlinePackFixture(directory, whisperWheels);
+  const { setup, paths, commands } = localFixture(context, {
+    env: { LOCAL_STT_PROVIDER: 'whisper', PYTHON_BIN: pythonBase },
+    offlinePackDir: packDir,
+  });
+
+  setup.start({ consent: true });
+  assert.equal((await setup.settled()).status, 'ready');
+  const installs = commands.filter(command => command.args.includes('install'));
+  assert.equal(installs.length, 1);
+  const bundledInstall = installs[0];
+  assert.equal(bundledInstall.executable.endsWith(path.join('Scripts', 'python.exe')), true);
+  assert.ok(bundledInstall.args.includes('--no-index'));
+  assert.ok(bundledInstall.args.includes('--require-hashes'));
+  assert.equal(bundledInstall.args[bundledInstall.args.indexOf('--find-links') + 1], wheelhouse);
+  assert.equal(bundledInstall.args.includes('--index-url'), false);
+  assert.equal(bundledInstall.options.message, 'Installing verified bundled local voice dependencies without network access.');
+  assert.ok(commands.some(command => command.options.stage === 'whisper' && command.args.some(arg => arg.includes('get_supported_compute_types'))));
+  assert.equal(existsSync(path.join(paths.venv, 'whisper-complete.json')), true);
 });
 
 test('local setup rejects a modified bundled pack and preserves the online fallback', windowsSetup, async context => {

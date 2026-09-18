@@ -67,6 +67,8 @@ npm run models -- task-search
 
 Pinned URLs, revisions, sizes, and SHA-256 values are owned by [scripts/models.mjs](scripts/models.mjs). Python package inputs are in [requirements-local.txt](requirements-local.txt), [requirements-whisper.txt](requirements-whisper.txt), and [requirements-kokoro-pack.in](requirements-kokoro-pack.in).
 
+Windows releases include a hash-verified Python wheelhouse for Kokoro and faster-whisper. Setup installs it without package-network access; approved package mirrors and the local cache remain recovery paths for source builds.
+
 Use only approved HTTPS sources. Do not disable TLS verification, bypass application-control policy, or share configuration and unsanitized logs. An IT-approved Python 3.12 x64 path and package mirrors can be configured in Settings when organizational policy requires them.
 
 ## Data And Security

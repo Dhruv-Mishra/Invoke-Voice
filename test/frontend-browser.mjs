@@ -378,14 +378,14 @@ try {
   assert.equal(await evaluate(() => document.querySelectorAll('#setup-log script').length), 0);
   setupHttpStatus = 503;
   await click('#setup-refresh-btn');
-  await waitFor(() => document.getElementById('setup-error').textContent.includes('Setup service unavailable'));
+  await waitFor(() => document.getElementById('setup-error').textContent === 'Could not refresh setup status. Try again.');
   assert.equal(await evaluate(() => document.getElementById('setup-install-btn').disabled), true);
   setupHttpStatus = 200;
   await click('#setup-refresh-btn');
   await waitFor(() => !document.getElementById('setup-install-btn').disabled);
   setupHttpStatus = 503;
   await click('#setup-install-btn');
-  await waitFor(() => document.getElementById('setup-error').textContent.includes('Setup service unavailable'));
+  await waitFor(() => document.getElementById('setup-error').textContent === 'Could not refresh setup status. Try again.');
   assert.equal(await evaluate(() => document.getElementById('setup-install-btn').disabled), true);
   setupHttpStatus = 200;
   await click('#setup-refresh-btn');

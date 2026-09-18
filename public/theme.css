@@ -248,7 +248,7 @@ main.center-pane { overflow: hidden; }
 .setup-estimate, .setup-locations dt, #setup-progress-label { color: var(--cp-text-muted); }
 .local-setup p, .setup-locations dd { overflow-wrap: anywhere; }
 #setup-warning, #local-setup-prompt-warning, .setup-warning { color: var(--cp-text); border-inline-start: 3px solid var(--cp-warning); padding-inline-start: .75rem; margin-top: .5rem; }
-#setup-error { color: var(--cp-danger); }
+#setup-error { color: var(--cp-text-muted); font-size: 13px; }
 .setup-capabilities { list-style: none; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .setup-capabilities li { min-width: 0; padding: 12px; display: grid; gap: 4px; border: 1px solid var(--cp-border); border-radius: var(--control-radius); background: var(--cp-surface-soft); }
 .setup-capabilities span { color: var(--cp-text-muted); font-size: 12px; }

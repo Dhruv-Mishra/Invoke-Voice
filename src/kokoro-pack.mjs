@@ -9,6 +9,13 @@ const REQUIRED_PACKAGES = new Map([
   ['en-core-web-sm', version => version === '3.8.0'],
   ['soundfile', version => version === '0.13.1'],
 ]);
+const REQUIRED_WHISPER_PACKAGES = new Map([
+  ...REQUIRED_PACKAGES,
+  ['faster-whisper', version => version === '1.2.1'],
+  ['ctranslate2', version => version === '4.6.0'],
+  ['onnxruntime', version => version === '1.23.2'],
+  ['setuptools', version => version === '80.9.0'],
+]);
 
 function normalizedName(value) {
   return value.toLowerCase().replace(/[_.]+/g, '-');
@@ -20,7 +27,7 @@ async function fileHash(file) {
   return hash.digest('hex');
 }
 
-export async function verifyKokoroPack(packDir) {
+async function verifyPythonPack(packDir, requiredPackages) {
   if (!packDir || !existsSync(packDir)) return null;
   try {
     packDir = path.resolve(packDir);
@@ -60,11 +67,19 @@ export async function verifyKokoroPack(packDir) {
       if (!lock || lock.version !== wheel.version || lock.sha256 !== wheel.sha256.toLowerCase()) return null;
       found.set(name, wheel.version);
     }
-    for (const [name, accepts] of REQUIRED_PACKAGES) {
+    for (const [name, accepts] of requiredPackages) {
       if (!accepts(found.get(name) || '')) return null;
     }
     return { packDir, wheelhouse, lockFile, manifest };
   } catch {
     return null;
   }
+}
+
+export function verifyKokoroPack(packDir) {
+  return verifyPythonPack(packDir, REQUIRED_PACKAGES);
+}
+
+export function verifyWhisperPack(packDir) {
+  return verifyPythonPack(packDir, REQUIRED_WHISPER_PACKAGES);
 }

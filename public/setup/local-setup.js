@@ -79,13 +79,15 @@ export function createLocalSetupController({
     }
 
     if (setupElements.message) {
-      setupElements.message.textContent = snapshot
-        ? [snapshot.stage, snapshot.message].filter(Boolean).join(': ') || (ready ? 'Local voice is installed.' : 'Local voice is not installed.')
+      setupElements.message.textContent = snapshot?.status === 'error'
+        ? (chatReady ? 'Local chat is ready. Voice setup needs attention.' : 'Local setup needs attention. Retry when ready.')
+        : snapshot
+          ? [snapshot.stage, snapshot.message].filter(Boolean).join(': ') || (ready ? 'Local voice is installed.' : 'Local voice is not installed.')
         : busy ? 'Checking local voice setup...' : 'Local voice setup status is unavailable.';
     }
 
     if (setupElements.error) {
-      setupElements.error.textContent = setupHttpError || (snapshot?.error ? `${chatReady ? 'Local chat is ready. Voice setup needs attention: ' : ''}${snapshot.error}` : '');
+      setupElements.error.textContent = setupHttpError ? 'Could not refresh setup status. Try again.' : '';
       setupElements.error.hidden = !setupElements.error.textContent;
     }
 
@@ -107,7 +109,13 @@ export function createLocalSetupController({
 
     for (const [name, capability] of [['chat-status', snapshot?.capabilities?.chat], ['voice-status', snapshot?.capabilities?.voice]]) {
       if (setupElements[name]) {
-        setupElements[name].textContent = capability?.message || 'Not ready';
+        setupElements[name].textContent = capability?.ready
+          ? 'Ready'
+          : running
+            ? 'Setting up'
+            : snapshot?.status === 'error'
+              ? 'Needs attention'
+              : 'Not ready';
         if (setupElements[name].dataset) {
           setupElements[name].dataset.ready = String(capability?.ready === true);
         }

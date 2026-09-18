@@ -324,20 +324,23 @@ export class Supervisor extends EventEmitter {
     }
     const area = this.resolveArea(args.areaId);
     const objective = requiredText(args.objective, 'objective');
-    const backend = args.backend || this.state.settings.defaultBackend;
+    if (args.readOnly !== undefined && typeof args.readOnly !== 'boolean') throw new Error('Invalid read-only flag');
+    const readOnly = args.readOnly === true;
+    const backend = args.backend || (readOnly ? 'agency' : this.state.settings.defaultBackend);
     if (!BACKENDS.includes(backend)) throw new Error('Invalid coding backend');
+    if (readOnly && backend !== 'agency') throw new Error('Read-only tasks require Agency');
     const model = requiredText(args.model || this.state.settings.copilotModel, 'model', 100);
-    const agent = requiredText(args.agent || area.agent || DEFAULT_WORK_AREA.agent, 'agent', 100);
+    const agent = requiredText(readOnly ? 'agent' : (args.agent || area.agent || DEFAULT_WORK_AREA.agent), 'agent', 100);
     if (!/^[\w ./-]+$/.test(agent)) throw new Error('Invalid agent');
     const selectedContext = args.context || this.state.settings.copilotContext;
     if (!CONTEXTS.includes(selectedContext)) throw new Error('Invalid context tier');
     const requestId = requiredText(context.requestId, 'dispatch request ID', 200);
     const duplicate = this.state.tasks.find(task => task.requestId === requestId);
     if (duplicate) {
-      if (duplicate.areaId !== area.id || duplicate.objective !== objective || duplicate.backend !== backend || duplicate.model !== model || duplicate.agent !== agent || duplicate.context !== selectedContext) throw new Error('Request ID already used for another task');
+      if (duplicate.areaId !== area.id || duplicate.objective !== objective || duplicate.backend !== backend || duplicate.model !== model || duplicate.agent !== agent || duplicate.context !== selectedContext || (duplicate.readOnly === true) !== readOnly) throw new Error('Request ID already used for another task');
       return { taskId: duplicate.id, state: this.status(duplicate.id).state, duplicate: true };
     }
-    const task = { id: randomUUID(), requestId, areaId: area.id, title: objective.slice(0, 90), objective, backend, model, agent, context: selectedContext, state: 'dispatching', createdAt: this.now(), dispatchStartedAt: this.now(), lastObservedAt: null, sessionId: randomUUID(), worktree: null, branch: null, observations: [], turnObservationStart: 0, turns: [] };
+    const task = { id: randomUUID(), requestId, areaId: area.id, title: objective.slice(0, 90), objective, backend, model, agent, readOnly, context: selectedContext, state: 'dispatching', createdAt: this.now(), dispatchStartedAt: this.now(), lastObservedAt: null, sessionId: randomUUID(), worktree: null, branch: null, observations: [], turnObservationStart: 0, turns: [] };
     this.state.tasks.push(task);
     this.save();
     this.dispatch(task, { ...area }).catch(error => this.failTask(task, error));

@@ -21,6 +21,8 @@ test('exports the canonical LLM tool schemas', () => {
   assert.deepEqual(tools.find(tool => tool.function.name === 'start_work').function.parameters.properties.backend.enum, ['copilot', 'agency']);
   assert.equal(tools.find(tool => tool.function.name === 'start_work').function.parameters.properties.context.enum.includes('long_context'), true);
   assert.deepEqual(tools.find(tool => tool.function.name === 'start_work').function.parameters.required, ['objective']);
+  assert.equal(tools.find(tool => tool.function.name === 'start_work').function.parameters.properties.readOnly.type, 'boolean');
+  assert.match(supervisorInstructions, /readOnly:true for external questions/);
 });
 
 test('searches all saved work with bounded fresh status and no mutations', async () => {
@@ -419,6 +421,34 @@ test('work-data questions use one regular Agency task and deliver its answer wit
     assert.equal(dispatches, 1);
     assert.equal(supervisor.state.tasks.length, 1);
   } finally { release(); rmSync(dataDir, { recursive: true, force: true }); }
+});
+
+test('read-only tasks preserve their execution boundary across retries and follow-ups', async () => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-readonly-task-'));
+  const executions = [];
+  const bridge = {
+    prepare: async () => ({}),
+    dispatch: async task => { executions.push({ ...task }); return { result: 'Read complete.' }; },
+    continue: async task => { executions.push({ ...task }); return { result: 'Follow-up read complete.' }; },
+  };
+  try {
+    const supervisor = new Supervisor({ dataDir, bridge });
+    supervisor.updateSettings({ defaultBackend: 'copilot' });
+    const args = { objective: 'Find yesterday\'s project messages', readOnly: true };
+    const context = { requestId: 'read-only-turn' };
+    const receipt = await supervisor.callTool('start_work', args, context);
+    assert.equal((await supervisor.callTool('start_work', args, context)).duplicate, true);
+    await assert.rejects(supervisor.callTool('start_work', { ...args, backend: 'agency', readOnly: false }, context), /another task/);
+    await new Promise(resolve => setImmediate(resolve));
+    const restored = new Supervisor({ dataDir, bridge });
+    await restored.callTool('send_work_message', { taskId: receipt.taskId, message: 'Narrow to the afternoon' }, { requestId: 'read-follow-up' });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(executions.length, 2);
+    assert.ok(executions.every(task => task.readOnly && task.backend === 'agency' && task.agent === 'agent'));
+    assert.equal(executions[0].sessionId, executions[1].sessionId);
+    await assert.rejects(restored.callTool('start_work', { ...args, readOnly: 'true' }, { requestId: 'invalid' }), /Invalid read-only/);
+    await assert.rejects(restored.callTool('start_work', { ...args, backend: 'copilot' }, { requestId: 'wrong-backend' }), /require Agency/);
+  } finally { rmSync(dataDir, { recursive: true, force: true }); }
 });
 
 test('quarantines corrupt state and makes abandoned tasks recoverable after restart', async () => {

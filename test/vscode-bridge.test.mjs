@@ -7,6 +7,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { copilotPrompt, createVSCodeBridge, sessionEventText, sessionLaunch, worktreeWindowArgs } from '../src/vscode-bridge.mjs';
 import { Supervisor } from '../src/supervisor.mjs';
+import { agencyReadPolicy, prepareAgencyRead } from '../src/agency-read.mjs';
 
 const execute = promisify(execFile);
 
@@ -138,4 +139,55 @@ test('builds explicit Copilot and Agency start and resume commands', () => {
   assert.equal(agency.args.includes('teams'), false);
   assert.ok(agency.args.includes(`--resume=${base.sessionId}`));
   assert.equal(agency.args.includes('--session-id'), false);
+});
+
+test('read-only Agency launch exposes only curated MCP reads and rejects changed consent', async () => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-agency-read-'));
+  const env = { AGENCY_CLI: 'agency-test', AGENCY_WORK_DATA_ACCESS: 'read-only', COPILOT_ALLOW_ALL: 'true' };
+  const task = { id: 'read-task', sessionId: 'read-session', readOnly: true, backend: 'agency', dataDir, objective: 'Find my project messages', model: 'test', context: 'default', agent: 'unsafe-agent' };
+  const area = { repoPath: 'must-not-read', allowPublish: true, instructions: 'must-not-load' };
+  try {
+    assert.deepEqual(agencyReadPolicy({}).servers, ['msft-learn']);
+    const prepared = await prepareAgencyRead(task, dataDir, env, async (executable, args, options) => {
+      assert.equal(executable, 'agency-test');
+      assert.deepEqual(args.slice(0, 6), ['config', 'set', '--local', '--no-aec', '--profile', 'voice-read-read-session']);
+      assert.ok(args.includes('voice-teams: teams'));
+      assert.ok(args.includes('voice-calendar: calendar'));
+      assert.ok(args.includes('voice-m365-user: m365-user'));
+      assert.equal(options.timeout, 30000);
+      assert.equal(options.env.COPILOT_ALLOW_ALL, '0');
+      assert.equal(options.cwd, path.join(realpathSync.native(dataDir), 'agency-read', task.id));
+    });
+    assert.equal(existsSync(path.join(dataDir, 'worktrees')), false);
+    assert.equal(Object.hasOwn(prepared, 'worktree'), false);
+    Object.assign(task, prepared);
+    for (const resume of [false, true]) {
+      const launch = sessionLaunch(task, area, env, { resume });
+      assert.equal(launch.directory, prepared.directory);
+      assert.equal(launch.env.COPILOT_ALLOW_ALL, '0');
+      for (const flag of ['--allow-all-tools', '--hub', '--agent', '--add-dir']) assert.equal(launch.args.includes(flag), false, flag);
+      assert.ok(launch.args.includes('--profile-only'));
+      assert.ok(launch.args.includes('--no-config-plugins'));
+      assert.ok(launch.args.includes('--deny-tool=shell,write,read,url'));
+      assert.equal(launch.args.includes('--additional-mcp-config'), false);
+      const policy = agencyReadPolicy(env);
+      assert.deepEqual(Object.keys(policy.tools), ['voice-msft-learn', 'voice-teams', 'voice-calendar', 'voice-m365-user']);
+      assert.ok(policy.tools['voice-teams'].includes('ListChatMessages'));
+      assert.ok(policy.tools['voice-m365-user'].includes('GetMyDetails'));
+      const available = launch.args.find(arg => arg.startsWith('--available-tools=')).slice('--available-tools='.length).split(',');
+      const allowed = launch.args.find(arg => arg.startsWith('--allow-tool=')).slice('--allow-tool='.length).split(',');
+      for (const [server, tools] of Object.entries(policy.tools)) {
+        assert.ok(tools.every(tool => !/^(Send|Create|Delete|Update|Add|Reply)|\*/.test(tool)));
+        assert.ok(tools.every(tool => available.includes(`${server}-${tool}`) && allowed.includes(`${server}(${tool})`)));
+      }
+      assert.ok(available.includes('task_complete'));
+      assert.ok(available.every(tool => tool === 'task_complete' || tool.startsWith('voice-')));
+      assert.equal(launch.args[launch.args.indexOf('--max-autopilot-continues') + 1], '1');
+      assert.doesNotMatch(launch.prompt, /must-not-load|may commit/);
+      assert.match(launch.prompt, /five pages per source/);
+    }
+    assert.throws(() => sessionLaunch(task, area, { ...env, AGENCY_WORK_DATA_ACCESS: 'disabled' }), /access changed/);
+    assert.throws(() => agencyReadPolicy({ AGENCY_WORK_DATA_ACCESS: 'all' }), /Invalid Agency/);
+    await assert.rejects(prepareAgencyRead({ ...task, id: '../escape' }, dataDir, env), /Invalid read-only task/);
+  } finally { rmSync(dataDir, { recursive: true, force: true }); }
 });

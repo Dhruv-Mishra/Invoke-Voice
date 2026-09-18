@@ -16,6 +16,7 @@
     "local:check": "node --env-file-if-exists=.env scripts/start.mjs --local --check",
     "copilot:check": "node --env-file-if-exists=.env scripts/check-copilot.mjs",
     "agency:check": "node --env-file-if-exists=.env scripts/check-copilot.mjs --agency",
+    "agency:read:check": "node scripts/check-agency-read.mjs",
     "test": "node --test test/*.test.mjs",
     "desktop": "npm run build && electron desktop.cjs",
     "kokoro-pack": "node scripts/build-kokoro-pack.mjs",

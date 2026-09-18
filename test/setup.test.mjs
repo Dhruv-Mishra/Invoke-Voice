@@ -1060,6 +1060,24 @@ test('speech settings expose Whisper by default and persist Moonshine without a 
   assert.throws(() => config.update({ values: { LOCAL_STT_PROVIDER: 'chrome' } }), /unsupported value/);
 });
 
+test('Agency work-data consent defaults off and persists or revokes without restarting', context => {
+  const { directory } = fixture(context);
+  const env = {};
+  const config = createRuntimeConfig({ dataDir: directory, env });
+  const field = config.snapshot().fields.find(field => field.key === 'AGENCY_WORK_DATA_ACCESS');
+  assert.equal(field.value, 'disabled');
+  assert.equal(field.restartRequired, false);
+  assert.deepEqual(field.options.map(option => option.value), ['disabled', 'read-only']);
+  config.update({ values: { AGENCY_WORK_DATA_ACCESS: 'read-only' } });
+  assert.equal(env.AGENCY_WORK_DATA_ACCESS, 'read-only');
+  const restored = {};
+  createRuntimeConfig({ dataDir: directory, env: restored });
+  assert.equal(restored.AGENCY_WORK_DATA_ACCESS, 'read-only');
+  config.update({ values: { AGENCY_WORK_DATA_ACCESS: 'disabled' } });
+  assert.equal(env.AGENCY_WORK_DATA_ACCESS, 'disabled');
+  assert.throws(() => config.update({ values: { AGENCY_WORK_DATA_ACCESS: 'all' } }), /unsupported value/);
+});
+
 test('speech configuration API refreshes setup and refuses changes during installation', async context => {
   const { directory } = fixture(context);
   const previous = process.env.LOCAL_STT_PROVIDER;

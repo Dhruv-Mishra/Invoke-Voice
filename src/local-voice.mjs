@@ -20,6 +20,13 @@ let sttRuntimePromise;
 let kokoroProcess;
 let sttProcess;
 const runtimeExitListeners = new Set();
+const intentionalStops = new WeakSet();
+
+function stopRuntime(child) {
+  if (!child) return;
+  intentionalStops.add(child);
+  child.kill();
+}
 
 export function isLocalVoiceWarm() {
   return [kokoroProcess, sttProcess].every(process => process && process.exitCode === null && process.signalCode === null);
@@ -45,7 +52,7 @@ async function startKokoroRuntime(config, env, signal) {
   try {
     await new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('Kokoro startup exceeded 45s. Run its warm-up command first.')), 45000);
-      const abort = () => { clearTimeout(timer); process.kill(); reject(new Error('Kokoro startup was cancelled')); };
+      const abort = () => { clearTimeout(timer); stopRuntime(process); reject(new Error('Kokoro startup was cancelled')); };
       const finish = error => { clearTimeout(timer); signal?.removeEventListener('abort', abort); error ? reject(error) : resolve(); };
       signal?.addEventListener('abort', abort, { once: true });
       process.once('error', error => finish(new Error(`Kokoro failed to start: ${error.message}`)));
@@ -59,7 +66,7 @@ async function startKokoroRuntime(config, env, signal) {
     });
   } catch (error) {
     reader.close();
-    process.kill();
+    stopRuntime(process);
     throw error;
   }
   return { process, reader };
@@ -72,8 +79,9 @@ function getKokoroRuntime(config, env, signal) {
     pending.then(runtime => {
       runtime.process.once('exit', () => {
         if (kokoroRuntimePromise === pending) kokoroRuntimePromise = undefined;
-        if (kokoroProcess === runtime.process) kokoroProcess = undefined;
-        reportRuntimeExit('Kokoro');
+        if (kokoroProcess !== runtime.process) return;
+        kokoroProcess = undefined;
+        if (!intentionalStops.has(runtime.process)) reportRuntimeExit('Kokoro');
       });
     }).catch(() => { if (kokoroRuntimePromise === pending) kokoroRuntimePromise = undefined; });
   }
@@ -94,7 +102,7 @@ async function startSttRuntime(config, env, signal) {
   try {
     await new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error(`${name} did not become ready within 60s. Run local setup and retry.`)), 60000);
-      const abort = () => { clearTimeout(timer); process.kill(); reject(new Error(`${name} startup was cancelled`)); };
+      const abort = () => { clearTimeout(timer); stopRuntime(process); reject(new Error(`${name} startup was cancelled`)); };
       const finish = error => { clearTimeout(timer); signal?.removeEventListener('abort', abort); error ? reject(error) : resolve(); };
       signal?.addEventListener('abort', abort, { once: true });
       const onLine = line => {
@@ -102,7 +110,7 @@ async function startSttRuntime(config, env, signal) {
         try { event = JSON.parse(line); } catch { return; }
         if (event.type === 'ready') {
           transcription.off('line', onLine);
-          finish(event.compute_type === 'int8' ? null : new Error('Whisper did not initialize INT8 inference.'));
+          finish(['int8', 'int8_float32'].includes(event.compute_type) ? null : new Error(`Whisper did not initialize INT8 inference (${event.compute_type}).`));
         } else if (event.type === 'error') finish(new Error(event.message || 'Whisper startup failed'));
       };
       if (whisper) transcription.on('line', onLine);
@@ -115,7 +123,7 @@ async function startSttRuntime(config, env, signal) {
     });
   } catch (error) {
     transcription.close();
-    process.kill();
+    stopRuntime(process);
     throw error;
   }
   return { process, transcription, name, diagnostic: () => diagnostic };
@@ -128,8 +136,9 @@ function getSttRuntime(config, env, signal) {
     pending.then(runtime => {
       runtime.process.once('exit', () => {
         if (sttRuntimePromise === pending) sttRuntimePromise = undefined;
-        if (sttProcess === runtime.process) sttProcess = undefined;
-        reportRuntimeExit(runtime.name);
+        if (sttProcess !== runtime.process) return;
+        sttProcess = undefined;
+        if (!intentionalStops.has(runtime.process)) reportRuntimeExit(runtime.name);
       });
     }).catch(() => { if (sttRuntimePromise === pending) sttRuntimePromise = undefined; });
   }
@@ -160,7 +169,7 @@ export async function warmLocalVoice(env = process.env, signal) {
   }
   try { await Promise.all(warmups); }
   catch (error) {
-    for (const process of ownedProcesses) process.kill();
+    for (const process of ownedProcesses) stopRuntime(process);
     await Promise.allSettled(warmups);
     throw error;
   }
@@ -171,14 +180,14 @@ export async function closeLocalVoice() {
   const pending = [kokoroRuntimePromise, sttRuntimePromise];
   kokoroRuntimePromise = undefined;
   sttRuntimePromise = undefined;
-  for (const process of new Set([kokoroProcess, sttProcess].filter(Boolean))) process.kill();
+  for (const process of new Set([kokoroProcess, sttProcess].filter(Boolean))) stopRuntime(process);
   kokoroProcess = undefined;
   sttProcess = undefined;
   for (const result of await Promise.allSettled(pending.filter(Boolean))) {
     if (result.status === 'fulfilled') {
       result.value.reader?.close();
       result.value.transcription?.close();
-      result.value.process.kill();
+      stopRuntime(result.value.process);
     }
   }
 }
@@ -365,7 +374,7 @@ export async function createLocalVoice({ send, callTool, provider = 'local', stt
     readers.forEach(reader => reader.close());
     if (ttsReader && ttsLineHandler) ttsReader.off('line', ttsLineHandler);
     if (tts && ttsExitHandler) tts.off('exit', ttsExitHandler);
-    stt?.kill();
+    stopRuntime(stt);
   };
   const fail = message => { if (!closed) send({ type: 'error', message, fatal: true }); close(); };
   function interrupt() {

@@ -81,6 +81,8 @@ const defaultTokens = {
   '--cp-caption-font-weight': '400',
   '--cp-caption-fade-duration': `${captionTiming.fade}ms`,
   '--cp-voice-edge-strength': '68%',
+  '--cp-call-hue': '#ad73ef',
+  '--cp-tool-hue': '#48d68b',
   '--cp-wallpaper-blend': 'normal',
   '--cp-wallpaper-opacity': '1',
   '--cp-sprite-ink': '#202124',
@@ -98,7 +100,7 @@ const themeDefaults = Object.freeze({
   sprite: new URL('./copilot-icon.webp', import.meta.url).href,
   tokens: Object.freeze(defaultTokens),
   animations: defaultAnimations,
-  sounds: Object.freeze({ bootup: null, action: null }),
+  sounds: Object.freeze({ bootup: null, action: null, endCall: null }),
   preferences: Object.freeze({ colorScheme: 'light', soundsEnabled: true, soundVolume: 0.2 }),
   kind: 'copilot',
   icons: Object.freeze({ home: 'house', tasks: 'check-square', settings: 'settings', action: 'plus', progress: 'scan-search', continue: 'message-square', microphone: 'mic' }),
@@ -133,7 +135,7 @@ const neutralWallpapers = [
 ];
 const copilotWallpapers = [{ id: 'alpine', label: 'Dreamscape', source: alpineBackground }, { id: 'garden', label: 'Blush', source: new URL('./immersive/copilot-background-2.webp', import.meta.url).href }, ...neutralWallpapers];
 const copilotSprites = [{ id: 'copilot', label: 'Copilot', source: themeDefaults.sprite }, { id: 'opal', label: 'Opal', source: new URL('./opal-icon.webp', import.meta.url).href }];
-const copilotSounds = { bootup: new URL('./immersive/copilot-bootup.ogg', import.meta.url).href, action: new URL('./immersive/copilot-action.ogg', import.meta.url).href };
+const copilotSounds = { bootup: new URL('./immersive/copilot-bootup.ogg', import.meta.url).href, action: new URL('./immersive/copilot-action.ogg', import.meta.url).href, endCall: new URL('./immersive/copilot-end-call.ogg', import.meta.url).href };
 
 export const themes = Object.freeze([
   { id: 'alpine', label: 'Copilot', wallpapers: copilotWallpapers, sprites: copilotSprites, sounds: copilotSounds },
@@ -142,10 +144,11 @@ export const themes = Object.freeze([
     sprites: [{ id: 'arc', label: 'Arc core', source: media.reactor }, { id: 'palladium', label: 'Palladium core', source: media.gold }],
     animations: { idle: 'reactor-idle', connecting: 'reactor-connect', listening: 'reactor-listen', thinking: 'reactor-think', speaking: 'reactor-speak' },
     icons: { home: 'orbit', tasks: 'radar', settings: 'sliders-horizontal', action: 'zap', progress: 'radar', continue: 'terminal', microphone: 'audio-lines' },
-    sounds: { bootup: new URL('./immersive/jarvis-bootup.ogg', import.meta.url).href, action: new URL('./immersive/jarvis-action.ogg', import.meta.url).href },
+    sounds: { bootup: new URL('./immersive/jarvis-bootup.ogg', import.meta.url).href, action: new URL('./immersive/jarvis-action.ogg', import.meta.url).href, endCall: new URL('./immersive/jarvis-end-call.ogg', import.meta.url).href },
     preferences: { colorScheme: 'dark', soundVolume: 0.18, soundsEnabled: true },
     tokens: {
       '--cp-bg': '#101414', '--cp-bg-elevated': '#1a2020', '--cp-surface': '#202727', '--cp-surface-soft': '#293231',
+      '--cp-call-hue': '#50c8ff',
       '--cp-text': '#eef5f2', '--cp-text-muted': '#b7c7c2', '--cp-text-soft': '#aabcb6', '--cp-accent': '#7fdfec', '--cp-accent-hover': '#b2eef5', '--cp-accent-fg': '#102629',
       '--cp-accent-soft': 'rgba(127,223,236,0.12)', '--cp-link': '#9ae5ef', '--cp-success': '#98d7aa', '--cp-warning': '#edc983', '--cp-danger': '#ff9c92',
       '--cp-border': 'rgba(190,225,216,0.18)', '--cp-border-strong': '#607b73', '--cp-panel': 'rgba(25,35,34,0.8)', '--cp-panel-strong': 'rgba(26,32,32,0.97)', '--cp-sidebar': 'rgba(16,24,23,0.52)', '--cp-glass-surface': 'rgba(20,29,29,0.76)',
@@ -160,10 +163,11 @@ export const themes = Object.freeze([
     sprites: [{ id: 'face', label: 'Baymax face', source: media.companion }],
     animations: { idle: 'companion-breathe', connecting: 'companion-listen', listening: 'companion-listen', thinking: 'companion-think', speaking: 'companion-speak' },
     icons: { home: 'heart', tasks: 'clipboard-check', settings: 'sliders-horizontal', action: 'sparkles', progress: 'activity', continue: 'messages-square', microphone: 'mic' },
-    sounds: { bootup: new URL('./immersive/baymax-bootup.ogg', import.meta.url).href, action: new URL('./immersive/baymax-action.ogg', import.meta.url).href },
+    sounds: { bootup: new URL('./immersive/baymax-bootup.ogg', import.meta.url).href, action: copilotSounds.action, endCall: new URL('./immersive/baymax-end-call.ogg', import.meta.url).href },
     preferences: { soundsEnabled: true, soundVolume: 0.16 },
     tokens: {
       '--cp-bg': '#eef2f1', '--cp-bg-elevated': '#fafcfb', '--cp-surface-soft': '#e8efec', '--cp-text': '#263b36', '--cp-text-muted': '#566d65', '--cp-text-soft': '#61776e',
+      '--cp-call-hue': '#ffffff',
       '--cp-accent': '#b3384b', '--cp-accent-hover': '#98263a', '--cp-accent-soft': 'rgba(179,56,75,0.08)', '--cp-link': '#287164', '--cp-success': '#287164', '--cp-border': 'rgba(38,59,54,0.13)', '--cp-border-strong': '#a7b9b0',
       '--cp-panel': 'rgba(255,255,255,0.8)', '--cp-sidebar': 'rgba(241,246,243,0.46)', '--cp-glass-surface': 'rgba(250,252,251,0.76)', '--cp-wave': '#b3384b', '--cp-listening-hue': '#b3384b', '--cp-mic-glow': 'rgba(179,56,75,0.12)',
       '--cp-caption-user-bg': 'rgba(249,234,236,0.96)', '--cp-caption-user-bg-solid': '#f9eaec', '--cp-caption-text': '#263b36', '--cp-control-stroke': '2', '--cp-wallpaper-blend': 'normal', '--cp-wallpaper-opacity': '1',
@@ -181,7 +185,7 @@ export function resolveTheme(id, { wallpaper, sprite } = {}) {
   const selectedWallpaper = theme.wallpapers.find(candidate => candidate.id === wallpaper) || theme.wallpapers[0];
   const selectedSprite = theme.sprites.find(candidate => candidate.id === sprite) || theme.sprites[0];
   const surfaceTheme = selectedWallpaper.id === 'black' || (theme.id === 'baymax' && selectedWallpaper.id === 'sanctuary') ? themes[1] : selectedWallpaper.id === 'white' ? themes[0] : theme;
-  const identityTokens = Object.fromEntries(Object.entries(theme.tokens).filter(([key]) => key.startsWith('--cp-dock-') || key === '--cp-font-display'));
+  const identityTokens = Object.fromEntries(Object.entries(theme.tokens).filter(([key]) => key.startsWith('--cp-dock-') || ['--cp-font-display', '--cp-call-hue', '--cp-tool-hue'].includes(key)));
   return { ...theme, tokens: { ...surfaceTheme.tokens, ...identityTokens }, preferences: { ...theme.preferences, colorScheme: surfaceTheme.preferences.colorScheme }, background: selectedWallpaper.source, sprite: selectedSprite.source, wallpaperId: selectedWallpaper.id, spriteId: selectedSprite.id };
 }
 

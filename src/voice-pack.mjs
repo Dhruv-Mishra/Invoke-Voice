@@ -71,7 +71,7 @@ export async function downloadVoicePack(descriptor, destination, { urls = descri
       report({ stage: 'kokoro', message: 'Dependency source unavailable or unverified; checking the next approved source.' });
     }
   }
-  throw setupError('Could not obtain the pinned voice dependency pack. Completed downloads are retained. Retry, configure LOCAL_VOICE_PACK_URL with an IT-approved mirror, or LOCAL_VOICE_PACK_FILE with the matching release pack. Do not bypass security policy.');
+  throw setupError('The pinned voice dependency pack is unavailable online or in the local cache. Retry, set LOCAL_VOICE_PACK_URL to a mirror, or LOCAL_VOICE_PACK_FILE to the matching offline pack. Completed downloads are retained.');
 }
 
 export async function resolveVoicePack({ sourceDir, paths, env, run, report, signal, fetchImpl }) {

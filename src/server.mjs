@@ -212,6 +212,7 @@ export async function startSupervisor(options = {}) {
       }
       if (request.method === 'POST' && url.pathname === '/api/areas') return json(response, 200, await supervisor.registerArea(await body(request)));
       if (request.method === 'POST' && url.pathname === '/api/settings') return json(response, 200, supervisor.updateSettings(await body(request)));
+      if (request.method === 'POST' && url.pathname === '/api/notifications/read') return json(response, 200, supervisor.readNotifications(await body(request)));
       if (request.method === 'POST' && url.pathname === '/api/tools') {
         const input = await body(request);
         return json(response, 200, await supervisor.callTool(input.name, input.args, { requestId: input.requestId }));

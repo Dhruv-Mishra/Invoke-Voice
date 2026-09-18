@@ -25,6 +25,42 @@ test('exports the canonical LLM tool schemas', () => {
   assert.match(supervisorInstructions, /readOnly:true for external questions/);
 });
 
+test('notification inbox persists simultaneous completions and marks only observed IDs read', context => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-inbox-'));
+  context.after(() => rmSync(dataDir, { recursive: true, force: true }));
+  const supervisor = new Supervisor({ dataDir, bridge: {}, now: () => 1000 });
+  const events = [];
+  supervisor.on('notification', event => events.push(event));
+  for (const id of ['first', 'second']) {
+    const task = { id, title: id, backend: 'copilot', observations: [], turns: [] };
+    supervisor.state.tasks.push(task);
+    supervisor.completeTask(task, { result: `${id} finished` });
+  }
+  assert.equal(events.length, 2);
+  assert.notEqual(events[0].id, events[1].id);
+  supervisor.readNotifications({ ids: [events[0].id] });
+  const restored = new Supervisor({ dataDir, bridge: {} });
+  assert.deepEqual(restored.snapshot().notifications.map(item => item.read), [true, false]);
+  assert.throws(() => restored.readNotifications({ ids: 'all' }), /Invalid/);
+  for (let index = 0; index < 102; index++) restored.publishNotification({ id: 'task', title: 'Task', state: 'result_ready' }, 'Done');
+  assert.equal(restored.snapshot().notifications.length, 100);
+});
+
+test('idle call settings default on and validate atomically', context => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-idle-settings-'));
+  context.after(() => rmSync(dataDir, { recursive: true, force: true }));
+  const supervisor = new Supervisor({ dataDir, bridge: {} });
+  assert.equal(supervisor.state.settings.autoEndCall, true);
+  assert.equal(supervisor.state.settings.idleWarningSeconds, 40);
+  assert.equal(supervisor.state.settings.idleEndSeconds, 60);
+  for (const input of [{ idleEndSeconds: 30 }, { idleWarningSeconds: 0 }, { idleEndSeconds: '90' }, { idleEndSeconds: 9000 }]) assert.throws(() => supervisor.updateSettings(input), /Idle/);
+  assert.equal(supervisor.state.settings.idleEndSeconds, 60);
+  supervisor.updateSettings({ autoEndCall: false, idleWarningSeconds: 50, idleEndSeconds: 90 });
+  const restored = new Supervisor({ dataDir, bridge: {} });
+  assert.equal(restored.state.settings.autoEndCall, false);
+  assert.equal(restored.state.settings.idleEndSeconds, 90);
+});
+
 test('searches all saved work with bounded fresh status and no mutations', async () => {
   const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-supervisor-search-'));
   const clock = Date.now();
@@ -355,6 +391,41 @@ test('Copilot dispatch is idempotent, records progress, and exposes passive stat
     assert.deepEqual(await restored.callTool('delete_work', { taskId: receipt.taskId }), { deleted: 'task' });
     assert.deepEqual(await restored.callTool('delete_work', { areaId: area.id }), { deleted: 'area' });
   } finally { rmSync(dataDir, { recursive: true, force: true }); }
+});
+
+test('settling tasks cannot be deleted and late worker logs cannot corrupt a follow-up', async context => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-task-races-'));
+  context.after(() => rmSync(dataDir, { recursive: true, force: true }));
+  let reportOld;
+  let reportNew;
+  let finishFirst;
+  let finishNext;
+  const first = new Promise(resolve => { finishFirst = resolve; });
+  const next = new Promise(resolve => { finishNext = resolve; });
+  const supervisor = new Supervisor({ dataDir, bridge: {
+    prepare: async () => ({}),
+    dispatch: async (_task, _area, report) => { reportOld = report; return first; },
+    continue: async (_task, _area, _prompt, report) => { reportNew = report; return next; },
+  } });
+  const receipt = await supervisor.callTool('start_work', { objective: 'Run checks' }, { requestId: 'race-first' });
+  await new Promise(setImmediate);
+  reportOld({ kind: 'result_ready', summary: 'Finishing' });
+  assert.equal(supervisor.status(receipt.taskId).deletable, false);
+  assert.equal(supervisor.toolStatus(receipt.taskId).actions.includes('send_work_message'), false);
+  assert.throws(() => supervisor.deleteTask(receipt.taskId), /Only finished/);
+  finishFirst({ result: 'First done' });
+  await new Promise(setImmediate);
+  assert.equal(supervisor.status(receipt.taskId).deletable, true);
+  await supervisor.callTool('send_work_message', { taskId: receipt.taskId, message: 'Check again' }, { requestId: 'race-next' });
+  reportNew({ kind: 'progress', summary: 'New run' });
+  const before = JSON.stringify(supervisor.state);
+  reportOld({ kind: 'result_ready', summary: 'Late old log' });
+  assert.equal(JSON.stringify(supervisor.state), before);
+  finishNext({ result: 'Next done' });
+  await new Promise(setImmediate);
+  reportNew({ kind: 'progress', summary: 'Late new log' });
+  assert.equal(supervisor.task(receipt.taskId).observations.at(-1).summary, 'Next done');
+  assert.equal(supervisor.snapshot().notifications.length, 2);
 });
 
 test('announces completed and failed work', async () => {

@@ -17,8 +17,8 @@ Existing Copilot and Opal artwork remains unchanged outside this directory.
 
 ## Sounds
 
-The active `{copilot,jarvis,baymax}-{bootup,action}.ogg` files derive from the six user-supplied WAV/MP3 originals in `voice_app_assets`. No license was supplied; verify distribution rights. They retain their original durations, use two-pass loudness normalization targeting -23 LUFS / -3 dBTP with short edge fades, and share mono 48kHz Vorbis quality 4 encoding. They do not loop; hands-free capture pauses during playback.
+The eight active Ogg cues derive from the user-supplied WAV/MP3 originals in the workspace's `voice_app_assets` folder. Each theme has a `bootup` and `end-call` cue; Copilot and Baymax share `copilot-action.ogg`, while Jarvis uses `jarvis-action.ogg`. No license was supplied; verify distribution rights. They retain their original durations, use two-pass loudness normalization targeting -23 LUFS / -3 dBTP with short edge fades, and share mono 48kHz Vorbis quality 4 encoding. They do not loop; hands-free capture pauses during playback. End-call cues use the shared disconnect path and respect sound enablement and volume, including when the app is unfocused.
 
 ## Preparation
 
-From the app directory, run `node scripts/theme-assets.mjs` with FFmpeg installed and the supplied originals in `voice_app_assets`. The command is offline, deterministic and only writes normalized backgrounds/cues in this directory. It preserves source files and existing sprites. Normal builds consume the checked-in assets and never run preparation.
+From the app directory, run `node scripts/theme-assets.mjs` with FFmpeg installed and the supplied originals in the workspace's `voice_app_assets` folder. Add `--sounds-only` to leave backgrounds unchanged. The command is offline, deterministic and only writes normalized backgrounds/cues in this directory. It preserves source files and existing sprites. Normal builds consume the checked-in assets and never run preparation.

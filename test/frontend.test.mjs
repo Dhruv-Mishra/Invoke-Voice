@@ -9,7 +9,7 @@ import { renderToString } from 'vue/server-renderer';
 import VoiceSprite, { defaultAnimations } from '../public/VoiceSprite.js';
 import { captionTiming, motionPreference, resolveTheme, themes } from '../public/themes.js';
 import { createCaptionController } from '../public/captions/controller.js';
-import { shouldForwardCapturedAudio } from '../public/voice-session.js';
+import { createIdleCallTimer, shouldForwardCapturedAudio } from '../public/voice-session.js';
 import { createVoiceCaptionBridge } from '../public/captions/voice-bridge.js';
 
 test('frontend browser preserves conversation contracts and responsive preferences', { timeout: 90000 }, async context => {
@@ -39,6 +39,46 @@ test('frontend browser preserves conversation contracts and responsive preferenc
       else reject(new Error(`Browser validation exited ${code}\n${output}`));
     });
   });
+});
+
+test('idle calls warn once, reset on speech, respect busy and disabled states, and stop cleanly', () => {
+  let clock = 0;
+  const timer = createIdleCallTimer({ now: () => clock });
+  timer.start();
+  clock = 39999;
+  assert.equal(timer.tick(), null);
+  clock = 40000;
+  assert.equal(timer.tick(), 'warn');
+  assert.equal(timer.tick(), null);
+  clock = 59999;
+  assert.equal(timer.tick(), null);
+  clock = 60000;
+  assert.equal(timer.tick(), 'end');
+  assert.equal(timer.tick(), null);
+  timer.start();
+  clock += 40000;
+  assert.equal(timer.tick(), 'warn');
+  timer.activity();
+  clock += 20000;
+  assert.equal(timer.tick(), null);
+  clock += 40000;
+  assert.equal(timer.tick({ busy: true }), null);
+  clock += 39000;
+  assert.equal(timer.tick(), null);
+  timer.stop();
+  clock += 100000;
+  assert.equal(timer.tick(), null);
+  timer.start();
+  clock += 40000;
+  assert.equal(timer.tick({ enabled: false }), null);
+  clock += 1000;
+  assert.equal(timer.tick(), null);
+  clock += 120000;
+  assert.equal(timer.tick(), 'warn');
+  assert.equal(timer.tick(), null, 'resume must allow time to answer the warning');
+  clock += 20000;
+  assert.equal(timer.tick({ busy: true }), null);
+  assert.equal(timer.tick(), 'end');
 });
 
 test('captions replace partials, ignore tools, expire and cannot be cleared by stale timers', () => {

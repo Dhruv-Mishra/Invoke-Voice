@@ -3,7 +3,7 @@
 
 import { createConversationUI } from './captions/controller.js';
 import captureWorkletUrl from './capture-worklet.js?url';
-import { shouldForwardCapturedAudio } from './voice-session.js';
+import { createIdleCallTimer, shouldForwardCapturedAudio } from './voice-session.js';
 import { refreshPillbars } from './pillbar.js';
 import { createVoiceCaptionBridge } from './captions/voice-bridge.js';
 import { createToolCatalog } from './tools/tool-catalog.js';
@@ -36,6 +36,10 @@ let isServerReady = false;
 let isVoiceThinking = false;
 let isVoiceStarting = false;
 const pendingNotifications = [];
+const seenNotifications = new Set();
+let notificationsSignature = null;
+const idleCall = createIdleCallTimer();
+let idleNotificationId = null;
 const pendingPlaybackResponses = new Map();
 const responsePlaybackGenerations = new Map();
 const cancelledPlaybackResponses = new Set();
@@ -161,6 +165,9 @@ const settingsNotifyNeedsInput = document.getElementById('settings-notify-needs-
 const settingsNotifyFailed = document.getElementById('settings-notify-failed');
 const settingsVoiceNotifications = document.getElementById('settings-voice-notifications');
 const settingsBrowserNotifications = document.getElementById('settings-browser-notifications');
+const settingsAutoEndCall = document.getElementById('settings-auto-end-call');
+const settingsIdleWarning = document.getElementById('settings-idle-warning');
+const settingsIdleEnd = document.getElementById('settings-idle-end');
 const settingsSaveBtn = document.getElementById('settings-save-btn');
 const settingsFeedback = document.getElementById('settings-feedback');
 const integrationsTableBody = document.getElementById('integrations-table-body');
@@ -186,6 +193,9 @@ const settingsRenderer = createSettingsRenderer({
   notifyFailed: settingsNotifyFailed,
   voiceNotifications: settingsVoiceNotifications,
   browserNotifications: settingsBrowserNotifications,
+  autoEndCall: settingsAutoEndCall,
+  idleWarning: settingsIdleWarning,
+  idleEnd: settingsIdleEnd,
   integrationsTableBody,
   configFields,
   configFeedback,
@@ -227,7 +237,7 @@ function setAgentState(state) {
   agentSprite.title = `Agent ${next}`;
   document.querySelector('.voice-strip').dataset.state = next;
   const active = isVoiceStarting || Boolean(voiceSocket);
-  document.body.dataset.voiceActive = String(active);
+  document.body.dataset.voiceActive = String(isServerReady);
   syncVoiceMeter();
   const microphoneLabel = active ? 'Disconnect microphone' : micToggleBtn.disabled ? `Microphone unavailable: ${routeStatusBadge.textContent}` : 'Connect microphone';
   micToggleBtn.title = microphoneLabel;
@@ -292,6 +302,8 @@ function applyState(state) {
   if (!Array.isArray(appState.areas)) appState.areas = [];
   if (!Array.isArray(appState.tasks)) appState.tasks = [];
   if (!appState.settings || typeof appState.settings !== 'object') appState.settings = {};
+  renderNotifications();
+  for (const notification of appState.notifications || []) if (!notification.read) handleNotification(notification);
   renderAreas();
   renderTasks();
   renderFiles();
@@ -902,6 +914,7 @@ async function startVoiceSession() {
         capturedLevelAt = performance.now();
         if (msg.peak > USER_SPEAKING_THRESHOLD && shouldForwardAudio()) {
           lastUserSpeechTime = Date.now();
+          noteUserActivity();
         }
       } else if (msg.type === 'audio') {
         // Forward PCM only when socket open, server is ready, and mute/PTT permits
@@ -956,6 +969,7 @@ async function startVoiceSession() {
         if (data.type === 'ready') {
           isVoiceStarting = false;
           isServerReady = true;
+          idleCall.start();
           isCapturing = true;
           micBtnLabel.textContent = 'Disconnect Mic';
           micToggleBtn.disabled = false;
@@ -978,6 +992,7 @@ async function startVoiceSession() {
           if (index !== -1) pendingNotifications.splice(index, 1);
           if (notificationInFlight?.id === data.notificationId) notificationInFlight = null;
         } else if (data.type === 'transcript') {
+          if (data.role === 'user' && data.text?.trim()) noteUserActivity();
           if (data.role === 'user' && !data.partial) { isVoiceThinking = true; setAgentState('thinking'); }
           else if (data.role === 'user') setAgentState('listening');
           voiceCaptions.transcript(data);
@@ -1031,6 +1046,9 @@ async function startVoiceSession() {
 }
 
 function stopVoiceSession() {
+  const wasConnected = isServerReady;
+  idleCall.stop();
+  clearIdleWarning();
   voiceCaptions.clear();
   currentSessionToken++;
   isVoiceStarting = false;
@@ -1081,7 +1099,26 @@ function stopVoiceSession() {
   pttBtn.disabled = true;
   endCallBtn.disabled = true;
   updateRouteReadiness();
+  setAgentState('idle');
+  if (wasConnected) window.dispatchEvent(new Event('voice-supervisor:call-ended'));
 }
+
+function clearIdleWarning() {
+  if (idleNotificationId) {
+    const index = pendingNotifications.findIndex(item => item.id === idleNotificationId);
+    if (index !== -1) pendingNotifications.splice(index, 1);
+    if (notificationInFlight?.id === idleNotificationId) notificationInFlight = null;
+    idleNotificationId = null;
+  }
+  document.getElementById('idle-call-notice').hidden = true;
+}
+
+function noteUserActivity() {
+  idleCall.activity();
+  if (idleNotificationId) clearIdleWarning();
+}
+
+document.getElementById('idle-call-stay').addEventListener('click', noteUserActivity);
 
 // Push to Talk, Mute & End Call
 function setMicrophoneMuted(muted) {
@@ -1243,6 +1280,11 @@ function isNotificationScenarioEnabled(state) {
 
 function handleNotification(n) {
   if (!n) return;
+  if (n.id && seenNotifications.has(n.id)) return;
+  if (n.id) {
+    seenNotifications.add(n.id);
+    if (seenNotifications.size > 1000) seenNotifications.delete(seenNotifications.values().next().value);
+  }
   const settings = appState?.settings || {};
 
   if (isNotificationScenarioEnabled(n.state)) {
@@ -1259,11 +1301,87 @@ function handleNotification(n) {
   }
 
   if (settings.voiceNotifications !== false && isNotificationScenarioEnabled(n.state) && !isQuietMode) {
-    pendingNotifications.push({ id: crypto.randomUUID(), text: `${n.title}: ${n.text || n.state}` });
+    pendingNotifications.push({ id: n.id || crypto.randomUUID(), text: `${n.title}: ${n.text || n.state}` });
+    if (pendingNotifications.length > 100) pendingNotifications.shift();
   }
 }
 
+function renderNotifications() {
+  const notifications = appState.notifications || [];
+  const tasks = new Map(appState.tasks.map(task => [task.id || task.taskId, task]));
+  const signature = notifications.map(item => `${item.id}:${item.read}:${tasks.has(item.taskId)}`).join('|');
+  if (signature === notificationsSignature) return;
+  notificationsSignature = signature;
+  const unread = notifications.filter(item => !item.read).length;
+  const button = document.getElementById('notifications-btn');
+  button.setAttribute('aria-label', `Notifications, ${unread} unread`);
+  document.getElementById('notifications-count').textContent = unread || '';
+  document.getElementById('notifications-read').disabled = !unread;
+  const list = document.getElementById('notifications-list');
+  list.replaceChildren();
+  if (!notifications.length) {
+    const empty = document.createElement('p');
+    empty.className = 'empty-detail';
+    empty.textContent = 'No notifications';
+    list.append(empty);
+  }
+  for (const notification of [...notifications].reverse()) {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'notification-item';
+    item.dataset.unread = String(!notification.read);
+    const title = document.createElement('strong');
+    title.textContent = notification.title;
+    const text = document.createElement('span');
+    text.textContent = notification.text;
+    const time = document.createElement('time');
+    time.dateTime = new Date(notification.at).toISOString();
+    time.textContent = new Date(notification.at).toLocaleString();
+    item.append(title, text, time);
+    const task = tasks.get(notification.taskId);
+    item.disabled = !task;
+    item.addEventListener('click', () => {
+      document.getElementById('notifications-popover').hidePopover();
+      void markNotificationsRead([notification.id]);
+      const currentTask = appState.tasks.find(item => (item.id || item.taskId) === notification.taskId);
+      if (currentTask) showTaskDetail(currentTask);
+    });
+    list.append(item);
+  }
+}
+
+async function markNotificationsRead(ids) {
+  try {
+    const response = await fetch('/api/notifications/read', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) });
+    if (!response.ok) throw new Error('Could not mark notifications read.');
+    await loadState();
+  } catch (error) { await showAppAlert(error.message); }
+}
+
+document.getElementById('notifications-read').addEventListener('click', () => {
+  void markNotificationsRead((appState.notifications || []).filter(item => !item.read).map(item => item.id));
+});
+
 setInterval(() => {
+  const settings = appState.settings || {};
+  const idleAction = idleCall.tick({ enabled: settings.autoEndCall !== false, warningSeconds: settings.idleWarningSeconds ?? 40, endSeconds: settings.idleEndSeconds ?? 60, busy: isVoiceThinking || isUserSpeaking() || isAssistantSpeaking() });
+  if (settings.autoEndCall === false) clearIdleWarning();
+  if (idleAction === 'end') {
+    appendMessage('system', 'Call ended after inactivity.');
+    stopVoiceSession();
+    return;
+  }
+  if (idleAction === 'warn') {
+    const seconds = (settings.idleEndSeconds ?? 60) - (settings.idleWarningSeconds ?? 40);
+    const text = `Are you still there? I'll end the call in ${seconds} seconds without a reply.`;
+    document.getElementById('idle-call-text').textContent = text;
+    document.getElementById('idle-call-notice').hidden = false;
+    idleNotificationId = crypto.randomUUID();
+    pendingNotifications.unshift({ id: idleNotificationId, text });
+  }
+  if (settings.voiceNotifications === false) {
+    for (let index = pendingNotifications.length - 1; index >= 0; index--) if (pendingNotifications[index].id !== idleNotificationId) pendingNotifications.splice(index, 1);
+  }
   if (!pendingNotifications.length || isQuietMode || !isServerReady || isVoiceThinking || isUserSpeaking() || isAssistantSpeaking()) return;
   if (voiceSocket?.readyState !== WebSocket.OPEN) return;
   const now = Date.now();
@@ -1360,6 +1478,9 @@ if (settingsForm) {
           notifyNeedsInput,
           notifyFailed,
           voiceNotifications,
+          autoEndCall: settingsAutoEndCall.checked,
+          idleWarningSeconds: Number(settingsIdleWarning.value),
+          idleEndSeconds: Number(settingsIdleEnd.value),
           browserNotifications: browserAllowed
         })
       });

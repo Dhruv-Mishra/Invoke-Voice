@@ -582,6 +582,8 @@ test('a speech warmup failure keeps the validated chat runtime alive and retry r
   assert.equal(children[0].killed, false, 'validated owned llama runtime is kept alive');
   assert.equal(failed.capabilities.chat.ready, true, 'chat capability remains ready');
   assert.equal(failed.capabilities.voice.ready, false, 'voice capability is not ready');
+  assert.match(failed.capabilities.voice.message, /Kokoro fixture failure/);
+  assert.doesNotMatch(failed.capabilities.voice.message, /IT|policy|Defender|memory/);
   assert.ok(typeof failed.capabilities.chat.message === 'string' && failed.capabilities.chat.message.length > 0);
   assert.ok(typeof failed.capabilities.voice.message === 'string' && failed.capabilities.voice.message.length > 0);
 
@@ -759,7 +761,7 @@ test('setup launch failures and unwritable logs remain actionable without leakin
   });
 });
 
-test('setup reports policy and TLS failures without implying a bypass or exposing raw diagnostics', async context => {
+test('setup reports process failures concisely without guessing causes or exposing raw diagnostics', async context => {
   const { directory } = fixture(context);
   for (const diagnostic of ['This program is blocked by group policy', 'CERTIFICATE_VERIFY_FAILED']) {
     await assert.rejects(runSetupCommand(process.execPath, ['-e', `process.stderr.write(${JSON.stringify(diagnostic)}); process.exitCode = 1;`], {
@@ -767,7 +769,8 @@ test('setup reports policy and TLS failures without implying a bypass or exposin
     }), error => {
       assert.match(error.setupMessage, /logs\/local-setup\.log/);
       assert.doesNotMatch(error.setupMessage, new RegExp(diagnostic));
-      assert.match(error.setupMessage, diagnostic.includes('policy') ? /stop retrying.*IT-approved.*Do not bypass Defender, AppLocker or WDAC/ : /trusted certificates.*approved package mirrors.*Do not disable TLS/);
+      assert.match(error.setupMessage, /code 1.*Installed files are retained/);
+      assert.doesNotMatch(error.setupMessage, /IT|policy|Defender|TLS|firewall/);
       return true;
     });
     const output = readFileSync(path.join(directory, 'logs', 'local-setup.log'), 'utf8');

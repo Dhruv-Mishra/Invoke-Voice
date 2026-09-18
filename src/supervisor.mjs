@@ -58,6 +58,7 @@ export class Supervisor extends EventEmitter {
         allowPublish: area.allowPublish === true,
       }));
     if (!Array.isArray(this.state.tasks)) this.state.tasks = [];
+    this.state.notifications = (Array.isArray(this.state.notifications) ? this.state.notifications : []).filter(item => item && typeof item.id === 'string').slice(-100);
     this.state.tasks = this.state.tasks.filter(task => task && typeof task === 'object' && typeof task.id === 'string');
     for (const task of this.state.tasks) {
       if (!task.backend || task.backend === 'copilot-cli') task.backend = 'copilot';
@@ -79,6 +80,9 @@ export class Supervisor extends EventEmitter {
       notifyFailed: true,
       voiceNotifications: true,
       browserNotifications: false,
+      autoEndCall: true,
+      idleWarningSeconds: 40,
+      idleEndSeconds: 60,
       localSetupPrompted: false,
       ...this.state.settings,
     };
@@ -103,7 +107,23 @@ export class Supervisor extends EventEmitter {
   }
 
   snapshot() {
-    return { areas: this.state.areas, tasks: this.state.tasks.map(task => this.status(task.id)), settings: { ...this.state.settings }, ...(this.recoveryWarning ? { recoveryWarning: this.recoveryWarning } : {}) };
+    return { areas: this.state.areas, tasks: this.state.tasks.map(task => this.status(task.id)), notifications: this.state.notifications.map(item => ({ ...item })), settings: { ...this.state.settings }, ...(this.recoveryWarning ? { recoveryWarning: this.recoveryWarning } : {}) };
+  }
+
+  publishNotification(task, text) {
+    const notification = { id: randomUUID(), taskId: task.id, title: task.title, state: task.state, text: String(text || task.state).slice(0, 1800), at: this.now(), read: false };
+    this.state.notifications.push(notification);
+    this.state.notifications = this.state.notifications.slice(-100);
+    this.save();
+    this.emit('notification', { ...notification });
+  }
+
+  readNotifications(input = {}) {
+    if (!Array.isArray(input.ids) || input.ids.length > 100 || input.ids.some(id => typeof id !== 'string')) throw new Error('Invalid notification IDs');
+    const ids = new Set(input.ids);
+    for (const notification of this.state.notifications) if (ids.has(notification.id)) notification.read = true;
+    this.save();
+    return { notifications: this.snapshot().notifications };
   }
 
   async registerArea(input) {
@@ -141,9 +161,15 @@ export class Supervisor extends EventEmitter {
       if (!CONTEXTS.includes(input.copilotContext)) throw new Error('Invalid context tier');
       next.copilotContext = input.copilotContext;
     }
-    for (const key of ['notifyCompleted', 'notifyNeedsInput', 'notifyFailed', 'voiceNotifications', 'browserNotifications', 'localSetupPrompted']) {
+    for (const key of ['notifyCompleted', 'notifyNeedsInput', 'notifyFailed', 'voiceNotifications', 'browserNotifications', 'localSetupPrompted', 'autoEndCall']) {
       if (Object.hasOwn(input, key)) next[key] = input[key] === true;
     }
+    for (const key of ['idleWarningSeconds', 'idleEndSeconds']) {
+      if (!Object.hasOwn(input, key)) continue;
+      if (!Number.isInteger(input[key]) || input[key] < 5 || input[key] > 3600) throw new Error('Idle times must be whole seconds between 5 and 3600');
+      next[key] = input[key];
+    }
+    if (next.idleWarningSeconds >= next.idleEndSeconds) throw new Error('Idle check-in must be before call end');
     this.state.settings = next;
     this.save();
     return { ...next };
@@ -199,7 +225,7 @@ export class Supervisor extends EventEmitter {
     const lastActivityAt = task.lastObservedAt ?? task.dispatchStartedAt ?? task.createdAt ?? 0;
     const stale = ['dispatching', 'running'].includes(task.state) && this.now() - lastActivityAt > 120000;
     const state = task.state === 'dispatching' && this.now() - (task.dispatchStartedAt || task.createdAt) > 30000 ? 'dispatch_unconfirmed' : stale && task.state === 'running' ? 'unknown' : task.state;
-    const deletable = TERMINAL_STATES.has(state) || (stale && !this.activeTasks.has(id));
+    const deletable = !this.activeTasks.has(id) && (TERMINAL_STATES.has(state) || stale);
     return { ...task, state, lastObservedState: task.state, stale, deletable, observations: task.observations.slice(-8) };
   }
 
@@ -211,7 +237,7 @@ export class Supervisor extends EventEmitter {
       ? source.observations.filter(observation => observation.at >= currentTurn.createdAt).at(-1)
       : source.observations.at(-1);
     const actions = [];
-    if (RESUMABLE_STATES.has(task.state)) actions.push('send_work_message');
+    if (!this.activeTasks.has(id) && RESUMABLE_STATES.has(task.state)) actions.push('send_work_message');
     if (task.worktree) actions.push('open_work');
     if (task.deletable) actions.push('delete_work');
     const result = task.result && String(task.result);
@@ -349,24 +375,32 @@ export class Supervisor extends EventEmitter {
 
   async dispatch(task, area) {
     this.activeTasks.add(task.id);
+    let acceptingEvents = true;
     try {
       const prepared = await this.bridge.prepare(task, area);
       Object.assign(task, prepared);
       this.save();
-      const result = await this.bridge.dispatch(task, area, event => this.recordAgentEvent(task, event));
+      const result = await this.bridge.dispatch(task, area, event => { if (acceptingEvents) this.recordAgentEvent(task, event); });
+      acceptingEvents = false;
       if (result) this.completeTask(task, result);
     } finally {
+      acceptingEvents = false;
       this.activeTasks.delete(task.id);
+      this.emit('change', this.snapshot());
     }
   }
 
   async continueTask(task, area, turn) {
     this.activeTasks.add(task.id);
+    let acceptingEvents = true;
     try {
-      const result = await this.bridge.continue(task, area, turn.message, event => this.recordAgentEvent(task, event));
+      const result = await this.bridge.continue(task, area, turn.message, event => { if (acceptingEvents) this.recordAgentEvent(task, event); });
+      acceptingEvents = false;
       if (result) this.completeTask(task, result, turn);
     } finally {
+      acceptingEvents = false;
       this.activeTasks.delete(task.id);
+      this.emit('change', this.snapshot());
     }
   }
 
@@ -381,7 +415,7 @@ export class Supervisor extends EventEmitter {
       turn.completedAt = this.now();
     }
     this.recordAgentEvent(task, { kind: 'result_ready', summary: task.result });
-    if (this.state.settings.notifyCompleted) this.emit('notification', { taskId: task.id, title: task.title, state: task.state, text: task.result });
+    if (this.state.settings.notifyCompleted) this.publishNotification(task, task.result);
   }
 
   failTask(task, error, turn = null) {
@@ -394,7 +428,7 @@ export class Supervisor extends EventEmitter {
     }
     this.appendObservation(task, { id: randomUUID(), at: this.now(), kind: 'error', summary: error.message.slice(0, 1800), source: `${task.backend}-cli` });
     this.save();
-    if (this.state.settings.notifyFailed) this.emit('notification', { taskId: task.id, title: task.title, state: task.state, text: task.error });
+    if (this.state.settings.notifyFailed) this.publishNotification(task, task.error);
   }
 
   recordAgentEvent(task, event) {
@@ -430,7 +464,7 @@ export class Supervisor extends EventEmitter {
     if (event.kind === 'result_ready') task.result = observation.summary;
     this.save();
     const shouldNotify = event.kind === 'needs_input' ? this.state.settings.notifyNeedsInput : event.kind === 'result_ready' && this.state.settings.notifyCompleted;
-    if (shouldNotify) this.emit('notification', { taskId: task.id, title: task.title, state: task.state, text: observation.summary });
+    if (shouldNotify) this.publishNotification(task, observation.summary);
     return true;
   }
 }

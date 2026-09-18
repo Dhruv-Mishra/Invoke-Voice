@@ -24,7 +24,7 @@ const fields = Object.freeze([
   { key: 'OPENAI_TTS_MODEL', label: 'OpenAI speech synthesis model', group: 'Models and endpoints', type: 'text', defaultValue: 'gpt-4o-mini-tts' },
   { key: 'GEMINI_STT_MODEL', label: 'Google speech recognition model', group: 'Models and endpoints', type: 'text', defaultValue: 'gemini-3.8-flash' },
   { key: 'GEMINI_TTS_MODEL', label: 'Google speech synthesis model', group: 'Models and endpoints', type: 'text', defaultValue: 'gemini-2.5-flash-preview-tts' },
-  { key: 'PYTHON_BIN', label: 'Use IT-approved Python 3.12 x64 (skips runtime download)', group: 'Local setup network', type: 'text', absolutePath: true, restartRequired: true },
+  { key: 'PYTHON_BIN', label: 'Python 3.12 x64 path (optional)', group: 'Local setup network', type: 'text', absolutePath: true, restartRequired: true },
   { key: 'LOCAL_PYPI_INDEX_URL', label: 'Python package index', group: 'Local setup network', type: 'url', defaultValue: 'https://pypi.org/simple' },
   { key: 'LOCAL_TORCH_INDEX_URL', label: 'PyTorch package index', group: 'Local setup network', type: 'url', defaultValue: 'https://download.pytorch.org/whl/cpu' },
   { key: 'LOCAL_SPACY_MODEL_URL', label: 'spaCy English 3.8.0 wheel URL (optional)', group: 'Local setup network', type: 'url' },

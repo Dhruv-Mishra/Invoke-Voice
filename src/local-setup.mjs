@@ -19,7 +19,6 @@ const englishModel = 'https://github.com/explosion/spacy-models/releases/downloa
 const receiptVersion = createHash('sha256').update(readFileSync(requirements)).update(`${pythonVersion}:torch2.8.0:spacy3.8.0:kokoro-local-v2:offline-pack-v1`).digest('hex');
 const whisperReceiptVersion = createHash('sha256').update(readFileSync(whisperRequirements)).update(receiptVersion).digest('hex');
 const CHAT_ASSET_IDS = new Set(['ling', 'llama']);
-const policyGuidance = 'If execution is blocked by IT policy, stop retrying and ask IT to approve the runtime and its virtual environment, or configure PYTHON_BIN with an IT-approved Python 3.12 x64 path and restart the app. Do not bypass Defender, AppLocker or WDAC. Local chat does not require Kokoro.';
 export const approvedPythonProbe = 'import ensurepip, platform, ssl, struct, sys, venv; assert sys.implementation.name == "cpython", "CPython required"; assert sys.version_info[:2] == (3, 12), "Python 3.12 required"; assert platform.machine().lower() in ("amd64", "x86_64") and struct.calcsize("P") == 8, "Windows AMD64 required"; assert ensurepip.version() and ssl.OPENSSL_VERSION and venv.EnvBuilder, "venv, ensurepip and SSL required"';
 const isolatedPythonProbe = 'import pip, sys; assert sys.prefix != sys.base_prefix, "Dedicated virtual environment required"; assert pip.__version__, "Bundled pip required"';
 const managedPythonProbe = `import platform, struct, sys; assert sys.version_info[:3] == (${pythonVersion.split('.').join(', ')}), "Pinned Python ${pythonVersion} required"; assert platform.machine().lower() in ("amd64", "x86_64") and struct.calcsize("P") == 8, "Windows AMD64 required"`;
@@ -99,15 +98,9 @@ export function runSetupCommand(executable, args, { env, cwd, signal, report = (
         reject(setupError(`${error.setupMessage}${hint}`));
       } else resolve();
     }
-    child.once('error', error => finish(setupError(`${message} Could not run the local process (${error.code || 'launch error'}). Check that the configured executable exists and is permitted to run. ${policyGuidance}`)));
+    child.once('error', error => finish(setupError(`${message} Could not run the local process (${error.code || 'launch error'}). Check the runtime path and permissions.`)));
     child.once('close', (code, exitSignal) => {
-      const diagnostic = `${tails.stdout.text}\n${tails.stderr.text}`;
-      const secureConnectionFailed = /HandshakeFailure|certificate verify failed|CERTIFICATE_VERIFY_FAILED|TLS handshake|SSL error/i.test(diagnostic);
-      const policyBlocked = /AppLocker|WDAC|blocked by (?:group policy|your (?:system )?administrator)|application control|access is denied|WinError (?:5|577|1260)\b/i.test(diagnostic) || [577, 1260, 0xc0000428].includes(code >>> 0);
-      const guidance = policyBlocked ? policyGuidance : secureConnectionFailed
-        ? 'Could not establish a secure HTTPS connection to the package source. Ask IT about trusted certificates, proxy or TLS inspection policy, and approved package mirrors. Do not disable TLS verification.'
-        : 'Check disk space, network/proxy access and runtime prerequisites. Configured Python must be Python 3.12 x64 with venv and bundled pip. If IT reports a policy block, stop retries and contact IT; do not bypass security controls.';
-      finish(stoppingError || (code === 0 ? null : setupError(`${message} Process exited with ${exitSignal ? `signal ${exitSignal}` : `code ${code}`}. ${guidance}`)));
+      finish(stoppingError || (code === 0 ? null : setupError(`${message} Process exited with ${exitSignal ? `signal ${exitSignal}` : `code ${code}`}. Installed files are retained.`)));
     });
   });
 }
@@ -258,7 +251,7 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
       }
     } catch (error) {
       chatReady = false;
-      chatMessage = 'llama.cpp did not pass startup checks. Check available memory, Windows runtime requirements and security software, then retry. Completed models are retained.';
+      chatMessage = `Local chat (llama.cpp) could not start: ${sanitizeSetupOutput(error.message || 'No startup response.', env).replace(/\s+/g, ' ').slice(-400)} Installed files are retained.`;
       voiceReady = false;
       voiceMessage = 'Local voice requires a running chat runtime. Retry setup after resolving chat errors.';
       const failedChild = llama || child;
@@ -298,7 +291,7 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
           let bundledWhisperPack = await verifyWhisperPack(offlinePackDir);
           let offlinePack = bundledWhisperPack || await verifyKokoroPack(offlinePackDir);
           if (paths.pythonBase) {
-            if (!existsSync(paths.pythonBase)) throw setupError('Configured PYTHON_BIN was not found. Set it to the full path of an IT-approved Python 3.12 x64 interpreter and restart the app. No downloaded Python or uv fallback will be attempted.');
+            if (!existsSync(paths.pythonBase)) throw setupError('Configured PYTHON_BIN was not found. Set a Python 3.12 x64 path and restart the app. No downloaded Python or uv fallback will be attempted.');
             await command(paths.pythonBase, ['-I', '-c', approvedPythonProbe], 'python', 'Checking approved full CPython 3.12 x64 with venv, pip bootstrap and SSL. No Python runtime will be downloaded.');
             await command(paths.pythonBase, ['-I', '-m', 'venv', paths.venv], 'python', 'Creating Kokoro isolation with configured Python and bundled pip.');
             await command(paths.python, ['-I', '-c', isolatedPythonProbe], 'python', 'Checking the isolated Kokoro environment and bundled pip.');
@@ -432,9 +425,10 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
           }
           chatMessage = 'llama.cpp did not pass startup checks. Retry setup to restart it.';
           voiceMessage = 'Local voice is unavailable because the chat runtime stopped.';
-          throw setupError(`${runtime} did not pass startup checks. Check available memory, Windows runtime requirements and security software, then retry. Completed models are retained.`);
+          throw setupError(`${runtime} stopped during startup. Retry to restart it. Installed files are retained.`);
         }
-        voiceMessage = `${runtime} did not pass startup checks. Check available memory and Windows runtime requirements. ${policyGuidance} For damaged Kokoro dependencies, ask IT to review the isolated environment under the configured runtime directory. Completed models are retained.`;
+        const reason = sanitizeSetupOutput(error.message || 'No startup response.', env).replace(/\s+/g, ' ').slice(-400);
+        voiceMessage = `${runtime} could not start: ${reason} Local chat remains available. Installed files are retained; retry to restart voice.`;
         throw setupError(voiceMessage);
       }
     },

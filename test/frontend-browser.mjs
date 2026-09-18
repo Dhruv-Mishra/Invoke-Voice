@@ -27,6 +27,9 @@ let settingsWrites = 0;
 let configReads = 0;
 let setupHttpStatus = 200;
 const setupRequests = [];
+const fixtureNotifications = [];
+const voiceNotifications = [];
+let notificationReadRace = false;
 const fixtureTasks = [
   { id: 'finished-task', title: 'Completed coding work', state: 'completed', result: '**Ready for review**', createdAt: '2026-09-16T09:00:00Z' },
   { id: 'active-task', title: '<img src=x onerror=alert(1)> coding task', state: 'running', createdAt: '2026-09-16T10:00:00Z' },
@@ -219,6 +222,19 @@ try {
           response.end(JSON.stringify(settings));
           return;
         }
+        if (request.url === '/api/notifications/read' && request.method === 'POST') {
+          let body = '';
+          for await (const chunk of request) body += chunk;
+          const { ids } = JSON.parse(body);
+          if (notificationReadRace) {
+            notificationReadRace = false;
+            fixtureNotifications.push({ id: 'race', taskId: 'finished-task', title: 'Arrived during read', text: 'Still unread', at: Date.now(), state: 'completed', read: false });
+          }
+          for (const item of fixtureNotifications) if (ids.includes(item.id)) item.read = true;
+          response.writeHead(200, { 'Content-Type': 'application/json' });
+          response.end(JSON.stringify({ notifications: fixtureNotifications }));
+          return;
+        }
         if (request.url === '/api/config') {
           configReads++;
           if (request.method === 'POST') {
@@ -232,7 +248,7 @@ try {
         }
         const routes = {
           '/api/config': config,
-          '/api/state': { areas: [{ id: 'fixture-area', name: 'Fixture repository', repoPath: 'C:\\fixture' }], tasks: fixtureTasks, settings },
+          '/api/state': { areas: [{ id: 'fixture-area', name: 'Fixture repository', repoPath: 'C:\\fixture' }], tasks: fixtureTasks, notifications: fixtureNotifications, settings },
           '/api/areas/fixture-area/agents': [{ id: 'agent', name: 'Default agent' }],
           '/api/tools': [{ type: 'function', function: { name: 'list_work', description: 'List work', parameters: { type: 'object', properties: { query: { type: 'string' }, prompt: { type: 'string' } } } } }],
         };
@@ -262,6 +278,10 @@ try {
         voiceStartRequest = message;
         socket.send(JSON.stringify({ type: 'ready' }));
       }
+      if (message.type === 'notify') {
+        voiceNotifications.push(message);
+        socket.send(JSON.stringify({ type: 'notify_ack', notificationId: message.notificationId }));
+      }
     });
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -280,6 +300,7 @@ try {
   console.log('Browser fixture: checking appearance');
   await waitFor(() => document.getElementById('route-status-badge').textContent.includes('Ready'));
   console.log('Browser fixture: route ready');
+  assert.equal(await evaluate(() => ['end-call-btn', 'notifications-btn', 'notifications-read'].every(id => document.getElementById(id).querySelector('svg'))), true, 'call and inbox buttons must render registered icons');
 
   assert.equal(await evaluate(() => document.querySelectorAll('.appearance-options input').length), 0);
   assert.equal(await evaluate(() => document.querySelector('.top-bar').getBoundingClientRect().width), 248);
@@ -773,6 +794,12 @@ try {
   await click('[data-app-dialog-accept]');
   await choose('#provider-select', 'local');
 
+  const edgesAreOff = () => document.body.dataset.voiceActive === 'false'
+    && ['::before', '::after'].every(pseudo => {
+      const style = getComputedStyle(document.body, pseudo);
+      return Number(style.opacity) === 0 && style.animationName === 'none';
+    });
+  assert.equal(await evaluate(edgesAreOff), true, 'no call means no edge glow');
   await evaluate(() => {
     window.fixtureCues = [];
     const play = HTMLMediaElement.prototype.play;
@@ -799,8 +826,20 @@ try {
   assert.equal(await evaluate(() => document.querySelectorAll('.voice-bars, #mic-canvas').length), 0);
   assert.equal(await evaluate(() => getComputedStyle(document.querySelector('.sprite-image')).visibility), 'visible');
   await evaluate(() => { window.fixtureSpriteImage = document.querySelector('.sprite-image'); });
-  assert.equal(await evaluate(() => document.body.dataset.voiceActive === 'true'
-    && Number(getComputedStyle(document.body, '::before').opacity) >= 0.75), true);
+  const callBreathing = await evaluate(async () => {
+    await new Promise(requestAnimationFrame);
+    const breathing = document.getAnimations().find(animation => animation.animationName === 'voice-presence');
+    if (!breathing) return { animation: getComputedStyle(document.body, '::before').animationName };
+    breathing.pause();
+    breathing.currentTime = 0;
+    const low = Number(getComputedStyle(document.body, '::before').opacity);
+    breathing.currentTime = 1600;
+    const high = Number(getComputedStyle(document.body, '::before').opacity);
+    breathing.play();
+    return { active: document.body.dataset.voiceActive, low, high, looping: breathing.effect.getTiming().iterations === Infinity };
+  });
+  assert.ok(callBreathing.active === 'true' && callBreathing.high - callBreathing.low > .3
+    && callBreathing.looping, `Connected-call edge glow must breathe continuously: ${JSON.stringify(callBreathing)}`);
   await voice({ type: 'transcript', role: 'user', text: 'Voice partial', partial: true });
   assert.equal(await evaluate(() => document.getElementById('user-caption-text').textContent), 'Voice partial');
   const shortCaption = await evaluate(() => {
@@ -830,7 +869,10 @@ try {
   await voice({ type: 'tool', name: 'list_work', result: { ok: true } });
   assert.equal(await evaluate(() => /jarvis-action/.test(window.fixtureCues.at(-1)?.source) && window.fixtureCues.at(-1)?.activity === 'tool'), true);
   assert.equal(await evaluate(() => document.body.dataset.voiceActivity === 'tool'
-    && getComputedStyle(document.body, '::after').animationName === 'tool-presence'), true);
+    && getComputedStyle(document.body, '::after').animationName === 'tool-presence'
+    && Number(getComputedStyle(document.body, '::before').opacity) === 0), true);
+  await waitFor(() => !document.body.hasAttribute('data-voice-activity'));
+  assert.equal(await evaluate(() => getComputedStyle(document.body, '::before').animationName), 'voice-presence', 'tool pulse returns to call breathing');
   await voice({ type: 'state', state: 'speaking' });
   await waitFor(() => document.getElementById('agent-sprite').dataset.state === 'speaking');
   assert.equal(await evaluate(() => getComputedStyle(document.querySelector('.sprite-image')).visibility === 'visible'
@@ -868,7 +910,8 @@ try {
     && getComputedStyle(document.getElementById('agent-sprite'), '::before').animationName === 'none'), true);
   await voice({ type: 'tool', name: 'list_work', result: { ok: true } });
   assert.equal(await evaluate(() => getComputedStyle(document.body, '::after').animationName === 'none'
-    && Number(getComputedStyle(document.body, '::after').opacity) > 0), true);
+    && Number(getComputedStyle(document.body, '::after').opacity) > 0
+    && Number(getComputedStyle(document.body, '::before').opacity) === 0), true);
   await voice({ type: 'interrupted' });
   assert.equal(await evaluate(() => [...document.querySelectorAll('.closed-caption')].every(caption => caption.hidden)), true);
   assert.equal(await evaluate(() => document.querySelector('.caption-region').getBoundingClientRect().height < 1), true);
@@ -883,7 +926,11 @@ try {
     return Number(style.backgroundColor.match(/[\d.]+/g).at(-1)) < 1 && style.backdropFilter !== 'none';
   }), true);
   await pointerClick('#voice-options-btn');
+  await voice({ type: 'tool', name: 'list_work', result: { ok: true } });
   await click('#end-call-btn');
+  assert.equal(await evaluate(edgesAreOff), true, 'button hang-up cancels both glows during a tool pulse');
+  assert.equal(await evaluate(() => /copilot-end-call/.test(window.fixtureCues.at(-1)?.source)), true);
+  assert.equal(await evaluate(() => window.fixtureCues.filter(cue => cue.source.includes('end-call')).length), 1);
   assert.equal(await evaluate(() => document.getElementById('closed-caption').hidden), true);
   assert.equal(await evaluate(() => document.getElementById('mic-toggle-btn').getAttribute('aria-pressed')), 'false');
   assert.equal(await evaluate(() => document.querySelector('.voice-strip').style.getPropertyValue('--cp-voice-level')), '0');
@@ -897,6 +944,9 @@ try {
   assert.equal(await evaluate(() => document.body.dataset.voiceActive === 'false'
     && !document.body.hasAttribute('data-voice-activity')
     && Number(getComputedStyle(document.body, '::before').opacity) === 0), true);
+  await evaluate(() => { document.body.dataset.voiceActivity = 'tool'; });
+  assert.equal(await evaluate(edgesAreOff), true, 'tool activity outside a call cannot relight the edges');
+  await evaluate(() => { delete document.body.dataset.voiceActivity; });
   await visit('home');
   await click('#mic-toggle-btn');
   await waitFor(() => document.getElementById('agent-sprite').dataset.state === 'listening');
@@ -909,6 +959,16 @@ try {
       console.log(`Browser fixture: ${view}`);
       await visit(view);
       if (view === 'home') {
+        assert.equal(await evaluate(() => {
+          const centers = ['voice-options-btn', 'dock-mute-btn', 'mic-toggle-btn', 'end-call-btn', 'open-chat-btn'].map(id => {
+            const box = document.getElementById(id).getBoundingClientRect();
+            return box.left + box.width / 2;
+          });
+          const dock = document.querySelector('.voice-strip').getBoundingClientRect();
+          return Math.abs(centers[2] - (dock.left + dock.right) / 2) < 1
+            && Math.abs(centers[2] - centers[1] - (centers[3] - centers[2])) < 1
+            && Math.abs(centers[2] - centers[0] - (centers[4] - centers[2])) < 1;
+        }), true, 'dock utility buttons must mirror around the microphone');
         assert.equal(await evaluate(() => {
           const surface = document.querySelector('.app-main').getBoundingClientRect();
           const dock = document.querySelector('.voice-strip').getBoundingClientRect();
@@ -1002,10 +1062,57 @@ try {
   assert.equal(voiceConnections, 2);
   assert.equal(eventConnections, stableEventConnections);
   await visit('home');
+  await voice({ type: 'tool', name: 'list_work', result: { ok: true } });
   await voice({ type: 'end_call' });
   await waitFor(() => document.getElementById('agent-sprite').dataset.state === 'idle');
+  assert.equal(await evaluate(edgesAreOff), true, 'agent hang-up cancels both glows during a tool pulse');
   assert.equal(await evaluate(() => document.getElementById('end-call-btn').disabled
     && document.getElementById('mic-toggle-btn').getAttribute('aria-pressed') === 'false'), true);
+  assert.equal(await evaluate(() => window.fixtureCues.filter(cue => cue.source.includes('end-call')).length), 2, 'agent and button hang-up play exactly once');
+
+  await evaluate(() => {
+    window.fixtureRealNow = Date.now;
+    window.fixtureClock = Date.now();
+    Date.now = () => window.fixtureClock;
+  });
+  await click('#mic-toggle-btn');
+  await waitFor(() => document.getElementById('agent-sprite').dataset.state === 'listening');
+  await click('#dock-mute-btn');
+  await evaluate(() => { window.fixtureClock += 40000; });
+  await waitFor(() => !document.getElementById('idle-call-notice').hidden);
+  assert.equal(voiceNotifications.filter(item => item.text.startsWith('Are you still there?')).length, 1);
+  await voice({ type: 'transcript', role: 'user', text: 'Yes, I am here.', partial: false });
+  assert.equal(await evaluate(() => document.getElementById('idle-call-notice').hidden), true);
+  await voice({ type: 'state', state: 'listening' });
+  await evaluate(() => { window.fixtureClock += 40000; });
+  await waitFor(() => !document.getElementById('idle-call-notice').hidden);
+  await evaluate(() => { window.fixtureClock += 20000; });
+  await waitFor(() => document.getElementById('agent-sprite').dataset.state === 'idle');
+  assert.equal(await evaluate(() => window.fixtureCues.filter(cue => cue.source.includes('end-call')).length), 3, 'idle hang-up uses the same end cue');
+  assert.equal(await evaluate(edgesAreOff), true, 'idle hang-up clears both glows');
+  await evaluate(() => { Date.now = window.fixtureRealNow; });
+
+  await click('#mic-toggle-btn');
+  await waitFor(() => document.getElementById('agent-sprite').dataset.state === 'listening');
+  await voice({ type: 'tool', name: 'list_work', result: { ok: true } });
+  voiceSocket.close();
+  await waitFor(() => document.getElementById('agent-sprite').dataset.state === 'idle');
+  assert.equal(await evaluate(edgesAreOff), true, 'socket disconnect cancels both glows during a tool pulse');
+
+  fixtureNotifications.push(...['first', 'second'].map(id => ({ id, taskId: 'finished-task', title: `<img src=x> ${id}`, text: 'Task finished', state: 'completed', at: Date.now(), read: false })));
+  eventResponse.write(`data: ${JSON.stringify({ type: 'state', state: { areas: [], tasks: fixtureTasks, settings, notifications: fixtureNotifications } })}\n\n`);
+  for (const notification of fixtureNotifications) eventResponse.write(`data: ${JSON.stringify({ type: 'notification', notification })}\n\n`);
+  await waitFor(() => document.getElementById('notifications-count').textContent === '2');
+  await pointerClick('#notifications-btn');
+  assert.equal(await evaluate(() => document.querySelectorAll('#notifications-list .notification-item').length), 2);
+  assert.equal(await evaluate(() => document.querySelectorAll('#notifications-list img').length), 0);
+  assert.equal(await evaluate(() => [...document.querySelectorAll('.chat-bubble.system')].filter(item => item.textContent.includes('[Notification]')).length), 2, 'state catch-up and SSE events deduplicate');
+  await screenshot('notification-inbox');
+  notificationReadRace = true;
+  await pointerClick('#notifications-read');
+  await waitFor(() => document.getElementById('notifications-count').textContent === '1');
+  assert.equal(fixtureNotifications.at(-1).read, false);
+  await press('Escape');
   console.log('Browser fixture: keyboard and reset');
   await evaluate(() => document.getElementById('settings-tab').dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true })));
   assert.equal(await evaluate(() => document.body.dataset.view), 'home');

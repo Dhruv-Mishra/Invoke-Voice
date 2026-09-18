@@ -83,11 +83,19 @@ Pinned URLs, revisions, sizes, and SHA-256 values are owned by [scripts/models.m
 
 Windows releases use the same pinned, hash-verified Kokoro and faster-whisper dependency pack. **Bundled** includes the pack for environments where Python package sources are blocked. **Online** downloads it after setup consent. Both still download selected models and native runtimes; neither is a fully offline installer.
 
-Setup reuses verified files before downloading. Set `LOCAL_VOICE_PACK_FILE` in the app's `.env` to a matching release pack supplied by IT, or `LOCAL_VOICE_PACK_URL` to an approved HTTPS mirror. The mirror and release URL must provide identical pinned bytes; TLS and SHA-256 verification remain mandatory. Interrupted pack downloads resume when the source supports ranges. If every source fails, setup reports an error and preserves working chat. Source builds without a pack keep their existing package-index fallback.
+Setup reuses verified files before downloading. Set `LOCAL_VOICE_PACK_FILE` in the app's `.env` to a matching offline release pack, or `LOCAL_VOICE_PACK_URL` to an HTTPS mirror. The mirror and release URL must provide identical pinned bytes; TLS and SHA-256 verification remain mandatory. Interrupted pack downloads resume when the source supports ranges. If every source fails, setup reports an error and preserves working chat. Source builds without a pack keep their existing package-index fallback.
 
 First-time voice setup adds pack extraction time and several GB of temporary disk use. Expanded wheels are removed after successful setup; Online retains the compressed pack for recovery. Model downloads, later launches, and inference are unchanged.
 
-Use only approved HTTPS sources. Do not disable TLS verification, bypass application-control policy, or share configuration and unsanitized logs. An IT-approved Python 3.12 x64 path and package mirrors can be configured in Settings when organizational policy requires them.
+Use trusted HTTPS sources and keep TLS verification enabled. An existing Python 3.12 x64 path and package mirrors can be configured in Settings. Setup reports the sanitized startup failure without guessing its cause; an installed component is not necessarily a running component.
+
+## Calls And Notifications
+
+Idle calls check in after 40 seconds and end after 60 seconds by default. Settings > Idle calls changes either value or disables automatic hang-up. User speech or Stay connected resets the timer; an active reply is allowed to finish. A resumed window always leaves time to answer the check-in.
+
+Task announcements are queued and deduplicated; simultaneous completions do not speak over each other. The notification bell keeps the latest 100 updates across restarts, independently of whether they were spoken. Open an update to inspect its task, or mark the displayed updates read. New arrivals remain unread. Quiet mode suppresses spoken task updates without removing inbox history.
+
+All call-ending paths share the current theme's end-call cue, subject to sound and volume settings. Copilot and Baymax share the new action cue. Local runtime shutdown after a call is intentional, not an installation failure.
 
 ## Data And Security
 

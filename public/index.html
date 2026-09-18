@@ -746,6 +746,22 @@
           </label>
         </section>
 
+        <section class="settings-section">
+          <h2 class="settings-section-title"><i data-lucide="phone-off" aria-hidden="true"></i>Idle calls</h2>
+          <label class="form-row-checkbox toggle-control" for="settings-auto-end-call">
+            <input type="checkbox" id="settings-auto-end-call" checked>
+            <span class="toggle-track" aria-hidden="true"></span><span>End inactive calls automatically</span>
+          </label>
+          <div class="form-group">
+            <label for="settings-idle-warning">Check in after (seconds)</label>
+            <input type="number" id="settings-idle-warning" min="5" max="3600" step="1" value="40" required>
+          </div>
+          <div class="form-group">
+            <label for="settings-idle-end">End call after (seconds)</label>
+            <input type="number" id="settings-idle-end" min="5" max="3600" step="1" value="60" required>
+          </div>
+        </section>
+
         <div class="settings-actions">
           <span id="settings-feedback" class="settings-feedback" role="status" aria-live="polite"></span>
           <button type="submit" class="btn btn-accent" id="settings-save-btn">
@@ -1005,6 +1021,13 @@
       </div>
     </form>
   </dialog>
+
+  <button type="button" class="btn btn-icon notifications-button" id="notifications-btn" popovertarget="notifications-popover" aria-label="Notifications" title="Notifications"><i data-lucide="bell" aria-hidden="true"></i><span id="notifications-count"></span></button>
+  <section id="notifications-popover" class="notifications-popover" popover aria-label="Notifications">
+    <header><h2>Notifications</h2><button type="button" class="btn btn-icon" id="notifications-read" title="Mark all read" aria-label="Mark all notifications read"><i data-lucide="check-check" aria-hidden="true"></i></button></header>
+    <div id="notifications-list"></div>
+  </section>
+  <div id="idle-call-notice" class="idle-call-notice" role="status" hidden><span id="idle-call-text"></span><button class="btn" type="button" id="idle-call-stay">Stay connected</button></div>
 
   <div class="voice-strip" role="region" aria-label="Voice controls">
     <button type="button" class="dock-utility" id="voice-options-btn" aria-label="Voice options" title="Voice options" aria-expanded="false" aria-controls="voice-options"><i data-lucide="sliders-horizontal"></i></button>

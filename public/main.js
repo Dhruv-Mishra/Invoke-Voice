@@ -2,10 +2,10 @@ import { createApp, h, reactive, ref } from 'vue';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 import {
-  Activity, AppWindow, AudioLines, BellOff, CalendarDays, Check, CheckSquare, ChevronLeft, ChevronRight, CircleDashed, ClipboardCheck, createIcons, Edit2, Folder,
+  Activity, AppWindow, AudioLines, Bell, BellOff, CalendarDays, Check, CheckCheck, CheckSquare, ChevronLeft, ChevronRight, CircleDashed, ClipboardCheck, createIcons, Edit2, Folder,
   ExternalLink, File, FileText, FlaskConical, FolderKanban, HardDriveDownload, House, KeyRound, Keyboard,
   LayoutDashboard, MessageSquare, MessageSquarePlus, Mic, MicOff, PanelLeftClose, Palette, Play, Plus,
-  PlusCircle, Radio, RefreshCw, Save, ScanSearch, Send, Settings,
+  PhoneOff, PlusCircle, Radio, RefreshCw, Save, ScanSearch, Send, Settings,
   SlidersHorizontal, Sparkles, Square, Trash2, X, Heart, MessagesSquare, Orbit, Radar, Terminal, Volume2, Zap,
 } from 'lucide';
 import VoiceSprite from './VoiceSprite.js';
@@ -14,7 +14,7 @@ import './theme.css';
 
 window.DOMPurify = DOMPurify;
 window.marked = marked;
-const appIcons = { Activity, AppWindow, Folder, AudioLines, Check, ChevronLeft, ChevronRight, ClipboardCheck, Heart, MessagesSquare, Orbit, Radar, Terminal, Volume2, Zap, BellOff, CalendarDays, CheckSquare, CircleDashed, Edit2, ExternalLink,
+const appIcons = { Activity, AppWindow, Folder, AudioLines, Bell, Check, CheckCheck, PhoneOff, ChevronLeft, ChevronRight, ClipboardCheck, Heart, MessagesSquare, Orbit, Radar, Terminal, Volume2, Zap, BellOff, CalendarDays, CheckSquare, CircleDashed, Edit2, ExternalLink,
   File, FileText, FlaskConical, FolderKanban, HardDriveDownload, House, KeyRound, Keyboard, LayoutDashboard,
   MessageSquare, MessageSquarePlus, Mic, MicOff, PanelLeftClose, Palette, Play, Plus, PlusCircle, Radio, RefreshCw,
   Save, ScanSearch, Send, Settings, SlidersHorizontal, Sparkles, Square, Trash2, X };
@@ -95,6 +95,7 @@ const state = ref('idle');
 const voiceActive = ref(false);
 let soundsEnabled = savedSounds === 'true' ? true : savedSounds === 'false' ? false : null;
 let interactionAudio = null;
+let interactionKind = null;
 let soundTimeout;
 window.isThemeSoundPlaying = () => Boolean(interactionAudio);
 
@@ -120,6 +121,7 @@ function stopSound() {
   clearTimeout(soundTimeout);
   const audio = interactionAudio;
   interactionAudio = null;
+  interactionKind = null;
   if (!audio) return;
   audio.onended = null;
   audio.onerror = null;
@@ -130,13 +132,14 @@ function stopSound() {
 
 function playSound(kind, preview = false) {
   if ((!preview && !(soundsEnabled ?? theme.value.preferences.soundsEnabled))
-    || document.hidden || !document.hasFocus()) return;
+    || (kind !== 'endCall' && (document.hidden || !document.hasFocus()))) return;
   const source = soundSource(kind);
   const volume = soundVolume / 100 * theme.value.preferences.soundVolume / 0.2;
   if (!source || !volume) return;
   stopSound();
   const audio = new Audio();
   interactionAudio = audio;
+  interactionKind = kind;
   const finish = () => { if (interactionAudio === audio) stopSound(); };
   audio.preload = 'none';
   audio.volume = Math.min(1, volume);
@@ -325,17 +328,19 @@ window.addEventListener('voice-supervisor:agent-state', onState, listenerOptions
 window.addEventListener('voice-supervisor:theme', onTheme, listenerOptions);
 window.addEventListener('voice-supervisor:voice-start', () => playSound('bootup'), listenerOptions);
 window.addEventListener('voice-supervisor:tool-activity', () => playSound('action'), listenerOptions);
+window.addEventListener('voice-supervisor:call-ended', () => playSound('endCall'), listenerOptions);
 document.addEventListener('change', onSoundPreference, listenerOptions);
 motionSelect.addEventListener('change', () => {
   const preference = motionPreference(motionSelect.value);
   document.documentElement.dataset.motion = preference;
   savePreference(motionKey, preference);
 }, listenerOptions);
-document.addEventListener('visibilitychange', stopSound, listenerOptions);
+const stopBackgroundSound = () => { if (interactionKind !== 'endCall') stopSound(); };
+document.addEventListener('visibilitychange', stopBackgroundSound, listenerOptions);
 const syncVisibility = () => { document.documentElement.dataset.pageVisible = document.hidden ? 'false' : 'true'; };
 syncVisibility();
 document.addEventListener('visibilitychange', syncVisibility, listenerOptions);
-window.addEventListener('blur', stopSound, listenerOptions);
+window.addEventListener('blur', stopBackgroundSound, listenerOptions);
 window.addEventListener('pagehide', stopSound, listenerOptions);
 if (import.meta.hot) import.meta.hot.dispose(() => {
   listeners.abort();

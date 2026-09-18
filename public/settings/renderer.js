@@ -13,6 +13,9 @@ export function createSettingsRenderer({
   notifyFailed,
   voiceNotifications,
   browserNotifications,
+  autoEndCall,
+  idleWarning,
+  idleEnd,
   integrationsTableBody,
   configFields,
   configFeedback,
@@ -126,6 +129,9 @@ export function createSettingsRenderer({
     if (notifyFailed) notifyFailed.checked = settings.notifyFailed !== false;
     if (voiceNotifications) voiceNotifications.checked = settings.voiceNotifications !== false;
     if (browserNotifications) browserNotifications.checked = settings.browserNotifications !== false;
+    if (autoEndCall) autoEndCall.checked = settings.autoEndCall !== false;
+    if (idleWarning) idleWarning.value = settings.idleWarningSeconds ?? 40;
+    if (idleEnd) idleEnd.value = settings.idleEndSeconds ?? 60;
     populateIntegrations();
   }
 

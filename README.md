@@ -1,13 +1,13 @@
 # Voice Work Supervisor
 
-Local-first Windows voice console for coding work. The Vue/Vite UI connects to a loopback-only Node server and supports local models, hosted voice providers, GitHub Copilot CLI, and Agency.
+Local-first Windows voice console for delegated tasks. The Vue/Vite UI connects to a loopback-only Node server and supports local models, hosted voice providers, GitHub Copilot CLI, and Agency.
 
 ## Requirements
 
 - Node.js 22+ and npm for source development.
 - Windows x64 for the packaged desktop app and managed local voice setup.
 - Git, VS Code, and an authenticated GitHub Copilot CLI for Copilot coding sessions.
-- A separately installed and authenticated Agency client for Agency sessions.
+- A separately installed and authenticated [Agency client](https://aka.ms/agency) for Agency sessions (the fresh-install default).
 - Several GB of free disk space for optional local models; 16 GB RAM is recommended.
 
 The desktop package includes Node. Local setup manages its own runtimes and Python environment, so users do not need to modify system Python or `PATH`.
@@ -43,6 +43,18 @@ Voice routing supports:
 - **Dedicated Models**: independently choose Local, OpenAI, or Google for speech recognition, LLM, and speech synthesis.
 
 Cloud stages require the **Allow cloud processing** setting. Provider changes apply to new sessions. Settings marked **Restart required** apply after restarting the app.
+
+## Agency Tasks
+
+New installations default to Agency; saved backend choices are unchanged. The existing `start_work` tool delegates coding, skills, research, and work-data questions using the original request. Agency chooses its tools, and its answer returns through the existing task result, notification, and voice paths. Status reads never start another investigation. No MCP catalogs are added to the voice model.
+
+Agency tasks attach the built-in `msft-learn` MCP by default for public documentation search, code samples, and page retrieval. These three operations were inventoried as read-only. Agency provides the proxy, so no separate MCP package installation or global configuration edit is needed. Other default Agency MCPs remain disabled. Agency itself is not bundled or silently installed; check the authenticated client with `npm run agency:check`.
+
+**Enterprise MCPs are not enabled by this change.** The Teams metadata inventory confirms chat discovery, message listing and search, but also sending, deletion, and membership mutation. A request such as "What is my latest message on the PDF group from yesterday?" can use the regular task flow, but cannot retrieve Teams data until a separately reviewed integration is enabled. Missing access must be reported, not filled in by the voice model.
+
+Before enabling Teams or broader M365 access, require collaboration-data consent, verify the signed-in account and resource scope, and enforce an exact read-tool allowlist in an isolated Agency configuration (`--profile-only` or equivalent). The current coding launcher retains automatic tool approval and repository MCP support; `--no-default-mcps` does not isolate ambient configuration, and prompt restrictions are not a read-only boundary. Do not simply add Teams to that launcher. Do not enable every catalog server or add a Teams-specific voice tool.
+
+Tasks currently retain the existing isolated worktree lifecycle, including questions. Agency receives request time and user timezone, instructions to preserve uncertainty, and a short answer-first format with source links afterward. This is ordinary agent output, not a validated evidence envelope. Local and Agency session logs may retain task content; Agency Hub reporting remains enabled. Local voice does not make delegated Agency processing local-only.
 
 ## Local Voice
 

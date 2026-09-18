@@ -71,7 +71,7 @@ export class Supervisor extends EventEmitter {
     if (!this.state.settings || typeof this.state.settings !== 'object' || Array.isArray(this.state.settings)) this.state.settings = {};
     this.state.settings = {
       defaultAreaId: null,
-      defaultBackend: 'copilot',
+      defaultBackend: 'agency',
       copilotModel: env.COPILOT_MODEL || 'gpt-5.6-sol',
       copilotContext: 'default',
       notifyCompleted: true,
@@ -82,7 +82,7 @@ export class Supervisor extends EventEmitter {
       localSetupPrompted: false,
       ...this.state.settings,
     };
-    if (!BACKENDS.includes(this.state.settings.defaultBackend)) this.state.settings.defaultBackend = 'copilot';
+    if (!BACKENDS.includes(this.state.settings.defaultBackend)) this.state.settings.defaultBackend = 'agency';
     if (!CONTEXTS.includes(this.state.settings.copilotContext)) this.state.settings.copilotContext = 'default';
     this.save();
   }

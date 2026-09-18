@@ -111,6 +111,20 @@ test('Copilot prompt includes area instructions and worktrees open separately', 
   assert.deepEqual(worktreeWindowArgs('C:\\worktree'), ['--new-window', 'C:\\worktree']);
 });
 
+test('delegated questions retain original intent, date context and a bounded spoken answer', () => {
+  const objective = 'What is my latest message on the PDF group from yesterday?';
+  const task = { objective, worktree: 'C:\\worktree', createdAt: Date.parse('2026-09-18T12:00:00Z') };
+  const area = { allowPublish: false, instructions: '' };
+  const prompt = copilotPrompt(task, area);
+  assert.ok(prompt.includes(objective));
+  assert.match(prompt, /2026-09-18T12:00:00.000Z; user timezone:/);
+  assert.match(prompt, /without changing files or remote data/);
+  assert.match(prompt, /at most two short sentences and 320 characters/);
+  assert.match(prompt, /source links, dates/);
+  assert.match(prompt, /access is unavailable/);
+  assert.match(copilotPrompt({ ...task, turns: [{ createdAt: Date.parse('2026-09-19T12:00:00Z') }] }, area), /2026-09-19T12:00:00.000Z/);
+});
+
 test('builds explicit Copilot and Agency start and resume commands', () => {
   const base = { dataDir: 'C:\\data', worktree: 'C:\\worktree', model: 'gpt-5.6-sol', context: 'default', sessionId: '11111111-1111-4111-8111-111111111111', agent: 'builder' };
   const area = { allowPublish: false, instructions: '' };
@@ -119,7 +133,9 @@ test('builds explicit Copilot and Agency start and resume commands', () => {
   assert.deepEqual(copilot.args.slice(-4), ['--session-id', base.sessionId, '--agent', 'builder']);
   const agency = sessionLaunch({ ...base, backend: 'agency' }, area, { AGENCY_CLI: 'agency-test' }, { resume: true });
   assert.equal(agency.executable, 'agency-test');
-  assert.deepEqual(agency.args.slice(0, 3), ['copilot', '--hub', '--no-default-mcps']);
+  assert.deepEqual(agency.args.slice(0, 5), ['copilot', '--hub', '--no-default-mcps', '--mcp', 'msft-learn']);
+  assert.equal(copilot.args.includes('--mcp'), false);
+  assert.equal(agency.args.includes('teams'), false);
   assert.ok(agency.args.includes(`--resume=${base.sessionId}`));
   assert.equal(agency.args.includes('--session-id'), false);
 });

@@ -196,6 +196,7 @@ test('persists automatic work area selection and preserves user choices', async 
   const bridge = { verifyRepo: async () => {} };
   try {
     const supervisor = new Supervisor({ dataDir, bridge });
+    assert.equal(supervisor.snapshot().settings.defaultBackend, 'agency');
     const managed = supervisor.resolveArea();
     const first = await supervisor.registerArea({ name: 'First', repoPath: dataDir });
     const second = await supervisor.registerArea({ name: 'Second', repoPath: dataDir });
@@ -203,11 +204,11 @@ test('persists automatic work area selection and preserves user choices', async 
     supervisor.deleteArea(managed.id);
     assert.equal(supervisor.resolveArea().id, first.id);
     assert.equal(JSON.parse(readFileSync(supervisor.file, 'utf8')).settings.defaultAreaId, first.id);
-    supervisor.updateSettings({ defaultAreaId: second.id, copilotModel: 'custom-model', defaultBackend: 'agency' });
+    supervisor.updateSettings({ defaultAreaId: second.id, copilotModel: 'custom-model', defaultBackend: 'copilot' });
     const restored = new Supervisor({ dataDir, bridge });
     assert.equal(restored.resolveArea().id, second.id);
     assert.equal(restored.snapshot().settings.copilotModel, 'custom-model');
-    assert.equal(restored.snapshot().settings.defaultBackend, 'agency');
+    assert.equal(restored.snapshot().settings.defaultBackend, 'copilot');
     assert.throws(() => restored.resolveArea('missing'), /Choose a work area/);
     assert.throws(() => restored.updateSettings({ defaultAreaId: 'missing' }), /Unknown default work area/);
     restored.deleteArea(second.id);
@@ -250,7 +251,7 @@ test('fresh installs persist an editable private workspace and omitted work opti
     assert.equal(supervisor.status(receipt.taskId).state, 'result_ready');
     assert.equal(dispatched.area.id, area.id);
     assert.equal(dispatched.area.allowPublish, false);
-    assert.equal(dispatched.task.backend, 'copilot');
+    assert.equal(dispatched.task.backend, 'agency');
     assert.equal(dispatched.task.context, 'default');
     assert.equal(dispatched.task.agent, 'agent');
     assert.throws(() => supervisor.deleteArea(area.id), /Delete this area's tasks first/);
@@ -384,6 +385,40 @@ test('announces completed and failed work', async () => {
       error: 'Agent unavailable',
     });
   } finally { rmSync(dataDir, { recursive: true, force: true }); }
+});
+
+test('work-data questions use one regular Agency task and deliver its answer without redispatch', async () => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-supervisor-question-'));
+  const objective = 'What is my latest message on the PDF group from yesterday?';
+  const answer = 'I could not retrieve that message because Teams access is not configured.';
+  let dispatches = 0;
+  let release;
+  const completion = new Promise(resolve => { release = resolve; });
+  const bridge = {
+    prepare: async () => ({ worktree: dataDir, branch: 'voice/test' }),
+    dispatch: async () => { dispatches += 1; return completion; },
+  };
+  try {
+    const supervisor = new Supervisor({ dataDir, bridge });
+    const notifications = [];
+    supervisor.on('notification', event => notifications.push(event));
+    const args = { objective };
+    const context = { requestId: 'question-turn' };
+    const receipt = await supervisor.callTool('start_work', args, context);
+    assert.equal((await supervisor.callTool('start_work', args, context)).duplicate, true);
+    assert.equal(supervisor.task(receipt.taskId).objective, objective);
+    assert.equal(supervisor.task(receipt.taskId).backend, 'agency');
+    release({ result: answer });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(notifications.length, 1);
+    assert.equal(notifications[0].text, answer);
+    assert.equal(notifications[0].taskId, receipt.taskId);
+    assert.equal((await supervisor.callTool('get_work_status', { taskId: receipt.taskId })).result, answer);
+    const restored = new Supervisor({ dataDir, bridge });
+    assert.equal((await restored.callTool('get_work_status', { taskId: receipt.taskId })).result, answer);
+    assert.equal(dispatches, 1);
+    assert.equal(supervisor.state.tasks.length, 1);
+  } finally { release(); rmSync(dataDir, { recursive: true, force: true }); }
 });
 
 test('quarantines corrupt state and makes abandoned tasks recoverable after restart', async () => {

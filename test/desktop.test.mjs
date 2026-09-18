@@ -33,6 +33,7 @@ test('packaged child uses bundled Electron Node mode, physical unpacked sources 
 test('installer includes physical runtime dependencies, excludes private data and uses per-user one-click NSIS', () => {
   const config = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
   assert.equal(config.main, 'desktop.cjs');
+  assert.deepEqual(config.author, { name: 'Dhruv Mishra', email: 'dhruvmishra.id@gmail.com' });
   assert.doesNotMatch(config.devDependencies.electron, /alpha|beta/);
   assert.equal(config.scripts['kokoro-pack'], 'node scripts/build-kokoro-pack.mjs');
   assert.equal(config.scripts['dist:win'], 'node scripts/dist-win.mjs');

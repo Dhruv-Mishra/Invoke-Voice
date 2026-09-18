@@ -20,6 +20,8 @@ Local setup is opt-in and requires explicit download consent. It provisions Ling
 
 Verified files are reused. Partial or mismatched downloads are never reported ready. Setup does not modify system Python, `PATH`, or `.env`; if speech setup fails, verified local chat remains available.
 
+Older configurations can still select the larger Moonshine Small model. In **Settings > Config > Local speech**, clear **Moonshine model path** to select managed Tiny, save, and restart. This overrides an old `MOONSHINE_MODEL` value without editing `.env` or replacing a custom model. Run consented local setup if Tiny is not installed. The portable CPU runtime and CPU-scaled threads remain the defaults; target-device latency and recognition accuracy vary.
+
 Windows releases share a pinned, hash-verified Python dependency pack:
 
 - **Bundled** carries the pack for environments where package sources are blocked.
@@ -44,6 +46,8 @@ Pins and checksums live in [scripts/models.mjs](../scripts/models.mjs). Python i
 Fresh installations default to Agency; existing saved choices remain unchanged. Coding sessions run in isolated worktrees and may use the Agency MCPs available to the signed-in client.
 
 Read-only questions always use Agency. Public Microsoft Learn access is available by default. Enterprise research is opt-in under **Settings > Config > Coding tools > Agency work data** (`AGENCY_WORK_DATA_ACCESS=read-only`). It permits a fixed read-only set for WorkIQ, Teams, calendar, and people; WorkIQ `ask`, shell, filesystem, URL, repository, and mutation tools are excluded from the research profile.
+
+Install and sign in to [Agency](https://aka.ms/agency), or set its executable in **Coding tools**. Save the work-data choice, then use **Settings > Integrations > Check connections**. Checks read tool catalogs only, report missing tools or sign-in/connectivity failures, and never enable private access themselves. Failed proxies retry on the next attempt. Follow-ups refresh the restricted profile from current consent and retain the same task/session, so an access repair does not require duplicate work. A supervisor research task already exists before its worker starts; its read-only boundary prevents external mutations, not local task creation.
 
 Important boundaries:
 

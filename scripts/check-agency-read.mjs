@@ -91,7 +91,19 @@ try {
   assert.equal(resumed.state, 'result_ready', resumed.text);
   assert.equal(resumed.text, 'THREAD_RESUMED');
   assert.equal(supervisor.task(task.id).sessionId, sessionId);
-  console.log('PASS: shared WorkIQ/Teams HTTP; WorkIQ schema and public Learn reads; writes, ask and shell rejected; queued same-session resume and private progress.');
+  for (const access of ['disabled', 'read-only']) {
+    env.AGENCY_WORK_DATA_ACCESS = access;
+    visibleTools.clear();
+    completed = once(supervisor, 'notification');
+    await supervisor.callTool('send_work_message', { taskId: task.id, message: 'Synthetic consent refresh check. Reply THREAD_RESUMED without reading sources.' }, { requestId: `consent-${access}` });
+    const [updated] = await completed;
+    assert.equal(updated.state, 'result_ready', updated.text);
+    assert.equal(visibleTools.has('voice-workiq-retrieve'), access === 'read-only');
+    assert.equal(visibleTools.has('voice-teams-ListChatMessages'), access === 'read-only');
+    assert.equal(visibleTools.has('voice-workiq-ask'), false);
+    assert.equal(supervisor.task(task.id).sessionId, sessionId);
+  }
+  console.log('PASS: shared WorkIQ/Teams HTTP; WorkIQ schema and public Learn reads; writes, ask and shell rejected; queued same-session resume, consent revoke/restore and private progress.');
 } finally {
   await supervisor?.close();
   await agencyMcp.close();

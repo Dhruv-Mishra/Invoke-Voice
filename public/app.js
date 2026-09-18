@@ -395,7 +395,7 @@ viewDialog.addEventListener('close', () => {
 viewDialog.addEventListener('keydown', event => {
   if (event.key !== 'Tab' || !viewDialog.matches(':modal') || event.target.closest('dialog') !== viewDialog) return;
   const controls = [...viewDialog.querySelectorAll('button, a[href], input, select, textarea, summary, [tabindex]')]
-    .filter(element => !element.disabled && element.tabIndex >= 0 && element.getClientRects().length && !element.closest('[inert]'));
+    .filter(element => !element.disabled && element.tabIndex >= 0 && element.checkVisibility({ visibilityProperty: true }) && !element.closest('[inert]'));
   const first = controls[0];
   const last = controls.at(-1);
   if (event.shiftKey && document.activeElement === first) {
@@ -1545,6 +1545,28 @@ if (window.voiceSupervisorUpdates && applicationUpdate && applicationUpdateBtn) 
     }
   });
 }
+
+const agencyCheckBtn = document.getElementById('agency-check-btn');
+agencyCheckBtn?.addEventListener('click', async () => {
+  const feedback = document.getElementById('agency-check-feedback');
+  agencyCheckBtn.disabled = true;
+  feedback.textContent = 'Checking connections...';
+  feedback.className = 'settings-feedback';
+  try {
+    const response = await fetch('/api/agency/check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Connection check failed.');
+    appConfig.integrations = result.integrations;
+    populateIntegrationsTable();
+    const failures = result.results.filter(item => item.status !== 'ready');
+    feedback.textContent = failures.length ? 'Some connections need attention.' : 'Tool catalogs verified.';
+    if (result.workDataAccess === 'disabled') feedback.textContent += ' Private work-data access is off.';
+    feedback.className = `settings-feedback${failures.length ? ' error' : ''}`;
+  } catch (error) {
+    feedback.textContent = error.message || 'Connection check failed.';
+    feedback.className = 'settings-feedback error';
+  } finally { agencyCheckBtn.disabled = false; }
+});
 
 // REST: Config and State Loading
 async function loadConfig(preserveSelection = false) {

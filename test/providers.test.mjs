@@ -539,20 +539,22 @@ test('local rejects oversized latest instructions before HTTP and leaves cloud h
   } finally { await new Promise(resolve => server.close(resolve)); }
 });
 
-test('voice requests include supervisor capabilities and spoken output instructions', async () => {
+test('voice requests include spoken instructions and preserve streamed response text', async () => {
   let requestBody;
+  const chunks = ['The requested identifier is `11111111-1111-', '4111-8111-111111111111`', ' and the status is result_ready.'];
   const server = http.createServer(async (req, res) => {
     let bodyText = '';
     for await (const chunk of req) bodyText += chunk;
     requestBody = JSON.parse(bodyText);
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
-    res.end('data: {"choices":[{"delta":{"content":"Hello."},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
+    for (const content of chunks) res.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`);
+    res.end('data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   try {
     const env = { LOCAL_LLM_URL: `http://127.0.0.1:${server.address().port}/v1`, LOCAL_LLM_MODEL: 'test-local' };
     const events = [];
-    for await (const event of streamReply({ provider: 'local', profile: 'voice', messages: [{ role: 'user', content: 'Hello' }], env })) events.push(event);
+    for await (const event of streamReply({ provider: 'local', profile: 'voice', messages: [{ role: 'user', content: 'Read the identifier and status exactly.' }], env })) events.push(event);
     assert.equal(requestBody.tools.length, 8);
     assert.equal(requestBody.tools.at(-1).function.name, 'end_call');
     assert.equal(requestBody.max_tokens, 512);
@@ -560,7 +562,7 @@ test('voice requests include supervisor capabilities and spoken output instructi
     assert.equal(requestBody.cache_prompt, true);
     assert.equal(requestBody.messages[0].content, voiceInstructions);
     assert.ok(voiceInstructions.startsWith(supervisorInstructions));
-    assert.equal(events.filter(event => event.type === 'text').map(event => event.text).join(''), 'Hello.');
+    assert.deepEqual(events.filter(event => event.type === 'text').map(event => event.text), chunks);
   } finally {
     await new Promise(resolve => server.close(resolve));
   }

@@ -76,10 +76,16 @@ export function createSettingsRenderer({
 
       const status = document.createElement('td');
       const statusBadge = document.createElement('span');
-      const configured = ['configured', 'workspace_configured'].includes(item.status);
+      const configured = ['configured', 'workspace_configured', 'ready'].includes(item.status);
       statusBadge.className = `badge ${configured ? 'badge-success' : 'badge-warning'}`;
-      statusBadge.textContent = item.status || 'unknown';
+      statusBadge.textContent = (item.status || 'unknown').replaceAll('_', ' ');
       status.appendChild(statusBadge);
+      if (item.message) {
+        const message = document.createElement('p');
+        message.className = 'field-hint';
+        message.textContent = item.message;
+        status.appendChild(message);
+      }
 
       const mode = document.createElement('td');
       const modeBadge = document.createElement('span');

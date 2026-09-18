@@ -14,6 +14,7 @@ import { createLocalSetup } from './local-setup.mjs';
 import { createRuntimeConfig } from './runtime-config.mjs';
 import { sessionThemeOptions } from './theme-session.mjs';
 import { createAgencyMcp } from './agency-mcp.mjs';
+import { agencyReadPolicy } from './agency-read.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const publicDir = path.join(root, 'public');
@@ -93,6 +94,7 @@ export async function startSupervisor(options = {}) {
   const supervisor = options.supervisor || new Supervisor({ dataDir, bridge: createVSCodeBridge(dataDir, process.env, { agencyMcp }) });
   const setup = options.setup || createLocalSetup();
   let changingRecognition = false;
+  let agencyCheck;
   const clients = new Set();
   const activeChatControllers = new Set();
   let closing = false;
@@ -187,6 +189,15 @@ export async function startSupervisor(options = {}) {
         return json(response, 202, setup.start(input));
       }
       if (request.method === 'GET' && url.pathname === '/api/config') return json(response, 200, config());
+      if (request.method === 'POST' && url.pathname === '/api/agency/check') {
+        const input = await body(request);
+        if (!input || Array.isArray(input) || Object.keys(input).length) throw new Error('Connection checks do not accept configuration changes. Save consent in Settings first.');
+        const policy = agencyReadPolicy();
+        const names = [...new Set(['bluebird', ...policy.servers])];
+        agencyCheck ??= agencyMcp.check(names).finally(() => { agencyCheck = undefined; });
+        const results = await agencyCheck;
+        return json(response, 200, { results, integrations: config().integrations, workDataAccess: policy.servers.includes('workiq') ? 'read-only' : 'disabled' });
+      }
       if (request.method === 'POST' && url.pathname === '/api/config') {
         const input = await body(request);
         if (voiceOwner) return json(response, 409, { error: 'End the active voice call before changing application configuration.' });

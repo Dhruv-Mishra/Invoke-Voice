@@ -24,6 +24,7 @@ let eventResponse;
 let setupReads = 0;
 let setupWrites = 0;
 let settingsWrites = 0;
+let agencyChecks = 0;
 let configReads = 0;
 let setupHttpStatus = 200;
 const setupRequests = [];
@@ -211,6 +212,12 @@ try {
           } else setupReads++;
           response.writeHead(setupHttpStatus, { 'Content-Type': 'application/json' });
           response.end(JSON.stringify(setupHttpStatus === 200 ? setup : { error: 'Setup service unavailable' }));
+          return;
+        }
+        if (request.url === '/api/agency/check' && request.method === 'POST') {
+          agencyChecks += 1;
+          response.writeHead(200, { 'Content-Type': 'application/json' });
+          response.end(JSON.stringify({ workDataAccess: 'disabled', results: [{ id: 'workiq', status: 'authentication_required' }], integrations: [{ id: 'workiq', label: 'WorkIQ', status: 'authentication_required', mode: 'agency', message: 'Sign in again. <img src=x onerror=alert(1)>' }] }));
           return;
         }
         if (request.url === '/api/settings' && request.method === 'POST') {
@@ -449,6 +456,13 @@ try {
   await press('Tab', 8);
   await press('Tab', 8);
   assert.equal(await evaluate(() => document.activeElement.id), 'settings-save-btn');
+  await click('#settings-view > .settings-container > details:last-child > summary');
+  await pointerClick('#agency-check-btn');
+  await waitFor(() => !document.getElementById('agency-check-btn').disabled && document.getElementById('agency-check-feedback').textContent.includes('Private work-data access is off'));
+  assert.equal(agencyChecks, 1);
+  assert.equal(await evaluate(() => Boolean(document.querySelector('#agency-check-btn svg'))), true);
+  assert.equal(await evaluate(() => document.querySelector('#integrations-table-body img') === null && document.getElementById('integrations-table-body').textContent.includes('<img src=x onerror=alert(1)>')), true);
+  await click('#settings-view > .settings-container > details:last-child > summary');
   await evaluate(() => document.getElementById('home-tab').focus());
   assert.equal(await evaluate(() => document.getElementById('view-dialog').contains(document.activeElement)), true);
   await press('Escape');

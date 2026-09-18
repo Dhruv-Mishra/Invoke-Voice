@@ -41,6 +41,22 @@ test('local STT defaults to Moonshine Tiny streaming and Whisper remains optiona
   assert.equal(args[args.indexOf('--stream-final-on-silence-ms') + 1], '800');
 });
 
+test('saved managed Tiny selection overrides older model environment after restart without rewriting it', context => {
+  const { directory, paths } = fixture(context);
+  const oldModel = path.join(directory, 'moonshine-streaming-small-q4_k.gguf');
+  writeFileSync(oldModel, 'existing custom model');
+  const env = { SUPERVISOR_CACHE_DIR: paths.home, MOONSHINE_MODEL: oldModel };
+  const config = createRuntimeConfig({ dataDir: directory, env });
+  assert.equal(localConfiguration(env).sttLabel, 'Moonshine Small streaming');
+  const saved = config.update({ values: { MOONSHINE_MODEL: '' } });
+  assert.equal(saved.fields.find(field => field.key === 'MOONSHINE_MODEL').pendingRestart, true);
+  assert.equal(env.MOONSHINE_MODEL, oldModel);
+  createRuntimeConfig({ dataDir: directory, env });
+  assert.equal(env.MOONSHINE_MODEL, '');
+  assert.equal(localConfiguration(env).sttLabel, 'Moonshine Tiny streaming');
+  assert.equal(readFileSync(oldModel, 'utf8'), 'existing custom model');
+});
+
 test('Whisper model assets are pinned, verified and reusable offline', async context => {
   const { paths } = fixture(context);
   for (const asset of ASSETS.filter(asset => asset.id.startsWith('whisper'))) {

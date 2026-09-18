@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
-import { createAgencyMcp, AGENCY_MCP_SERVERS } from '../src/agency-mcp.mjs';
+import { createServer } from 'node:http';
+import { createAgencyMcp, AGENCY_MCP_SERVERS, probeAgencyMcp } from '../src/agency-mcp.mjs';
 import { sessionLaunch } from '../src/vscode-bridge.mjs';
 
 function fixture() {
@@ -16,11 +17,41 @@ function fixture() {
   return { children, spawnImpl };
 }
 
+test('MCP diagnostics use only bounded catalog requests and distinguish authentication and missing tools', async context => {
+  const methods = [];
+  const server = createServer(async (request, response) => {
+    if (request.url === '/auth') { response.writeHead(401).end(); return; }
+    if (request.url === '/stall') return;
+    if (request.method !== 'POST') { response.writeHead(405).end(); return; }
+    let body = '';
+    for await (const chunk of request) body += chunk;
+    const message = JSON.parse(body);
+    methods.push(message.method);
+    if (message.id === undefined) { response.writeHead(202).end(); return; }
+    const result = message.method === 'initialize'
+      ? { protocolVersion: '2025-03-26', capabilities: { tools: {} }, serverInfo: { name: 'fixture', version: '1' } }
+      : { tools: [{ name: 'retrieve', inputSchema: { type: 'object' } }] };
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result }));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  context.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); });
+  const url = `http://127.0.0.1:${server.address().port}`;
+  assert.equal((await probeAgencyMcp(url, ['retrieve'])).status, 'ready');
+  const missing = await probeAgencyMcp(url, ['fetch']);
+  assert.equal(missing.status, 'tools_missing');
+  assert.deepEqual(missing.missing, ['fetch']);
+  assert.equal((await probeAgencyMcp(`${url}/auth`)).status, 'authentication_required');
+  assert.equal((await probeAgencyMcp(`${url}/stall`, [], { timeoutMs: 50 })).status, 'unavailable');
+  assert.ok(methods.every(method => ['initialize', 'notifications/initialized', 'tools/list'].includes(method)));
+  await assert.rejects(probeAgencyMcp('https://untrusted.test'), /owned loopback/);
+});
+
 test('Agency proxies start once, publish only loopback endpoints and stop with their owner', async () => {
   const { children, spawnImpl } = fixture();
   const mcp = createAgencyMcp({ env: { AGENCY_CLI: 'agency-test' }, spawnImpl });
   const start = mcp.start();
-  assert.equal(mcp.start(), start);
+  const concurrent = mcp.start();
   assert.equal(children.length, 3);
   children.forEach((child, index) => {
     assert.deepEqual(child.args, ['mcp', '--transport', 'http', '--port', '0', AGENCY_MCP_SERVERS[index]]);
@@ -30,6 +61,7 @@ test('Agency proxies start once, publish only loopback endpoints and stop with t
     child.stdout.write('34\r\n');
   });
   await start;
+  await concurrent;
   assert.deepEqual(Object.keys(mcp.configuration()), AGENCY_MCP_SERVERS);
   assert.equal(mcp.configuration().workiq.url, 'http://127.0.0.1:12134/');
   assert.ok(mcp.snapshot().every(entry => entry.status === 'listening'));
@@ -60,6 +92,32 @@ test('missing or stalled Agency never blocks startup and shutdown during startup
   const absent = createAgencyMcp({ spawnImpl: () => { throw new Error('Missing'); } });
   await absent.start();
   await absent.close();
+});
+
+test('Agency retries failed proxies and reports catalog readiness without reading business data', async () => {
+  const { children, spawnImpl } = fixture();
+  const probes = [];
+  const mcp = createAgencyMcp({ spawnImpl, probeImpl: async (url, required) => {
+    probes.push({ url, required });
+    return { status: 'ready', message: 'Catalog verified.', toolCount: required.length };
+  } });
+  const first = mcp.start();
+  children[0].emit('error', new Error('ENOENT'));
+  children[1].stdout.write('12001\n');
+  children[2].stdout.write('12002\n');
+  await first;
+  const retry = mcp.start();
+  assert.equal(children.length, 4);
+  assert.equal(children[3].args.at(-1), 'bluebird');
+  children[3].stdout.write('12003\n');
+  await retry;
+  const results = await mcp.check();
+  assert.ok(results.every(result => result.status === 'ready'));
+  assert.ok(mcp.snapshot().every(result => result.status === 'ready'));
+  assert.deepEqual(probes.find(probe => probe.url.includes('12001')).required, ['retrieve', 'fetch', 'search_paths', 'get_schema']);
+  assert.deepEqual(Object.keys(mcp.configuration()).sort(), [...AGENCY_MCP_SERVERS].sort());
+  assert.throws(() => mcp.start(['untrusted']), /Unknown Agency/);
+  await mcp.close();
 });
 
 test('shared MCP launch preserves read filters and avoids duplicate coding proxies', () => {

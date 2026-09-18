@@ -15,6 +15,35 @@ import { Supervisor } from '../src/supervisor.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 
+test('Agency connection checks respect consent, reject remote origins and never change configuration', async context => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-agency-status-'));
+  const saved = process.env.AGENCY_WORK_DATA_ACCESS;
+  process.env.AGENCY_WORK_DATA_ACCESS = 'disabled';
+  const checks = [];
+  const app = await startSupervisor({ dataDir, port: 0, prewarm: false, agencyMcp: {
+    snapshot: () => [], close: async () => {},
+    check: async names => { checks.push(names); return names.map(id => ({ id, status: 'ready' })); },
+  } });
+  context.after(async () => {
+    await app.close();
+    if (saved === undefined) delete process.env.AGENCY_WORK_DATA_ACCESS;
+    else process.env.AGENCY_WORK_DATA_ACCESS = saved;
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+  const check = (body = {}, origin = app.url) => fetch(`${app.url}/api/agency/check`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin }, body: JSON.stringify(body) });
+  assert.equal((await check({}, 'https://untrusted.test')).status, 403);
+  assert.equal(checks.length, 0);
+  const disabled = await (await check()).json();
+  assert.equal(disabled.workDataAccess, 'disabled');
+  assert.deepEqual(checks[0], ['bluebird', 'msft-learn']);
+  assert.equal((await check({ AGENCY_WORK_DATA_ACCESS: 'read-only' })).status, 400);
+  assert.equal(process.env.AGENCY_WORK_DATA_ACCESS, 'disabled');
+  process.env.AGENCY_WORK_DATA_ACCESS = 'read-only';
+  const enabled = await (await check()).json();
+  assert.equal(enabled.workDataAccess, 'read-only');
+  assert.deepEqual(checks[1], ['bluebird', 'msft-learn', 'workiq', 'teams', 'calendar', 'm365-user']);
+});
+
 test('voice tool bridge ends calls locally and delegates supervisor tools', async () => {
   const events = [];
   const calls = [];

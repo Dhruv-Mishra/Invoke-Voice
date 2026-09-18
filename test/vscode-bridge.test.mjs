@@ -98,7 +98,7 @@ test('managed workspace bootstraps real isolated worktrees without publishing or
 
 test('extracts final text from Copilot and Agency completion events', () => {
   assert.equal(sessionEventText({ type: 'assistant.message', data: { content: 'Copilot done' } }), 'Copilot done');
-  assert.equal(sessionEventText({ type: 'session.task_complete', data: { summary: 'Agency done' } }), 'Agency done');
+  assert.equal(sessionEventText({ type: 'session.task_complete', data: { summary: 'Agency done', taskId: 'internal-task', sessionId: 'internal-session' } }), 'Agency done');
   assert.equal(sessionEventText({ type: 'assistant.turn_end', data: {} }), '');
 });
 
@@ -123,6 +123,11 @@ test('delegated questions retain original intent, date context and a bounded spo
   assert.match(prompt, /at most two short sentences and 320 characters/);
   assert.match(prompt, /source links, dates/);
   assert.match(prompt, /access is unavailable/);
+  for (const readOnly of [false, true]) {
+    const summaryPrompt = copilotPrompt({ ...task, readOnly, id: 'internal-task', sessionId: 'internal-session' }, area, {});
+    assert.match(summaryPrompt, /Omit internal task and session IDs from the summary/);
+    assert.doesNotMatch(summaryPrompt, /internal-task|internal-session/);
+  }
   assert.match(copilotPrompt({ ...task, turns: [{ createdAt: Date.parse('2026-09-19T12:00:00Z') }] }, area), /2026-09-19T12:00:00.000Z/);
   const recovered = copilotPrompt({ ...task, turns: [
     { state: 'dispatching', createdAt: Date.parse('2026-09-18T13:00:00Z') },
@@ -131,6 +136,18 @@ test('delegated questions retain original intent, date context and a bounded spo
   ] }, area);
   assert.match(recovered, /2026-09-18T13:00:00.000Z/);
   assert.ok(prompt.length - objective.length < 950);
+});
+
+test('research distinguishes existing supervisor tasks, consent and source failures', () => {
+  const task = { readOnly: true, objective: 'Summarize the project documentation' };
+  const area = { allowPublish: false };
+  const disabled = copilotPrompt(task, area, {});
+  assert.match(disabled, /supervisor task already exists/);
+  assert.match(disabled, /enable Agency work data in Settings, then retry this task/);
+  assert.match(disabled, /do not claim sign-in failed/);
+  const enabled = copilotPrompt(task, area, { AGENCY_WORK_DATA_ACCESS: 'read-only' });
+  assert.match(enabled, /Try the relevant tool before claiming access is unavailable/);
+  assert.doesNotMatch(enabled, /disabled by user consent/);
 });
 
 test('builds explicit Copilot and Agency start and resume commands', () => {
@@ -146,6 +163,7 @@ test('builds explicit Copilot and Agency start and resume commands', () => {
   assert.equal(agency.args.includes('workiq'), true);
   assert.ok(agency.args.includes(`--resume=${base.sessionId}`));
   assert.equal(agency.args.includes('--session-id'), false);
+  assert.equal(agency.prompt.includes(base.sessionId), false);
 });
 
 test('read-only Agency launch exposes only curated MCP reads and rejects changed consent', async () => {

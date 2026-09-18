@@ -195,12 +195,12 @@ export async function closeLocalVoice() {
 export function localConfiguration(env = process.env) {
   const paths = stackPaths(env);
   const sttProvider = localSttProvider(env);
-  const sttLabel = sttProvider === 'whisper' ? 'Whisper Small INT8' : 'Moonshine Tiny streaming';
   const whisperModelDir = paths.whisperDir;
   const crispasrBin = paths.crispasr;
   const requestedMoonshineModel = env.MOONSHINE_MODEL ? path.resolve(env.MOONSHINE_MODEL) : defaultMoonshineModel;
   const unsupportedQ8 = path.basename(requestedMoonshineModel).toLowerCase() === 'moonshine-streaming-small-q8_0.gguf';
   const moonshineModel = env.MOONSHINE_EFFECTIVE_MODEL || (existsSync(paths.moonshine) ? paths.moonshine : requestedMoonshineModel);
+  const sttLabel = sttProvider === 'whisper' ? 'Whisper Small INT8' : /^moonshine-streaming-tiny-/i.test(path.basename(moonshineModel)) ? 'Moonshine Tiny streaming' : /^moonshine-streaming-small-/i.test(path.basename(moonshineModel)) ? 'Moonshine Small streaming' : 'Moonshine custom streaming';
   const sttWarning = sttProvider === 'moonshine' && unsupportedQ8 && moonshineModel !== requestedMoonshineModel ? 'Small Q8_0 crashes CrispASR 0.8.32; using canonical Tiny Q4_K.' : null;
   const siblingTokenizer = path.join(path.dirname(moonshineModel), 'tokenizer.bin');
   const moonshineTokenizer = env.MOONSHINE_TOKENIZER || (existsSync(siblingTokenizer) ? siblingTokenizer : paths.tokenizer);

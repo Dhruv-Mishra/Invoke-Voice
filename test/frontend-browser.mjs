@@ -675,6 +675,8 @@ try {
   await visit('home');
 
   await pointerClick('#voice-options-btn');
+  assert.equal(await evaluate(() => !document.getElementById('mute-mic-opt')
+    && document.querySelector('[data-for="ptt-mode-opt"] [aria-checked="true"]').value === 'voice'), true);
   await pointerClick('#dock-route-btn');
   assert.equal(await evaluate(() => document.querySelector('[data-for="pipeline-mode"] [aria-checked="true"]').value), 'dedicated');
   assert.equal(await evaluate(() => [...document.querySelectorAll('#dedicated-pipeline [data-for] button')].every(button => button.querySelector('svg'))), true);
@@ -682,6 +684,10 @@ try {
   assert.equal(await evaluate(() => document.getElementById('dedicated-pipeline').hidden && !document.getElementById('native-pipeline').hidden), true);
   await pointerClick('[data-for="native-provider"] button[value="gemini-live"]');
   assert.equal(await evaluate(() => document.getElementById('voice-mode-select').value), 'gemini-live');
+  assert.equal(await evaluate(() => {
+    const actions = document.querySelector('#route-config-dialog .dialog-actions');
+    return getComputedStyle(actions).borderTopWidth === '0px' && getComputedStyle(actions).marginTop === '0px';
+  }), true);
   await screenshot('native-pipeline-desktop');
   await pointerClick('[data-for="pipeline-mode"] button[value="dedicated"]');
   await pointerClick('[data-for="provider-select"] button[value="openai"]');
@@ -708,6 +714,16 @@ try {
   assert.equal(await evaluate(() => document.getElementById('quiet-mode-btn').getAttribute('aria-pressed')), 'true');
   await pointerClick('#quiet-mode-btn');
 
+  await evaluate(() => { document.getElementById('provider-select').value = ''; });
+  await click('#mic-toggle-btn');
+  await waitFor(() => document.getElementById('app-dialog').open);
+  assert.equal(await evaluate(() => {
+    const dialog = document.getElementById('app-dialog');
+    return dialog.matches(':modal') && dialog.textContent.includes('Selected route is not configured.');
+  }), true);
+  await click('[data-app-dialog-accept]');
+  await choose('#provider-select', 'local');
+
   await evaluate(() => {
     window.fixtureCues = [];
     const play = HTMLMediaElement.prototype.play;
@@ -720,9 +736,10 @@ try {
   assert.equal(voiceStartRequest.model, 'fixture');
   assert.equal(await evaluate(() => document.getElementById('agent-sprite').dataset.active), 'true');
   await pointerClick('#dock-mute-btn');
-  assert.equal(await evaluate(() => document.getElementById('mute-mic-opt').checked && document.getElementById('dock-mute-btn').getAttribute('aria-pressed') === 'true'), true);
+  assert.equal(await evaluate(() => document.getElementById('dock-mute-btn').getAttribute('aria-pressed') === 'true'
+    && document.querySelector('.voice-strip').dataset.muted === 'true'), true);
   await pointerClick('#dock-mute-btn');
-  assert.equal(await evaluate(() => document.getElementById('mute-mic-opt').checked), false);
+  assert.equal(await evaluate(() => document.getElementById('dock-mute-btn').getAttribute('aria-pressed')), 'false');
   assert.equal(await evaluate(() => /jarvis-bootup/.test(window.fixtureCues.at(-1)?.source)), true);
   const meterAudio = Buffer.alloc(24000 * 2);
   for (let sample = 0; sample < 24000; sample++) meterAudio.writeInt16LE(Math.round(Math.sin(sample * 2 * Math.PI * 220 / 24000) * 4096), sample * 2);
@@ -772,12 +789,12 @@ try {
     && getComputedStyle(document.getElementById('agent-sprite'), '::before').animationName === 'speaker-ripple'), true);
   await voice({ type: 'transcript', role: 'assistant', text: 'Agent reply', partial: false });
   await pointerClick('#voice-options-btn');
-  await pointerClick('#ptt-mode-opt + .toggle-track');
+  await pointerClick('[data-for="ptt-mode-opt"] button[value="ptt"]');
   await pointerClick('#open-chat-btn');
   await typeText('#chat-input', 'Spaces remain editable during push to talk');
   await pointerClick('#close-chat-btn');
   await pointerClick('#voice-options-btn');
-  await pointerClick('#ptt-mode-opt + .toggle-track');
+  await pointerClick('[data-for="ptt-mode-opt"] button[value="voice"]');
   await pointerClick('#voice-options-btn');
   await visit('settings');
   Object.assign(fixtureTasks[1], { state: 'completed', result: '## Working changes' });
@@ -807,7 +824,13 @@ try {
   await pointerClick('.toggle-control[for="transparency-preference"] .toggle-track');
   assert.equal(await evaluate(() => document.documentElement.dataset.transparency), 'on');
   await click('#close-view-btn');
-  await click('#mic-toggle-btn');
+  await pointerClick('#voice-options-btn');
+  assert.equal(await evaluate(() => {
+    const style = getComputedStyle(document.getElementById('voice-options'));
+    return Number(style.backgroundColor.match(/[\d.]+/g).at(-1)) < 1 && style.backdropFilter !== 'none';
+  }), true);
+  await pointerClick('#voice-options-btn');
+  await click('#end-call-btn');
   assert.equal(await evaluate(() => document.getElementById('closed-caption').hidden), true);
   assert.equal(await evaluate(() => document.getElementById('mic-toggle-btn').getAttribute('aria-pressed')), 'false');
   assert.equal(await evaluate(() => document.querySelector('.voice-strip').style.getPropertyValue('--cp-voice-level')), '0');
@@ -926,7 +949,10 @@ try {
   assert.equal(voiceConnections, 2);
   assert.equal(eventConnections, stableEventConnections);
   await visit('home');
-  await click('#mic-toggle-btn');
+  await voice({ type: 'end_call' });
+  await waitFor(() => document.getElementById('agent-sprite').dataset.state === 'idle');
+  assert.equal(await evaluate(() => document.getElementById('end-call-btn').disabled
+    && document.getElementById('mic-toggle-btn').getAttribute('aria-pressed') === 'false'), true);
   console.log('Browser fixture: keyboard and reset');
   await evaluate(() => document.getElementById('settings-tab').dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true })));
   assert.equal(await evaluate(() => document.body.dataset.view), 'home');

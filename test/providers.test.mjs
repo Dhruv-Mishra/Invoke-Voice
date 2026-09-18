@@ -42,9 +42,9 @@ test('theme personas are allowlisted, short, independent of voice, and leave def
   assert.deepEqual(sessionThemeOptions({ theme: 'jarvis', themePersona: true, themeVoice: false }), { persona: 'jarvis', voiceTheme: '' });
   assert.deepEqual(sessionThemeOptions({ theme: 'baymax', themePersona: false, themeVoice: true }), { persona: '', voiceTheme: 'baymax' });
   for (const theme of ['jarvis', 'baymax']) {
-    const instructions = themedInstructions(supervisorInstructions, theme);
-    assert.ok(instructions.startsWith(supervisorInstructions));
-    assert.ok(instructions.length - supervisorInstructions.length < 90);
+    const instructions = themedInstructions(voiceInstructions, theme);
+    assert.ok(instructions.startsWith(voiceInstructions));
+    assert.ok(instructions.length - voiceInstructions.length < 90);
     const config = geminiLiveConfig({ persona: theme, voiceTheme: theme });
     assert.equal(config.systemInstruction, instructions);
     assert.equal(config.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName, themeVoicePreset(theme).gemini);
@@ -531,7 +531,8 @@ test('voice requests include supervisor capabilities and spoken output instructi
     const env = { LOCAL_LLM_URL: `http://127.0.0.1:${server.address().port}/v1`, LOCAL_LLM_MODEL: 'test-local' };
     const events = [];
     for await (const event of streamReply({ provider: 'local', profile: 'voice', messages: [{ role: 'user', content: 'Hello' }], env })) events.push(event);
-    assert.equal(requestBody.tools.length, 7);
+    assert.equal(requestBody.tools.length, 8);
+    assert.equal(requestBody.tools.at(-1).function.name, 'end_call');
     assert.equal(requestBody.max_tokens, 512);
     assert.equal(requestBody.temperature, 0.2);
     assert.equal(requestBody.cache_prompt, true);
@@ -691,7 +692,7 @@ test('local and hybrid voice execute tools before playback and retain real answe
       session.playbackDone(ended.responseId, index === 1 ? 'failed' : 'played');
     }
     assert.equal(requests.length, 7);
-    assert.ok(requests.every(request => request.tools.length === 7 && request.messages[0].content === voiceInstructions));
+    assert.ok(requests.every(request => request.tools.length === 8 && request.messages[0].content === voiceInstructions));
     assert.match(requests[1].messages[0].content, /Read fresh status, not chat history/);
     assert.match(requests[1].messages[0].content, /list_work\(query\).*get_work_status/);
     assert.ok(requests[1].messages.some(message => message.role === 'assistant' && message.content === answers[0]));

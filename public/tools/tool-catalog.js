@@ -226,7 +226,7 @@ export function createToolCatalog({
       event.preventDefault();
       if (!selectedTool) return;
       const name = selectedTool.function.name;
-      if (actionTools.has(name) && !confirm(`Run ${name}? This tool can change local session state or open VS Code.`)) return;
+      if (actionTools.has(name) && !await confirm(`Run ${name}? This tool can change local session state or open VS Code.`)) return;
       const args = {};
       for (const [key, value] of getFormEntries(toolForm)) {
         if (typeof value !== 'string' || value.trim()) args[key] = typeof value === 'string' ? value.trim() : value;

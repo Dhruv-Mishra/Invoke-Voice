@@ -947,6 +947,20 @@
     </form>
   </dialog>
 
+  <dialog id="app-dialog" class="app-dialog" aria-labelledby="app-dialog-title" aria-describedby="app-dialog-message">
+    <form method="dialog">
+      <div class="dialog-header">
+        <span id="app-dialog-title" data-app-dialog-title>Notice</span>
+        <button type="submit" value="cancel" class="btn btn-icon" aria-label="Close dialog" title="Close dialog"><i data-lucide="x"></i></button>
+      </div>
+      <p id="app-dialog-message" class="app-dialog-message" data-app-dialog-message></p>
+      <div class="dialog-actions">
+        <button type="submit" value="cancel" class="btn" data-app-dialog-cancel>Cancel</button>
+        <button type="submit" value="confirm" class="btn btn-accent" data-app-dialog-accept>OK</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="route-config-dialog" aria-labelledby="route-config-title">
     <form id="route-config-form" method="dialog">
       <div class="dialog-header">
@@ -995,21 +1009,15 @@
     <button class="btn btn-accent" id="mic-toggle-btn" type="button" aria-label="Connect or Disconnect Microphone" title="Connect microphone">
       <i data-lucide="mic"></i><span id="mic-btn-label">Connect Mic</span>
     </button>
-    <button class="dock-utility" id="interrupt-btn" type="button" disabled aria-label="Interrupt speech" title="Stop assistant speech"><i data-lucide="square"></i></button>
+    <button class="dock-utility" id="end-call-btn" type="button" disabled aria-label="End call" title="End call"><i data-lucide="phone-off"></i></button>
     <button type="button" class="dock-utility" id="open-chat-btn" aria-label="Open conversation" title="Type a message" aria-haspopup="dialog" aria-controls="conversation-dialog"><i data-lucide="keyboard"></i></button>
     <div class="voice-options" id="voice-options" hidden>
     <h2>Voice options</h2>
     <p class="voice-route-status" id="voice-route-status" role="status"></p>
-    <div class="voice-strip-toggles">
-      <label class="toggle-control" title="Mute microphone input">
-        <input type="checkbox" id="mute-mic-opt" aria-label="Mute microphone">
-        <span class="toggle-track" aria-hidden="true"></span><span>Mute</span>
-      </label>
-      <label class="toggle-control" title="Hold the button or Spacebar while speaking">
-        <input type="checkbox" id="ptt-mode-opt" aria-label="Enable Push To Talk mode">
-        <span class="toggle-track" aria-hidden="true"></span><span>PTT</span>
-      </label>
-    </div>
+    <select id="ptt-mode-opt" data-pillbar aria-label="Speech input mode">
+      <option value="voice" selected>Voice</option>
+      <option value="ptt">Push to talk</option>
+    </select>
     <div class="voice-options-actions">
       <button class="btn btn-icon" id="dock-route-btn" type="button" title="Voice &amp; model" aria-label="Configure voice and model"><i data-lucide="settings"></i></button>
       <button class="btn btn-icon" id="quiet-mode-btn" type="button" aria-label="Toggle Quiet Mode" aria-pressed="false" title="Block proactive spoken notifications">

@@ -18,6 +18,16 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const publicDir = path.join(root, 'public');
 const frontendDir = path.join(root, 'dist');
 
+export function createVoiceToolCaller(supervisor, send) {
+  return (name, args, context) => {
+    if (name === 'end_call') {
+      send({ type: 'end_call' });
+      return { ended: true };
+    }
+    return supervisor.callTool(name, args, context);
+  };
+}
+
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -272,6 +282,7 @@ export async function startSupervisor(options = {}) {
     let starting = false;
     let cancelled = false;
     const send = event => { if (socket.readyState === 1) socket.send(JSON.stringify(event)); };
+    const callVoiceTool = createVoiceToolCaller(supervisor, send);
     socket.on('message', async raw => {
       try {
         const message = JSON.parse(raw);
@@ -283,7 +294,7 @@ export async function startSupervisor(options = {}) {
           voiceOwner = socket;
           starting = true;
           cancelled = false;
-          const options = { mode: message.mode, provider: message.provider, sttProvider: message.sttProvider, ttsProvider: message.ttsProvider, model: message.model, allowCloud: message.allowCloud === true, ...sessionThemeOptions(message), send, callTool: supervisor.callTool.bind(supervisor) };
+          const options = { mode: message.mode, provider: message.provider, sttProvider: message.sttProvider, ttsProvider: message.ttsProvider, model: message.model, allowCloud: message.allowCloud === true, ...sessionThemeOptions(message), send, callTool: callVoiceTool };
           session = message.mode === 'local' ? await createLocalVoice(options) : await createRealtimeVoice(options);
           starting = false;
           if (cancelled || socket.readyState !== 1) { session.close(); if (voiceOwner === socket) voiceOwner = null; }

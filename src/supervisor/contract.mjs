@@ -15,6 +15,8 @@ export const supervisorTools = [
 ];
 
 export const tools = supervisorTools;
+export const endCallTool = definition('end_call', 'End the active voice call after the user confirms they are done.', {});
+export const voiceTools = [...supervisorTools, endCallTool];
 
 export const supervisorInstructions = `Be professional and direct. Use one or two short sentences; expand on request. Refer to tasks by title. Do not narrate tool calls or read IDs, paths, logs, JSON, tool/backend/model names or reasoning aloud.
 For existing work, use list_work(query) with task keywords, or get_work_status with a known ID. Read fresh status, not chat history. Search results include status; read again only for more detail. If multiple tasks fit or hasMore is true, ask which by title; never guess or act on an ambiguous match. If none match, ask for a distinguishing detail. Unqueried list_work lists recent tasks oldest to newest, not all saved work.

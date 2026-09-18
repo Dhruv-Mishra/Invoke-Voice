@@ -10,10 +10,26 @@ import { ensureLocalLLM, localLlmArguments, parseStartupArgs } from '../scripts/
 import { createRuntimeConfig, localThreadDefault } from '../src/runtime-config.mjs';
 import { voiceInstructions } from '../src/llm.mjs';
 import { tools } from '../src/supervisor/contract.mjs';
-import { startSupervisor } from '../src/server.mjs';
+import { createVoiceToolCaller, startSupervisor } from '../src/server.mjs';
 import { Supervisor } from '../src/supervisor.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
+
+test('voice tool bridge ends calls locally and delegates supervisor tools', async () => {
+  const events = [];
+  const calls = [];
+  const callTool = createVoiceToolCaller({
+    callTool(name, args, context) {
+      calls.push({ name, args, context });
+      return { delegated: true };
+    },
+  }, event => events.push(event));
+
+  assert.deepEqual(await callTool('end_call', {}, { requestId: 'voice-end' }), { ended: true });
+  assert.deepEqual(events, [{ type: 'end_call' }]);
+  assert.deepEqual(await callTool('list_work', { query: 'docs' }, { requestId: 'voice-list' }), { delegated: true });
+  assert.deepEqual(calls, [{ name: 'list_work', args: { query: 'docs' }, context: { requestId: 'voice-list' } }]);
+});
 
 test('local runtime defaults match displayed settings and honor explicit overrides', () => {
   const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-runtime-defaults-'));

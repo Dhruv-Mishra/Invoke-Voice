@@ -9,6 +9,7 @@ import { createVoiceCaptionBridge } from './captions/voice-bridge.js';
 import { createToolCatalog } from './tools/tool-catalog.js';
 import { createLocalSetupController } from './setup/local-setup.js';
 import { createSettingsRenderer } from './settings/renderer.js';
+import { createAppDialog } from './app-dialog.js';
 
 let appConfig = null;
 let appState = { areas: [], tasks: [] };
@@ -76,7 +77,6 @@ function readPipelinePreference() {
 const modelName = document.getElementById('model-input');
 const voiceModeSelect = document.getElementById('voice-mode-select');
 const allowCloudOpt = document.getElementById('allow-cloud-opt');
-const muteMicOpt = document.getElementById('mute-mic-opt');
 const dockMuteBtn = document.getElementById('dock-mute-btn');
 const voiceDock = document.querySelector('.voice-strip');
 const pttModeOpt = document.getElementById('ptt-mode-opt');
@@ -86,13 +86,16 @@ const micToggleBtn = document.getElementById('mic-toggle-btn');
 const micBtnLabel = document.getElementById('mic-btn-label');
 const pttBtn = document.getElementById('ptt-btn');
 const pttBtnLabel = document.getElementById('ptt-btn-label');
-const interruptBtn = document.getElementById('interrupt-btn');
+const endCallBtn = document.getElementById('end-call-btn');
 const routeStatusBadge = document.getElementById('route-status-badge');
 const sessionResetNotice = document.getElementById('session-reset-notice');
 const agentSprite = document.getElementById('agent-sprite');
 const routeConfigBtn = document.getElementById('route-config-btn');
 const routeConfigDialog = document.getElementById('route-config-dialog');
 const routeConfigClose = document.getElementById('route-config-close');
+const appDialog = createAppDialog(document.getElementById('app-dialog'));
+const showAppAlert = (message, heading = 'Notice') => appDialog.alert(message, heading);
+const showAppConfirm = (message, options) => appDialog.confirm(message, options);
 
 const areasList = document.getElementById('areas-list');
 const areasDisclosure = document.getElementById('areas-disclosure');
@@ -828,7 +831,7 @@ async function startVoiceSession() {
   const themeOptions = window.getThemeSessionOptions?.() || {};
   const route = getSelectedRouteStatus();
   if (!route.configured) {
-    alert('Selected route is not configured.');
+    await showAppAlert('Selected route is not configured.');
     return;
   }
 
@@ -841,7 +844,7 @@ async function startVoiceSession() {
   const effectiveModel = isIntegrated ? (vm?.model || textModel) : textModel;
 
   if (mode === 'local' && [provider, sttProvider.value, ttsProvider.value].some(selected => selected !== 'local') && !allowCloud) {
-    const confirmHybrid = confirm('The selected cloud stages receive microphone audio, transcripts or response text. Allow processing by your selected OpenAI and Google providers?');
+    const confirmHybrid = await showAppConfirm('The selected cloud stages receive microphone audio, transcripts or response text. Allow processing by your selected OpenAI and Google providers?', { heading: 'Allow cloud processing?', acceptLabel: 'Allow' });
     if (confirmHybrid) {
       allowCloudOpt.checked = true;
     } else {
@@ -958,7 +961,7 @@ async function startVoiceSession() {
           micToggleBtn.disabled = false;
           micToggleBtn.className = 'btn btn-danger';
           pttBtn.disabled = false;
-          interruptBtn.disabled = false;
+          endCallBtn.disabled = false;
           routeStatusBadge.textContent = 'Voice Live';
           routeStatusBadge.className = 'badge badge-success';
           setAgentState('listening');
@@ -984,6 +987,8 @@ async function startVoiceSession() {
           setAgentState('listening');
           clearPlayback();
           appendMessage('system', '[Speech interrupted]');
+        } else if (data.type === 'end_call') {
+          stopVoiceSession();
         } else if (data.type === 'tool') {
           showToolActivity();
         } else if (data.type === 'state') {
@@ -1020,7 +1025,7 @@ async function startVoiceSession() {
     if (sessionAudioContext && sessionAudioContext !== audioContext) await sessionAudioContext.close().catch(() => {});
     if (sessionToken !== currentSessionToken) return;
     console.error('Failed to start voice', err);
-    alert(`Could not start microphone: ${err.message}`);
+    await showAppAlert(`Could not start microphone: ${err.message}`, 'Microphone unavailable');
     stopVoiceSession();
   }
 }
@@ -1074,16 +1079,16 @@ function stopVoiceSession() {
   micBtnLabel.textContent = 'Connect Mic';
   micToggleBtn.className = 'btn btn-accent';
   pttBtn.disabled = true;
-  interruptBtn.disabled = true;
+  endCallBtn.disabled = true;
   updateRouteReadiness();
 }
 
-// Push to Talk, Mute & Interrupt
-muteMicOpt.addEventListener('change', () => {
-  if (muteMicOpt.checked && isPttHeld) {
+// Push to Talk, Mute & End Call
+function setMicrophoneMuted(muted) {
+  if (muted && isPttHeld) {
     endPttHold();
   }
-  isMuted = muteMicOpt.checked;
+  isMuted = muted;
   dockMuteBtn.setAttribute('aria-pressed', String(isMuted));
   dockMuteBtn.setAttribute('aria-label', isMuted ? 'Unmute microphone' : 'Mute microphone');
   dockMuteBtn.title = isMuted ? 'Unmute microphone' : 'Mute microphone';
@@ -1091,11 +1096,10 @@ muteMicOpt.addEventListener('change', () => {
   capturedLevel = 0;
   for (const track of mediaStream?.getAudioTracks() || []) track.enabled = !isMuted;
   workletNode?.port.postMessage({ type: 'reset' });
-});
+}
 
 dockMuteBtn.addEventListener('click', () => {
-  muteMicOpt.checked = !muteMicOpt.checked;
-  muteMicOpt.dispatchEvent(new Event('change', { bubbles: true }));
+  setMicrophoneMuted(!isMuted);
 });
 
 function syncVoiceMeter() {
@@ -1122,7 +1126,7 @@ function syncVoiceMeter() {
 document.addEventListener('visibilitychange', syncVoiceMeter);
 
 pttModeOpt.addEventListener('change', () => {
-  isPttMode = pttModeOpt.checked;
+  isPttMode = pttModeOpt.value === 'ptt';
   if (isPttMode) {
     pttBtnLabel.textContent = 'Push to Talk';
     pttBtn.title = 'Hold while speaking or hold Spacebar, release to commit';
@@ -1182,13 +1186,7 @@ window.addEventListener('keyup', (e) => {
 window.addEventListener('blur', endPttHold);
 document.addEventListener('visibilitychange', () => { if (document.hidden) endPttHold(); });
 
-interruptBtn.addEventListener('click', () => {
-  voiceCaptions.clear();
-  clearPlayback();
-  if (voiceSocket && voiceSocket.readyState === WebSocket.OPEN) {
-    voiceSocket.send(JSON.stringify({ type: 'interrupt' }));
-  }
-});
+endCallBtn.addEventListener('click', stopVoiceSession);
 
 micToggleBtn.addEventListener('click', () => {
   if (isVoiceStarting || voiceSocket || isCapturing) {
@@ -1392,15 +1390,22 @@ if (settingsForm) {
 if (window.voiceSupervisorUpdates && applicationUpdate && applicationUpdateBtn) {
   applicationUpdate.hidden = false;
   let updateAvailable = false;
+  let availableVersion = '';
   applicationUpdateBtn.addEventListener('click', async () => {
     applicationUpdateBtn.disabled = true;
-    applicationUpdateStatus.textContent = updateAvailable ? 'Downloading and verifying the update...' : 'Checking GitHub Releases...';
     try {
+      if (updateAvailable) {
+        const install = await showAppConfirm(`Install Voice Work Supervisor ${availableVersion}?`, { heading: 'Install update', acceptLabel: 'Install' });
+        if (!install) {
+          applicationUpdateStatus.textContent = 'Update installation cancelled.';
+          return;
+        }
+      }
+      applicationUpdateStatus.textContent = updateAvailable ? 'Downloading and verifying the update...' : 'Checking GitHub Releases...';
       const result = updateAvailable ? await window.voiceSupervisorUpdates.install() : await window.voiceSupervisorUpdates.check();
       if (result?.error) throw new Error(result.error);
       if (updateAvailable) {
-        if (result?.cancelled) applicationUpdateStatus.textContent = 'Update installation cancelled.';
-        else if (result?.started) applicationUpdateStatus.textContent = 'Verified installer started. The application will close.';
+        if (result?.started) applicationUpdateStatus.textContent = 'Verified installer started. The application will close.';
         return;
       }
       if (!result?.supported) {
@@ -1409,6 +1414,7 @@ if (window.voiceSupervisorUpdates && applicationUpdate && applicationUpdateBtn) 
       }
       if (result.available) {
         updateAvailable = true;
+        availableVersion = result.latestVersion;
         applicationUpdateStatus.textContent = `Version ${result.latestVersion} is available. Installed version: ${result.currentVersion}.`;
         applicationUpdateLabel.textContent = 'Install update';
         applicationUpdateBtn.classList.add('btn-accent');
@@ -1705,7 +1711,7 @@ if (areaDeleteBtn) {
     const areaId = areaIdInput.value;
     if (!areaId) return;
     const name = areaNameInput.value || 'this work area';
-    if (!confirm(`Delete work area "${name}"?`)) return;
+    if (!await showAppConfirm(`Delete work area "${name}"?`, { heading: 'Delete work area?', acceptLabel: 'Delete', danger: true })) return;
 
     try {
       const res = await fetch(`/api/areas/${encodeURIComponent(areaId)}`, {
@@ -1718,7 +1724,7 @@ if (areaDeleteBtn) {
       areaDialog.close();
       await loadState();
     } catch (err) {
-      alert(`Failed to delete area: ${err.message}`);
+      await showAppAlert(`Failed to delete area: ${err.message}`, 'Could not delete work area');
     }
   });
 }
@@ -1779,7 +1785,7 @@ areaForm.addEventListener('submit', async (e) => {
     areaDialog.close();
     await loadState();
   } catch (err) {
-    alert(`Failed to save area: ${err.message}`);
+    await showAppAlert(`Failed to save area: ${err.message}`, 'Could not save work area');
   }
 });
 
@@ -1800,7 +1806,7 @@ function isTaskResumable(task) {
 }
 
 async function deleteTask(taskId, taskTitle = 'task') {
-  if (!confirm(`Delete task "${taskTitle}"?`)) return;
+  if (!await showAppConfirm(`Delete task "${taskTitle}"?`, { heading: 'Delete task?', acceptLabel: 'Delete', danger: true })) return;
   try {
     const res = await fetch(`/api/tasks/${encodeURIComponent(taskId)}`, {
       method: 'DELETE'
@@ -1812,7 +1818,7 @@ async function deleteTask(taskId, taskTitle = 'task') {
     if (taskDetailDialog?.open) taskDetailDialog.close();
     await loadState();
   } catch (err) {
-    alert(`Failed to delete task: ${err.message}`);
+    await showAppAlert(`Failed to delete task: ${err.message}`, 'Could not delete task');
   }
 }
 
@@ -2216,7 +2222,7 @@ if (continueThreadForm) {
       appendMessage('system', `Follow-up sent for task "${taskName}". State: ${receipt.state || 'dispatching'}.`);
       await loadState();
     } catch (err) {
-      alert(`Failed to send follow-up message: ${err.message}`);
+      await showAppAlert(`Failed to send follow-up message: ${err.message}`, 'Could not send message');
     } finally {
       if (continueSendBtn) continueSendBtn.disabled = false;
     }
@@ -2242,6 +2248,7 @@ const toolCatalog = createToolCatalog({
   updateIcons,
   loadState,
   callTool: callSupervisorTool,
+  confirm: message => showAppConfirm(message, { heading: 'Run tool?', acceptLabel: 'Run' }),
 });
 
 async function openWorktree(taskId) {
@@ -2249,7 +2256,7 @@ async function openWorktree(taskId) {
     await callSupervisorTool('open_work', { taskId });
     appendMessage('system', `Opened worktree for task ${taskId.slice(0, 8)} in a new window.`);
   } catch (err) {
-    alert(`Could not open worktree: ${err.message}`);
+    await showAppAlert(`Could not open worktree: ${err.message}`);
   }
 }
 
@@ -2260,7 +2267,7 @@ async function queryTaskStatus(taskId) {
     appendMessage('tool', `Status [${taskId.slice(0, 8)}]: ${result.state}${result.stale ? ' (stale)' : ''}${detail ? ` — ${detail}` : ''}`);
     await loadState();
   } catch (err) {
-    alert(`Could not get status: ${err.message}`);
+    await showAppAlert(`Could not get status: ${err.message}`);
   }
 }
 
@@ -2338,7 +2345,7 @@ if (taskAreaSelect) {
 
 btnNewTask.addEventListener('click', async () => {
   if (!appState.areas || appState.areas.length === 0) {
-    alert('Please register at least one Work Area before dispatching a task.');
+    await showAppAlert('Please register at least one Work Area before dispatching a task.');
     return;
   }
   populateTaskAreaChoices();
@@ -2383,7 +2390,7 @@ newTaskForm.addEventListener('submit', async (e) => {
   const agent = taskAgentSelect?.value || 'agent';
 
   if (!areaId && !appState.settings?.defaultAreaId) {
-    alert('Please select a work area or configure a default work area in Settings.');
+    await showAppAlert('Please select a work area or configure a default work area in Settings.');
     return;
   }
   if (!objective) return;
@@ -2396,7 +2403,7 @@ newTaskForm.addEventListener('submit', async (e) => {
     appendMessage('system', `Dispatched task [${result.taskId}]: state=${result.state}`);
     await loadState();
   } catch (err) {
-    alert(`Failed to dispatch task: ${err.message}`);
+    await showAppAlert(`Failed to dispatch task: ${err.message}`, 'Could not start task');
   }
 });
 

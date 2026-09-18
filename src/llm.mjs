@@ -1,18 +1,11 @@
 import { createHash } from 'node:crypto';
-import { tools as supervisorTools, supervisorInstructions } from './supervisor/contract.mjs';
+import { tools as supervisorTools, supervisorInstructions, voiceTools } from './supervisor/contract.mjs';
 import { themedInstructions } from './theme-session.mjs';
 import { assertLoopback, providerProfiles, resolveEndpoint } from './llm/provider-config.mjs';
 
 export { assertLoopback, providerProfiles, resolveEndpoint };
 
-const anthropicTools = supervisorTools.map(tool => ({
-  name: tool.function.name,
-  description: tool.function.description,
-  input_schema: tool.function.parameters,
-}));
-
-const allowedToolNames = new Set(supervisorTools.map(t => t.function?.name || t.name).filter(Boolean));
-export const voiceInstructions = `${supervisorInstructions} Respond in brief, natural spoken sentences without markdown or routing prefixes.`;
+export const voiceInstructions = `${supervisorInstructions} Respond in brief, natural spoken sentences without markdown or routing prefixes. If the user says the request is fulfilled or they are done, ask once to confirm ending; after confirmation call end_call.`;
 
 class ReasoningFilter {
   constructor() {
@@ -188,10 +181,10 @@ function localContextTokens(env) {
   return Math.floor(context / parallel);
 }
 
-function fitLocalMessages(messages, instructions, contextTokens) {
+function fitLocalMessages(messages, instructions, contextTokens, requestTools) {
   const fitted = [...messages];
   const fits = () => {
-    const prompt = { tools: supervisorTools, messages: [{ role: 'system', content: instructions }, ...fitted] };
+    const prompt = { tools: requestTools, messages: [{ role: 'system', content: instructions }, ...fitted] };
     const estimatedTokens = Math.ceil(Buffer.byteLength(JSON.stringify(prompt), 'utf8') / 3) + prompt.messages.length * 16;
     return estimatedTokens + 512 + 256 <= contextTokens;
   };
@@ -287,6 +280,9 @@ export async function* streamReply({
   const reasoningFilter = new ReasoningFilter();
   const executedCalls = new Map();
   const isAnthropic = provider === 'anthropic';
+  const requestTools = profile === 'voice' ? voiceTools : supervisorTools;
+  const anthropicTools = requestTools.map(tool => ({ name: tool.function.name, description: tool.function.description, input_schema: tool.function.parameters }));
+  const allowedToolNames = new Set(requestTools.map(tool => tool.function.name));
   const instructions = themedInstructions(profile === 'voice' ? voiceInstructions : supervisorInstructions, persona);
   const contextTokens = provider === 'local' ? localContextTokens(env) : null;
   let workingMessages = prepareMessages(messages, provider === 'local'
@@ -296,7 +292,7 @@ export async function* streamReply({
 
   for (let round = 0; round < 4; round++) {
     if (signal?.aborted) return;
-    if (provider === 'local') workingMessages = fitLocalMessages(workingMessages, instructions, contextTokens);
+    if (provider === 'local') workingMessages = fitLocalMessages(workingMessages, instructions, contextTokens, requestTools);
     const fetchSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(60000)]) : AbortSignal.timeout(60000);
 
     let body;
@@ -315,7 +311,7 @@ export async function* streamReply({
         messages: [{ role: 'system', content: instructions }, ...workingMessages.filter(m => m.role !== 'system')],
         stream: true,
         max_tokens: provider === 'local' || profile === 'voice' ? 512 : 1024,
-        tools: supervisorTools,
+        tools: requestTools,
       };
       if (provider === 'local') {
         body.chat_template_kwargs = { enable_thinking: false };

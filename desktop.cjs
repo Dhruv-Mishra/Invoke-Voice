@@ -64,17 +64,6 @@ ipcMain.handle('updates:install', async event => {
   if (!trustedRenderer(event) || !app.isPackaged) return { started: false, error: 'Updates can be installed only from the installed desktop application.' };
   if (installingUpdate) return { started: false, error: 'An update is already being prepared.' };
   if (!pendingUpdate?.available) return { started: false, error: 'Check for updates before installing.' };
-  const confirmation = await dialog.showMessageBox(mainWindow, {
-    type: 'question',
-    title: 'Install application update',
-    message: `Install Voice Work Supervisor ${pendingUpdate.version}?`,
-    detail: 'The installer will replace the current per-user installation and restart can be done after setup completes.',
-    buttons: ['Install', 'Cancel'],
-    defaultId: 0,
-    cancelId: 1,
-    noLink: true,
-  });
-  if (confirmation.response !== 0) return { started: false, cancelled: true };
   installingUpdate = true;
   try {
     const installer = await downloadUpdate(pendingUpdate, path.join(app.getPath('temp'), 'VoiceSupervisor', 'updates'));

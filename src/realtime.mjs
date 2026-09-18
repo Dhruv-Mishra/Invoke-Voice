@@ -1,8 +1,8 @@
 import { Behavior, FunctionResponseScheduling, GoogleGenAI, Modality } from '@google/genai';
 import WebSocket from 'ws';
 import { randomUUID } from 'node:crypto';
-import { tools, supervisorInstructions } from './supervisor/contract.mjs';
-import { compactToolResult } from './llm.mjs';
+import { voiceTools } from './supervisor/contract.mjs';
+import { compactToolResult, voiceInstructions } from './llm.mjs';
 import { themedInstructions, themeVoicePreset } from './theme-session.mjs';
 
 export const DEFAULT_GEMINI_LIVE_MODEL = 'gemini-3.8-live';
@@ -11,10 +11,10 @@ export function geminiLiveConfig({ persona = '', voiceTheme = '' } = {}) {
   const voice = themeVoicePreset(voiceTheme);
   return {
     responseModalities: [Modality.AUDIO],
-    systemInstruction: themedInstructions(supervisorInstructions, persona),
+    systemInstruction: themedInstructions(voiceInstructions, persona),
     ...(voice ? { speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice.gemini } } } } : {}),
     inputAudioTranscription: {}, outputAudioTranscription: {},
-    tools: [{ functionDeclarations: tools.map(({ function: tool }) => ({ name: tool.name, description: tool.description, parametersJsonSchema: tool.parameters, behavior: Behavior.NON_BLOCKING })) }],
+    tools: [{ functionDeclarations: voiceTools.map(({ function: tool }) => ({ name: tool.name, description: tool.description, parametersJsonSchema: tool.parameters, behavior: Behavior.NON_BLOCKING })) }],
   };
 }
 
@@ -161,7 +161,7 @@ export async function createRealtimeVoice({ mode, send, callTool, persona = '', 
   });
   socket.on('error', () => send({ type: 'error', message: 'OpenAI Realtime connection error', fatal: true }));
   socket.on('close', () => { if (!closed) send({ type: 'error', message: 'OpenAI Realtime disconnected', fatal: true }); });
-  write({ type: 'session.update', session: { type: 'realtime', instructions: themedInstructions(supervisorInstructions, persona), output_modalities: ['audio'], tools: tools.map(({ function: tool }) => ({ type: 'function', ...tool })), audio: { input: { format: { type: 'audio/pcm', rate: 24000 }, transcription: { model: 'gpt-4o-mini-transcribe' }, turn_detection: { type: 'server_vad' } }, output: { format: { type: 'audio/pcm', rate: 24000 }, voice: themeVoicePreset(voiceTheme)?.openai || 'marin' } } } });
+  write({ type: 'session.update', session: { type: 'realtime', instructions: themedInstructions(voiceInstructions, persona), output_modalities: ['audio'], tools: voiceTools.map(({ function: tool }) => ({ type: 'function', ...tool })), audio: { input: { format: { type: 'audio/pcm', rate: 24000 }, transcription: { model: 'gpt-4o-mini-transcribe' }, turn_detection: { type: 'server_vad' } }, output: { format: { type: 'audio/pcm', rate: 24000 }, voice: themeVoicePreset(voiceTheme)?.openai || 'marin' } } } });
   return {
     audio(data) {
       const input = Buffer.from(data, 'base64');

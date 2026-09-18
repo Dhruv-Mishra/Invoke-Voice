@@ -270,7 +270,7 @@
     .btn {
       min-height: 44px; padding: 10px 16px; border: 1px solid var(--cp-border); border-radius: var(--cp-radius-control); background: var(--cp-surface);
       max-width: 100%; color: var(--cp-text); font: inherit; font-size: var(--cp-type-sm); font-weight: 400; cursor: pointer; display: inline-flex;
-      align-items: center; justify-content: center; gap: 8px; white-space: normal; overflow-wrap: anywhere;
+      align-items: center; justify-content: center; gap: 8px; white-space: normal; overflow-wrap: anywhere; text-decoration: none;
     }
     .btn:hover:not(:disabled) { background: var(--cp-surface-soft); border-color: var(--cp-border-strong); }
     .btn:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -783,10 +783,17 @@
         </div>
       </form>
 
-      <details class="settings-section config-section">
+      <details class="settings-section config-section" id="integrations-section">
         <summary class="settings-section-title"><i data-lucide="plus-circle" aria-hidden="true"></i>Integrations</summary>
-        <p class="field-hint">Teams MCP starts automatically when Agency is installed. Sign in to Agency with your work account. For Teams and calendar research, set Private work sources to Read-only, then Save config.</p>
-        <div class="utility-toolbar"><button type="button" class="btn" data-private-work-settings><i data-lucide="settings"></i>Private work sources</button><a href="https://aka.ms/agency" target="_blank" rel="noopener noreferrer">Agency setup</a></div>
+        <p class="field-hint">Install Agency and sign in with your work account. Invoke launches the Teams MCP proxy on app startup; installing Agency alone does not start it. Check connections starts or retries the proxies.</p>
+        <div class="utility-toolbar"><a class="btn" href="https://aka.ms/agency" target="_blank" rel="noopener noreferrer"><i data-lucide="external-link" aria-hidden="true"></i>Install / sign in to Agency</a></div>
+        <form id="private-work-form">
+          <div id="private-work-fields" class="config-fields"></div>
+          <div class="settings-actions">
+            <span id="private-work-feedback" class="settings-feedback" role="status" aria-live="polite"></span>
+            <button type="submit" class="btn btn-accent" id="private-work-save-btn"><i data-lucide="save" aria-hidden="true"></i>Save access</button>
+          </div>
+        </form>
         <div class="settings-actions">
           <span id="agency-check-feedback" class="settings-feedback" role="status" aria-live="polite"></span>
           <button type="button" class="btn" id="agency-check-btn"><i data-lucide="refresh-cw" aria-hidden="true"></i>Check connections</button>
@@ -958,6 +965,7 @@
         <i data-lucide="trash-2"></i>
         <span>Delete Task</span>
       </button>
+      <button type="button" class="btn btn-danger" id="detail-cancel-task-btn" style="display: none;" title="Stop task and discard queued messages"><i data-lucide="square" aria-hidden="true"></i>Stop task</button>
       <button type="button" class="btn btn-accent" id="detail-continue-task-btn" style="display: none;">
         <i data-lucide="message-square-plus"></i>
         <span>Continue</span>

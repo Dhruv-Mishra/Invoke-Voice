@@ -32,7 +32,7 @@ Verified files are reused. Partial or mismatched downloads are never reported re
 
 Older configurations can still select the larger Moonshine Small model. In **Settings > Providers & keys > Local speech**, clear **Moonshine model path** to select managed Tiny, save, and restart. This overrides an old `MOONSHINE_MODEL` value without editing `.env` or replacing a custom model. Run consented local setup if Tiny is not installed. The portable CPU runtime and CPU-scaled threads remain the defaults; target-device latency and recognition accuracy vary.
 
-Local generation disables thinking both in the request (`enable_thinking: false`) and managed llama.cpp startup (`--reasoning off`). Warm-up uses the same nine-tool voice schema as live calls. Prompt caching, a 4096-token context and one slot remain the defaults. Kokoro now defaults to at most eight threads, leaving one logical CPU available; explicit `KOKORO_THREADS`/`LOCAL_THREADS` overrides win. Existing saved settings are never silently retuned. Streaming chat rendering is coalesced to one update per animation frame.
+Local generation disables thinking both in the request (`enable_thinking: false`) and managed llama.cpp startup (`--reasoning off`). Warm-up uses the same voice tool schema as live calls. Prompt caching, a 4096-token context and one slot remain the defaults. Kokoro now defaults to at most eight threads, leaving one logical CPU available; explicit `KOKORO_THREADS`/`LOCAL_THREADS` overrides win. Existing saved settings are never silently retuned. Streaming chat rendering is coalesced to one update per animation frame.
 
 Ling supports hybrid thinking, but producing reasoning tokens delays the first answer and consumes the same local compute budget. Invoke keeps it off for the short voice coordinator; complex work remains delegated to the existing agents. Hiding reasoning text alone would not eliminate that generation cost.
 
@@ -59,13 +59,17 @@ Pins and checksums live in [scripts/models.mjs](../scripts/models.mjs). Python i
 
 Fresh installations default to Agency; existing saved choices remain unchanged. Coding sessions run in isolated worktrees and may use the Agency MCPs available to the signed-in client.
 
+Invoke launches Agency with a task-local `--profile-only` profile. This excludes ambient global Copilot MCP sources, whose server names may be incompatible with the installed CLI, without editing the user's MCP configuration. Coding sessions retain explicitly configured Invoke MCPs and repository `.github/mcp.json` or `.mcp.json`; research retains its restricted read profile. Personal/global MCPs and implicit profile plugins are not automatically inherited.
+
 Read-only questions always use Agency. Public Microsoft Learn access is available by default. To enable Teams and calendar:
 
 1. Install and sign in to [Agency](https://aka.ms/agency) with your work account.
-2. Open **Settings > Integrations > Private work sources**, choose **Read-only**, then **Save config**. This opens **Providers & keys > Coding tools > Private work sources** (`AGENCY_WORK_DATA_ACCESS=read-only`).
-3. Return to **Integrations > Check connections**. If sign-in fails, repair it in Agency, then retry.
+2. Open **Settings > Integrations > Private work sources**, choose **Read-only**, then **Save access**. This is Invoke's saved research permission (`AGENCY_WORK_DATA_ACCESS=read-only`), not an Agency setting or a Microsoft 365 tenant authorization grant.
+3. Run **Check connections** in the same section. If sign-in fails, repair it in Agency, then retry.
 
-The app starts its Teams MCP connection automatically; private research consent is never enabled on startup. It permits a fixed read-only set for WorkIQ, Teams, calendar, and people; WorkIQ `ask`, shell, filesystem, URL, repository, and mutation tools are excluded from the research profile.
+Saving access applies immediately to the next research task or follow-up; no restart is needed. An already-running worker keeps its launch-time permissions, so stop it and retry or send a follow-up when it finishes.
+
+Installing Agency alone does not start Teams MCP. Invoke's existing startup launcher explicitly runs `agency mcp --transport http --port 0 teams` (and corresponding WorkIQ/Bluebird commands), reuses the resulting loopback connections, and closes its owned proxies on exit. No separate scheduled task or global MCP configuration is needed. Calendar and people proxies start on demand or during enabled research checks. For manual STDIO clients, Agency exposes `agency mcp teams`; it stays running until the client disconnects. Private research consent is never enabled on startup. It permits a fixed read-only set for WorkIQ, Teams, calendar, and people; WorkIQ `ask`, shell, filesystem, URL, repository, and mutation tools are excluded from the research profile.
 
 Install and sign in to [Agency](https://aka.ms/agency), or set its executable in **Coding tools**. Save the work-data choice, then use **Settings > Integrations > Check connections**. Checks read tool catalogs only, report missing tools or sign-in/connectivity failures, and never enable private access themselves. Failed proxies retry on the next attempt. Follow-ups refresh the restricted profile from current consent and retain the same task/session, so an access repair does not require duplicate work. A supervisor research task already exists before its worker starts; its read-only boundary prevents external mutations, not local task creation.
 
@@ -80,14 +84,19 @@ Important boundaries:
 
 `send_work_message` queues up to ten messages for an active task and resumes the same session in FIFO order. Failure, shutdown, or restart pauses the queue. A corrective follow-up can resume it; deleting an inactive task discards its pending queue.
 
+`cancel_work(taskId)` and the task Stop controls abort that task's preparation or owned worker process, cancel all queued follow-ups, and retain worktrees and history. State stays `cancelling` until execution settles, then becomes `cancelled`; late output cannot mark it successful. Stopping is not rollback: completed file edits and external actions remain. A prepared task can be continued explicitly afterward; its discarded queue does not replay.
+
+One Agency process can use many model turns and source calls before producing its answer. Repeated source-check entries are normal, not automatic redispatch. The activity log reports `Agency started working` once per process and `Checking sources` for each research tool call.
+
 Checks:
 
 ```powershell
+npm run agency:setup:check
 npm run agency:read:check
 npm run agency:check
 ```
 
-The first uses a local synthetic model and reads no business content. The second uses an authenticated hosted coding session on a disposable repository.
+`agency:setup:check` reuses the app launcher to verify all six tool catalogs, then closes its temporary proxies; it neither reads business content nor saves consent. `agency:read:check` uses a local synthetic model, public Learn content and WorkIQ schema metadata to verify permission rejection and same-session follow-ups. `agency:check` uses an authenticated hosted coding session on a disposable repository.
 
 ## Calendar
 
@@ -97,11 +106,13 @@ The first uses a local synthetic model and reads no business content. The second
 
 Idle calls check in after 40 seconds and end after 60 seconds by default. Both values can be changed or automatic hang-up can be disabled. User speech and **Stay connected** reset the timer; active generation and playback are allowed to finish.
 
-Task announcements are queued and deduplicated. The inbox keeps the latest 100 heading-only updates across restarts; full answers stay in task details. Clear/read actions remove pending announcements for those entries. Quiet mode suppresses spoken announcements without deleting inbox history.
+Task announcements are queued and deduplicated. Accepting an announcement marks its existing inbox entry read before acknowledging delivery, so reconnects and restarts cannot replay it. Busy sessions leave it unread. Acceptance is not proof that playback finished: interrupted announcements remain in the inbox but do not automatically replay. The inbox keeps the latest 100 heading-only updates across restarts; full answers stay in task details. Clear/read actions remove pending announcements for those entries. Quiet mode suppresses spoken announcements without deleting inbox history.
 
 Calls greet once after connection unless **Settings > Calls > Greet when a call connects** is off. Local greetings use speech synthesis without an LLM request. Local-model chat and voice stream text immediately rather than waiting for generation to finish. The prompt requires silent tool use, receipt-backed outcomes, brief answers, and task titles rather than internal IDs; it is guidance, not a guarantee that a model will comply. Reasoning tags remain suppressed; model prose is not rewritten. Truncated tools never execute, and incomplete streams still report failure, although already-streamed text may have been displayed or spoken. Non-local text-model routes retain completed-final-answer buffering. Native hosted realtime speech remains provider-controlled.
 
 The compact `control_app` tool allows theme changes, clearing/reading notifications, and enabling/disabling spoken updates. It cannot change credentials, Agency consent, or download consent.
+
+Gemini Live uses its default blocking tools and receives one response for the entire tool batch; no per-result asynchronous speech scheduling is added. OpenAI Realtime executes completed tool batches and requests one continuation after all results, rather than one response per tool. Incomplete tool turns do not execute, and interrupted pending batches do not trigger late speech. The voice-only `end_call` tool remains available without an extra confirmation instruction.
 
 ## Security Boundaries
 

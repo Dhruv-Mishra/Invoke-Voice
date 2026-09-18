@@ -13,7 +13,7 @@ import { createLocalVoice, localConfiguration, warmLocalVoice } from './local-vo
 import { createLocalSetup } from './local-setup.mjs';
 import { createRuntimeConfig } from './runtime-config.mjs';
 import { sessionThemeOptions } from './theme-session.mjs';
-import { createAgencyMcp } from './agency-mcp.mjs';
+import { AGENCY_MCP_SERVERS, createAgencyMcp } from './agency-mcp.mjs';
 import { agencyReadPolicy } from './agency-read.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -93,6 +93,7 @@ export async function startSupervisor(options = {}) {
   const agencyMcp = options.agencyMcp || createAgencyMcp();
   const supervisor = options.supervisor || new Supervisor({ dataDir, bridge: createVSCodeBridge(dataDir, process.env, { agencyMcp }) });
   const setup = options.setup || createLocalSetup();
+  const voiceFactory = options.createRealtimeVoice || createRealtimeVoice;
   let changingRecognition = false;
   let agencyCheck;
   const clients = new Set();
@@ -191,7 +192,7 @@ export async function startSupervisor(options = {}) {
         const input = await body(request);
         if (!input || Array.isArray(input) || Object.keys(input).length) throw new Error('Connection checks do not accept configuration changes. Save consent in Settings first.');
         const policy = agencyReadPolicy();
-        const names = [...new Set(['bluebird', ...policy.servers])];
+        const names = [...new Set([...AGENCY_MCP_SERVERS, ...policy.servers])];
         agencyCheck ??= agencyMcp.check(names).finally(() => { agencyCheck = undefined; });
         const results = await agencyCheck;
         return json(response, 200, { results, integrations: config().integrations, workDataAccess: policy.servers.includes('workiq') ? 'read-only' : 'disabled' });
@@ -308,7 +309,7 @@ export async function startSupervisor(options = {}) {
           starting = true;
           cancelled = false;
           const options = { mode: message.mode, provider: message.provider, sttProvider: message.sttProvider, ttsProvider: message.ttsProvider, model: message.model, allowCloud: message.allowCloud === true, ...sessionThemeOptions(message), send, callTool: callVoiceTool };
-          session = message.mode === 'local' ? await createLocalVoice(options) : await createRealtimeVoice(options);
+          session = message.mode === 'local' ? await createLocalVoice(options) : await voiceFactory(options);
           starting = false;
           if (cancelled || socket.readyState !== 1) { session.close(); if (voiceOwner === socket) voiceOwner = null; }
           else if (supervisor.snapshot().settings.greetOnConnect !== false) session.notify('Hello. What would you like to do?', `greeting-${randomUUID()}`);
@@ -320,7 +321,11 @@ export async function startSupervisor(options = {}) {
           else if (message.type === 'playback_done') session?.playbackDone?.(String(message.responseId || ''), ['played', 'interrupted', 'failed'].includes(message.outcome) ? message.outcome : 'failed');
           else if (message.type === 'notify') {
             const notificationId = String(message.notificationId || '').slice(0, 100);
-            if (session?.notify(String(message.text || '').slice(0, 1800), notificationId) === true) send({ type: 'notify_ack', notificationId });
+            const notification = supervisor.snapshot().notifications.find(item => item.id === notificationId);
+            if (session && (notification?.read || session.notify(String(message.text || '').slice(0, 1800), notificationId) === true)) {
+              if (notification && !notification.read) supervisor.readNotifications({ ids: [notificationId] });
+              send({ type: 'notify_ack', notificationId });
+            }
           }
       } catch (error) { starting = false; send({ type: 'error', message: error.message, fatal: true }); session?.close(); if (voiceOwner === socket) voiceOwner = null; socket.close(); }
     });

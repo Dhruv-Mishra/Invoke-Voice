@@ -1,4 +1,4 @@
-import { Behavior, FunctionResponseScheduling, GoogleGenAI, Modality } from '@google/genai';
+import { GoogleGenAI, Modality } from '@google/genai';
 import WebSocket from 'ws';
 import { randomUUID } from 'node:crypto';
 import { voiceTools } from './supervisor/contract.mjs';
@@ -14,12 +14,12 @@ export function geminiLiveConfig({ persona = '', voiceTheme = '' } = {}) {
     systemInstruction: themedInstructions(voiceInstructions, persona),
     ...(voice ? { speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice.gemini } } } } : {}),
     inputAudioTranscription: {}, outputAudioTranscription: {},
-    tools: [{ functionDeclarations: voiceTools.map(({ function: tool }) => ({ name: tool.name, description: tool.description, parametersJsonSchema: tool.parameters, behavior: Behavior.NON_BLOCKING })) }],
+    tools: [{ functionDeclarations: voiceTools.map(({ function: tool }) => ({ name: tool.name, description: tool.description, parametersJsonSchema: tool.parameters })) }],
   };
 }
 
 export function geminiLiveFunctionResponse(call, response) {
-  return { id: call.id, name: call.name, response, scheduling: FunctionResponseScheduling.WHEN_IDLE };
+  return { id: call.id, name: call.name, response };
 }
 
 export function createTranscriptStream(send) {
@@ -73,7 +73,7 @@ export function createRealtimeAnnouncementGate(emit) {
   };
 }
 
-export async function createRealtimeVoice({ mode, send: emit, callTool, persona = '', voiceTheme = '', env = process.env }) {
+export async function createRealtimeVoice({ mode, send: emit, callTool, persona = '', voiceTheme = '', env = process.env, WebSocketImpl = WebSocket, GoogleGenAIImpl = GoogleGenAI }) {
   const announcements = createRealtimeAnnouncementGate(emit);
   const send = announcements.send;
   let closed = false;
@@ -92,7 +92,7 @@ export async function createRealtimeVoice({ mode, send: emit, callTool, persona 
   }
   if (mode === 'gemini-live') {
     if (!env.GEMINI_API_KEY) throw new Error('Add a Gemini API key in Settings > Config to use Gemini Live');
-    const ai = new GoogleGenAI({ apiKey: env.GEMINI_API_KEY });
+    const ai = new GoogleGenAIImpl({ apiKey: env.GEMINI_API_KEY });
     let session;
     let activeResponse;
     const response = () => (activeResponse ||= { id: randomUUID(), audioSent: false });
@@ -122,11 +122,11 @@ export async function createRealtimeVoice({ mode, send: emit, callTool, persona 
           if (content?.turnComplete) transcripts.clear();
           for (const id of message.toolCallCancellation?.ids || []) cancelledToolCalls.add(id);
           if (message.toolCall?.functionCalls) {
-            for (const call of message.toolCall.functionCalls) {
-              invoke(call).then(response => {
-                if (!closed && !cancelledToolCalls.has(call.id)) session.sendToolResponse({ functionResponses: [geminiLiveFunctionResponse(call, response)] });
+            Promise.all(message.toolCall.functionCalls.map(async call => geminiLiveFunctionResponse(call, await invoke(call))))
+              .then(responses => {
+                const functionResponses = responses.filter(response => !cancelledToolCalls.has(response.id));
+                if (!closed && functionResponses.length) session.sendToolResponse({ functionResponses });
               }).catch(error => send({ type: 'error', message: error.message }));
-            }
           }
         },
         onerror: () => send({ type: 'error', message: 'Gemini Live connection failed. Check the key, model access, and quota.', fatal: true }),
@@ -145,7 +145,7 @@ export async function createRealtimeVoice({ mode, send: emit, callTool, persona 
   }
   if (mode !== 'openai-realtime') throw new Error('Unsupported realtime voice mode');
   if (!env.OPENAI_API_KEY) throw new Error('Add an OpenAI API key in Settings > Config to use OpenAI Realtime');
-  const socket = new WebSocket(`wss://api.openai.com/v1/realtime?model=${encodeURIComponent(env.OPENAI_REALTIME_MODEL || 'gpt-realtime')}`, { headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}` }, handshakeTimeout: 15000 });
+  const socket = new WebSocketImpl(`wss://api.openai.com/v1/realtime?model=${encodeURIComponent(env.OPENAI_REALTIME_MODEL || 'gpt-realtime')}`, { headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}` }, handshakeTimeout: 15000 });
   const write = event => { if (!closed && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(event)); };
   await new Promise((resolve, reject) => { socket.once('open', resolve); socket.once('error', () => reject(new Error('OpenAI Realtime connection failed'))); });
   let bufferedSamples = 0;
@@ -184,17 +184,25 @@ export async function createRealtimeVoice({ mode, send: emit, callTool, persona 
     if (event.type === 'conversation.item.input_audio_transcription.completed') transcripts.push('user', event.transcript, { id: event.item_id || 'user', final: true, replacement: true });
     if (event.type === 'response.output_audio_transcript.delta' && !mutedOutput) transcripts.push('assistant', event.delta, { id: event.response_id || 'assistant' });
     if (event.type === 'response.output_audio_transcript.done' && !mutedOutput) transcripts.push('assistant', event.transcript, { id: event.response_id || 'assistant', final: true, replacement: true });
-    if (event.type === 'response.done' && !mutedOutput) finishRealtimeResponse(event.response?.id || event.response_id);
-    if (event.type === 'error') send({ type: 'error', message: `OpenAI Realtime: ${event.error?.code || 'request failed'}` });
-    if (event.type === 'response.function_call_arguments.done') {
-      let args;
-      try { args = JSON.parse(event.arguments); } catch { args = null; }
-      const result = args ? invoke({ id: event.call_id, name: event.name, args }) : Promise.resolve({ error: 'Invalid tool arguments' });
-      result.then(output => {
-        write({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: event.call_id, output: JSON.stringify(output) } });
-        write({ type: 'response.create' });
-      }).catch(error => send({ type: 'error', message: error.message }));
+    if (event.type === 'response.done' && !mutedOutput) {
+      finishRealtimeResponse(event.response?.id || event.response_id);
+      const calls = event.response?.status === 'completed' ? (event.response.output || []).filter(item => item.type === 'function_call') : [];
+      if (calls.length) {
+        responseFor(event.response.id);
+        send({ type: 'state', state: 'thinking' });
+        Promise.all(calls.map(async call => {
+          let args;
+          try { args = JSON.parse(call.arguments); } catch { return { call, output: { error: 'Invalid tool arguments' } }; }
+          return { call, output: await invoke({ id: call.call_id, name: call.name, args }) };
+        })).then(outputs => {
+          realtimeResponses.delete(event.response.id);
+          if (closed || mutedOutput || cancelledResponses.has(event.response.id)) return;
+          for (const { call, output } of outputs) write({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: call.call_id, output: JSON.stringify(output) } });
+          write({ type: 'response.create' });
+        }).catch(error => send({ type: 'error', message: error.message }));
+      }
     }
+    if (event.type === 'error') send({ type: 'error', message: `OpenAI Realtime: ${event.error?.code || 'request failed'}` });
   });
   socket.on('error', () => send({ type: 'error', message: 'OpenAI Realtime connection error', fatal: true }));
   socket.on('close', () => { if (!closed) send({ type: 'error', message: 'OpenAI Realtime disconnected', fatal: true }); });

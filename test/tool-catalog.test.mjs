@@ -9,6 +9,7 @@ test('tool catalog formats labels and action tools are identified correctly', ()
   assert.equal(toolLabel('long_context'), 'Long Context');
   assert.equal(actionTools.has('start_work'), true);
   assert.equal(actionTools.has('send_work_message'), true);
+  assert.equal(actionTools.has('cancel_work'), true);
   assert.equal(actionTools.has('open_work'), true);
   assert.equal(actionTools.has('delete_work'), true);
   assert.equal(actionTools.has('invoke_vscode'), true);

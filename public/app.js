@@ -136,6 +136,7 @@ const taskDialogClose = document.getElementById('task-dialog-close');
 const taskDetailDialog = document.getElementById('task-detail-dialog');
 const detailContent = document.getElementById('detail-content');
 const detailDeleteTaskBtn = document.getElementById('detail-delete-task-btn');
+const detailCancelTaskBtn = document.getElementById('detail-cancel-task-btn');
 const detailContinueTaskBtn = document.getElementById('detail-continue-task-btn');
 const detailCloseBtn = document.getElementById('detail-close-btn');
 const detailDialogClose = document.getElementById('detail-dialog-close');
@@ -173,6 +174,7 @@ const configForm = document.getElementById('config-form');
 const configFields = document.getElementById('config-fields');
 const configSaveBtn = document.getElementById('config-save-btn');
 const configFeedback = document.getElementById('config-feedback');
+const privateWorkFields = document.getElementById('private-work-fields');
 const applicationUpdate = document.getElementById('application-update');
 const applicationUpdateStatus = document.getElementById('application-update-status');
 const applicationUpdateBtn = document.getElementById('application-update-btn');
@@ -197,6 +199,7 @@ const settingsRenderer = createSettingsRenderer({
   idleEnd: settingsIdleEnd,
   integrationsTableBody,
   configFields,
+  privateWorkFields,
   configFeedback,
 });
 
@@ -383,7 +386,7 @@ function activateView(viewName) {
     document.getElementById('calendar-date').textContent = new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric' }).format(new Date());
     document.getElementById('calendar-feedback').textContent = privateWorkEnabled()
       ? 'Ready to request your schedule. Calendar access depends on your work account.'
-      : 'Private work sources are off. Enable Read-only access in Settings > Providers & keys > Coding tools, then Save config.';
+      : 'Private work sources are off. Choose Read-only in Settings > Integrations, then Save access.';
   }
   document.getElementById('view-dialog-title').textContent = viewTitles[viewName] || 'Invoke';
   syncViewPresentation();
@@ -454,9 +457,9 @@ function privateWorkEnabled() {
 
 function openPrivateWorkSettings() {
   activateView('settings');
-  document.getElementById('config-section').open = true;
+  document.getElementById('integrations-section').open = true;
   const control = document.getElementById('config-agency-work-data-access');
-  const target = document.querySelector('[data-for="config-agency-work-data-access"] button[aria-checked="true"]') || control || configSaveBtn;
+  const target = document.querySelector('[data-for="config-agency-work-data-access"] button[aria-checked="true"]') || control || document.getElementById('private-work-save-btn');
   target.scrollIntoView({ block: 'center' });
   target.focus({ preventScroll: true });
 }
@@ -1462,17 +1465,20 @@ function renderApplicationConfig() {
   settingsRenderer.renderApplicationConfig();
 }
 
-if (configForm) {
-  configForm.addEventListener('submit', async event => {
+for (const [form, fields, feedback, saveButton] of [
+  [configForm, configFields, configFeedback, configSaveBtn],
+  [document.getElementById('private-work-form'), privateWorkFields, document.getElementById('private-work-feedback'), document.getElementById('private-work-save-btn')],
+]) {
+  form?.addEventListener('submit', async event => {
     event.preventDefault();
-    configFeedback.textContent = '';
-    configFeedback.className = 'settings-feedback';
+    feedback.textContent = '';
+    feedback.className = 'settings-feedback';
     const values = {};
-    for (const control of configFields.querySelectorAll('[data-config-key]')) {
+    for (const control of fields.querySelectorAll('[data-config-key]')) {
       if (control.dataset.configSecret === 'true' && !control.value) continue;
       values[control.dataset.configKey] = control.value;
     }
-    configSaveBtn.disabled = true;
+    saveButton.disabled = true;
     try {
       const previousRecognizer = appConfig?.local?.sttProvider;
       const response = await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ values }) });
@@ -1483,12 +1489,13 @@ if (configForm) {
       await loadConfig(true);
       if (appConfig?.local?.sttProvider !== previousRecognizer) await localSetup.recognitionChanged();
       const pending = appConfig?.configuration?.fields?.some(field => field.pendingRestart);
-      configFeedback.textContent = pending ? 'Config saved. Restart the app to apply pending local performance changes.' : 'Config saved and applied to new sessions.';
+      feedback.textContent = fields === privateWorkFields ? 'Access saved. No restart needed. Applies to new research tasks and follow-ups, not tasks already running.'
+        : pending ? 'Config saved. Restart the app to apply pending local performance changes.' : 'Config saved and applied to new sessions.';
     } catch (error) {
-      configFeedback.textContent = `Error: ${error.message}`;
-      configFeedback.className = 'settings-feedback error';
+      feedback.textContent = `Error: ${error.message}`;
+      feedback.className = 'settings-feedback error';
     } finally {
-      configSaveBtn.disabled = false;
+      saveButton.disabled = false;
     }
   });
 }
@@ -1650,7 +1657,7 @@ async function runAgencyCheck() {
     populateIntegrationsTable();
     const failures = result.results.filter(item => item.status !== 'ready');
     feedback.textContent = failures.length ? 'Some connections need attention.' : 'Tool catalogs verified.';
-    if (result.workDataAccess === 'disabled') feedback.textContent += ' Private work sources are off. Select Private work sources below, choose Read-only, then Save config.';
+    if (result.workDataAccess === 'disabled') feedback.textContent += ' Private work sources are off. Choose Read-only above, then Save access.';
     feedback.className = `settings-feedback${failures.length ? ' error' : ''}`;
     return result;
   } catch (error) {
@@ -1666,7 +1673,7 @@ async function checkAgencyOnEntry() {
   const result = await checkAgencyConnections();
   const messages = [...new Set(result.results.filter(item => item.status !== 'ready').map(item => item.message))];
   const needsConsent = result.workDataAccess === 'disabled';
-  if (needsConsent && !appState.settings.agencySetupPrompted) messages.push('Enable Teams and calendar: Settings > Providers & keys > Coding tools > Private work sources > Read-only, then Save config. Uses cloud services; questions and answers are saved and may be spoken. Sign in to Agency with your work account.');
+  if (needsConsent && !appState.settings.agencySetupPrompted) messages.push('Enable Teams and calendar in Invoke: Settings > Integrations > Private work sources > Read-only, then Save access. Uses cloud services; questions and answers are saved and may be spoken. Sign in to Agency with your work account.');
   if (!messages.length) return;
   while (document.querySelector('dialog[open]')) {
     await new Promise(resolve => document.querySelector('dialog[open]').addEventListener('close', resolve, { once: true }));
@@ -2050,8 +2057,8 @@ btnNewArea.addEventListener('click', () => openAreaModal(null));
 areaCancelBtn.addEventListener('click', () => areaDialog.close());
 areaDialogClose.addEventListener('click', () => areaDialog.close());
 
-const TERMINAL_STATES = new Set(['completed', 'result_ready', 'failed', 'agent_failed', 'agent_stopped']);
-const RESUMABLE_STATES = new Set(['result_ready', 'completed', 'failed', 'agent_failed', 'agent_stopped', 'needs_input']);
+const TERMINAL_STATES = new Set(['completed', 'result_ready', 'failed', 'agent_failed', 'agent_stopped', 'cancelled']);
+const RESUMABLE_STATES = new Set([...TERMINAL_STATES, 'needs_input']);
 function isTaskFinished(task) {
   return TERMINAL_STATES.has(task?.state);
 }
@@ -2060,6 +2067,16 @@ function isTaskDeletable(task) {
 }
 function isTaskResumable(task) {
   return task?.canMessage ?? RESUMABLE_STATES.has(task?.state);
+}
+
+async function cancelTask(taskId, button) {
+  button.disabled = true;
+  try {
+    await callSupervisorTool('cancel_work', { taskId });
+    await loadState();
+  } catch (error) {
+    await showAppAlert(error.message, 'Could not stop task');
+  } finally { button.disabled = false; }
 }
 
 async function deleteTask(taskId, taskTitle = 'task') {
@@ -2118,6 +2135,10 @@ function renderTaskHistory() {
 
 function renderTasks() {
   renderTaskHistory();
+  if (taskDetailDialog.open) {
+    const task = appState.tasks.find(item => item.id === taskDetailDialog.dataset.taskId);
+    if (task && JSON.stringify([task.state, task.canCancel, task.canMessage, task.deletable, task.queued]) !== taskDetailDialog.dataset.taskRevision) showTaskDetail(task);
+  }
   tasksList.replaceChildren();
 
   if (!appState.tasks || appState.tasks.length === 0) {
@@ -2226,6 +2247,22 @@ function renderTasks() {
       actions.appendChild(continueBtn);
     }
 
+    if (task.canCancel) {
+      const stopBtn = document.createElement('button');
+      stopBtn.className = 'btn btn-danger';
+      stopBtn.type = 'button';
+      stopBtn.title = 'Stop task and discard queued messages';
+      stopBtn.setAttribute('aria-label', `Stop ${task.title || 'task'}`);
+      const stopIcon = document.createElement('i');
+      stopIcon.setAttribute('data-lucide', 'square');
+      stopBtn.appendChild(stopIcon);
+      stopBtn.addEventListener('click', event => {
+        event.stopPropagation();
+        void cancelTask(task.id, stopBtn);
+      });
+      actions.appendChild(stopBtn);
+    }
+
     if (isTaskDeletable(task)) {
       const deleteBtn = document.createElement('button');
       deleteBtn.className = 'btn btn-danger';
@@ -2295,6 +2332,9 @@ function renderTasks() {
 
 // Show Task Detail Modal
 function showTaskDetail(task) {
+  taskDetailDialog.dataset.taskId = task.id;
+  taskDetailDialog.dataset.taskState = task.state;
+  taskDetailDialog.dataset.taskRevision = JSON.stringify([task.state, task.canCancel, task.canMessage, task.deletable, task.queued]);
   detailContent.replaceChildren();
 
   const addField = (label, val, isMono = false, parent = detailContent) => {
@@ -2391,6 +2431,9 @@ function showTaskDetail(task) {
     observations.appendChild(obsList);
   }
 
+  detailCancelTaskBtn.style.display = task.canCancel ? 'inline-flex' : 'none';
+  detailCancelTaskBtn.onclick = () => cancelTask(task.id, detailCancelTaskBtn);
+
   if (detailDeleteTaskBtn) {
     if (isTaskDeletable(task)) {
       detailDeleteTaskBtn.style.display = 'inline-flex';
@@ -2421,7 +2464,7 @@ function showTaskDetail(task) {
     detailOpenWorktreeBtn.style.display = 'none';
   }
 
-  taskDetailDialog.showModal();
+  if (!taskDetailDialog.open) taskDetailDialog.showModal();
 }
 
 detailCloseBtn.addEventListener('click', () => taskDetailDialog.close());

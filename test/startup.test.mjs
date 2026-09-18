@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { once } from 'node:events';
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -36,13 +37,69 @@ test('Agency connection checks respect consent, reject remote origins and never 
   assert.equal(checks.length, 0);
   const disabled = await (await check()).json();
   assert.equal(disabled.workDataAccess, 'disabled');
-  assert.deepEqual(checks[0], ['bluebird', 'msft-learn']);
+  assert.deepEqual(checks[0], ['bluebird', 'workiq', 'teams', 'msft-learn']);
   assert.equal((await check({ AGENCY_WORK_DATA_ACCESS: 'read-only' })).status, 400);
   assert.equal(process.env.AGENCY_WORK_DATA_ACCESS, 'disabled');
-  process.env.AGENCY_WORK_DATA_ACCESS = 'read-only';
+  const save = await fetch(`${app.url}/api/config`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: app.url }, body: JSON.stringify({ values: { AGENCY_WORK_DATA_ACCESS: 'read-only' } }) });
+  assert.equal(save.status, 200);
   const enabled = await (await check()).json();
   assert.equal(enabled.workDataAccess, 'read-only');
-  assert.deepEqual(checks[1], ['bluebird', 'msft-learn', 'workiq', 'teams', 'calendar', 'm365-user']);
+  assert.deepEqual(checks[1], ['bluebird', 'workiq', 'teams', 'msft-learn', 'calendar', 'm365-user']);
+  const revoke = await fetch(`${app.url}/api/config`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: app.url }, body: JSON.stringify({ values: { AGENCY_WORK_DATA_ACCESS: 'disabled' } }) });
+  assert.equal(revoke.status, 200);
+  assert.equal((await (await check()).json()).workDataAccess, 'disabled');
+});
+
+test('voice notifications persist acceptance and never replay across sessions', async context => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-notification-ack-'));
+  const supervisor = new Supervisor({ dataDir, bridge: {} });
+  supervisor.updateSettings({ greetOnConnect: false });
+  supervisor.publishNotification({ id: 'failed-task', title: 'Failed task', state: 'agent_failed' }, 'Task failed.');
+  const notificationId = supervisor.snapshot().notifications[0].id;
+  const delivered = [];
+  let accept = false;
+  let attempted;
+  const app = await startSupervisor({ dataDir, port: 0, prewarm: false, supervisor,
+    createRealtimeVoice: async ({ send }) => {
+      send({ type: 'ready' });
+      return { close() {}, notify(text, id) { attempted?.(); if (!accept) return false; delivered.push(id); return true; } };
+    },
+  });
+  const sockets = [];
+  context.after(async () => {
+    for (const socket of sockets) socket.terminate();
+    await app.close();
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+  const connect = async () => {
+    const socket = new WebSocket(`${app.url.replace('http:', 'ws:')}/voice`);
+    sockets.push(socket);
+    await once(socket, 'open');
+    const ready = once(socket, 'message');
+    socket.send(JSON.stringify({ type: 'start', mode: 'openai-realtime' }));
+    assert.equal(JSON.parse((await ready)[0]).type, 'ready');
+    return socket;
+  };
+  const notify = socket => socket.send(JSON.stringify({ type: 'notify', notificationId, text: 'Failed task: failed' }));
+  const socket = await connect();
+  const rejected = new Promise(resolve => { attempted = resolve; });
+  notify(socket);
+  await rejected;
+  assert.equal(supervisor.snapshot().notifications[0].read, false);
+  accept = true;
+  const acknowledged = once(socket, 'message');
+  notify(socket);
+  assert.deepEqual(JSON.parse((await acknowledged)[0]), { type: 'notify_ack', notificationId });
+  assert.equal(supervisor.snapshot().notifications[0].read, true);
+  assert.equal(new Supervisor({ dataDir, bridge: {} }).snapshot().notifications[0].read, true);
+  const closed = once(socket, 'close');
+  socket.close();
+  await closed;
+  const nextSocket = await connect();
+  const duplicate = once(nextSocket, 'message');
+  notify(nextSocket);
+  assert.equal(JSON.parse((await duplicate)[0]).type, 'notify_ack');
+  assert.deepEqual(delivered, [notificationId]);
 });
 
 test('voice tool bridge ends calls locally and delegates supervisor tools', async () => {

@@ -69,9 +69,15 @@ Agency is the fresh-install default; saved backend choices are preserved. Coding
 
 Follow-ups reuse the original task session. Up to ten messages can queue while work runs; interrupted queues pause until a corrective follow-up resumes them. See [docs/operations.md](docs/operations.md#agency-delegation) before enabling WorkIQ, Teams, calendar, or people access.
 
+Use **Stop task** in task details, the square Stop icon on a task card, or ask the assistant to cancel a task. This stops its owned execution and discards queued follow-ups, preserving history, worktrees and already completed changes. Cancellation does not roll back edits or external actions.
+
 Invoke starts its Agency connections and checks tool catalogs on entry. A concise setup dialog identifies missing installation, sign-in, connectivity, or optional access steps. Catalog readiness is not proof of authorization to read a particular account or source. Consent is never enabled silently.
 
-**Enable Teams and calendar:** install and sign in to [Agency](https://aka.ms/agency) with your work account. Open **Settings > Integrations > Private work sources**, choose **Read-only**, then **Save config**. Run **Check connections** in Integrations. The same setting is under **Providers & keys > Coding tools**. Questions and answers use cloud services, are saved, and may be spoken.
+**Enable Teams and calendar:** install and sign in to [Agency](https://aka.ms/agency) with your work account. Open **Settings > Integrations > Private work sources**, choose **Read-only**, then **Save access**. This is Invoke's research permission, not an Agency setting or a grant of Microsoft 365 access. Questions and answers use cloud services, are saved, and may be spoken.
+
+No restart is required after saving access. New research tasks and subsequent follow-ups use the saved permission; an already-running task keeps its original tools. Coding and research sessions use task-local Agency profiles to avoid inheriting incompatible global Copilot MCP entries. Explicit Invoke MCPs and coding repository MCP configuration remain available.
+
+Installing Agency does not start Teams MCP. Invoke explicitly runs `agency mcp --transport http --port 0 teams` on app launch, alongside its WorkIQ and Bluebird proxies. **Check connections** starts or retries these proxies without reading business content. From source, `npm run agency:setup:check` verifies all research catalogs and closes its temporary proxies; it never changes consent.
 
 **Calendar** opens your Outlook work calendar or checks today's schedule through a read-only Agency task. Outlook and Teams share that Microsoft 365 calendar. Results appear in task details; no calendar data is read just by opening the tab. You can also ask Invoke to check your calendar by voice or chat.
 
@@ -88,6 +94,8 @@ Downloads are pinned and hash-verified. Working chat remains available if speech
 The Quality model is 5.77 GB. Previously consented, verified managed Compact installations download it automatically on startup; custom model paths and fresh-install consent are preserved. The previous model stays on disk. Quality follows the publisher's accuracy recommendation but costs more memory than Compact and may be slower on constrained machines; this is not an independently measured accuracy or speed gain.
 
 Local replies stream as they are generated so speech can start before the whole answer finishes. Thinking is disabled; warm-up uses the live voice tool schema, and default synthesis threads scale to the CPU. Saved overrides remain respected. The compact tool set is retained.
+
+The text/local voice loop allows eight tool rounds plus a tool-disabled final answer. This bounds runaway calls while giving the model a chance to summarize confirmed progress. Independent calls run concurrently, invalid arguments return schema errors for correction, and identical mutations reuse their receipts within a turn. Fresh status reads are not cached. Context and request timeouts still apply.
 
 ## Calls And Notifications
 

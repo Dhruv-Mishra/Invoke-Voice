@@ -11,7 +11,7 @@ export { supervisorTools, tools, supervisorInstructions };
 
 const CONTEXTS = ['default', 'long_context'];
 const BACKENDS = ['copilot', 'agency'];
-const TERMINAL_STATES = new Set(['result_ready', 'agent_failed', 'agent_stopped', 'completed', 'failed']);
+const TERMINAL_STATES = new Set(['result_ready', 'agent_failed', 'agent_stopped', 'completed', 'failed', 'cancelled']);
 const RESUMABLE_STATES = new Set([...TERMINAL_STATES, 'needs_input']);
 const SEARCH_STOP_WORDS = new Set('a an and are can could do for how i in is it me my of on please s status task tasks tell that the this to was what whats which work you'.split(' '));
 
@@ -28,7 +28,7 @@ export class Supervisor extends EventEmitter {
     this.now = now;
     this.env = env;
     this.semanticSearch = semanticSearch ?? createLocalTaskSearch({ dataDir, env });
-    this.activeTasks = new Set();
+    this.activeTasks = new Map();
     mkdirSync(dataDir, { recursive: true });
     this.file = path.join(dataDir, 'state.json');
     this.recoveryWarning = null;
@@ -64,7 +64,7 @@ export class Supervisor extends EventEmitter {
       if (!task.backend || task.backend === 'copilot-cli') task.backend = 'copilot';
       if (!Array.isArray(task.turns)) task.turns = [];
       if (!Array.isArray(task.observations)) task.observations = [];
-      if (['dispatching', 'running'].includes(task.state)) {
+      if (['dispatching', 'running', 'cancelling'].includes(task.state)) {
         task.state = 'agent_stopped';
         task.error = 'The app restarted before this task reported completion. Check the worktree, then continue or delete it.';
         for (const turn of task.turns) {
@@ -234,9 +234,10 @@ export class Supervisor extends EventEmitter {
     const stale = ['dispatching', 'running'].includes(task.state) && this.now() - lastActivityAt > 120000;
     const state = task.state === 'dispatching' && this.now() - (task.dispatchStartedAt || task.createdAt) > 30000 ? 'dispatch_unconfirmed' : stale && task.state === 'running' ? 'unknown' : task.state;
     const deletable = !this.activeTasks.has(id) && (TERMINAL_STATES.has(state) || stale);
-    const canMessage = !this.closed && (this.activeTasks.has(id) || RESUMABLE_STATES.has(state));
+    const canMessage = !this.closed && !this.activeTasks.get(id)?.signal.aborted && state !== 'cancelling' && (state !== 'cancelled' || Boolean(task.worktree || task.directory)) && (this.activeTasks.has(id) || RESUMABLE_STATES.has(state));
     const queued = task.turns.filter(turn => turn.state === 'queued').length;
-    return { ...task, state, lastObservedState: task.state, stale, deletable, canMessage, ...(queued ? { queued, queuePaused: !this.activeTasks.has(id) } : {}), observations: task.observations.slice(-8) };
+    const canCancel = !this.closed && !['cancelling', 'cancelled'].includes(state) && (this.activeTasks.has(id) || queued > 0);
+    return { ...task, state, lastObservedState: task.state, stale, deletable, canMessage, canCancel, ...(queued ? { queued, queuePaused: !this.activeTasks.has(id) } : {}), observations: task.observations.slice(-8) };
   }
 
   toolStatus(id) {
@@ -248,6 +249,7 @@ export class Supervisor extends EventEmitter {
       : source.observations.at(-1);
     const actions = [];
     if (task.canMessage) actions.push('send_work_message');
+    if (task.canCancel) actions.push('cancel_work');
     if (task.worktree) actions.push('open_work');
     if (task.deletable) actions.push('delete_work');
     const result = task.result && String(task.result);
@@ -333,6 +335,7 @@ export class Supervisor extends EventEmitter {
     if (name === 'list_work') return { defaultAreaId: this.state.settings.defaultAreaId, areas: this.state.areas.map(({ id, name, aliases }) => ({ id, name, aliases })), tasks: this.state.tasks.slice(-25).map(task => { const status = this.status(task.id); return { id: status.id, title: status.title, areaId: status.areaId, backend: status.backend, state: status.state }; }) };
     if (name === 'send_work_message') {
       const task = this.task(requiredText(args.taskId, 'task ID', 200));
+      if (!this.status(task.id).canMessage) throw new Error('Task is not ready for a follow-up');
       const message = requiredText(args.message, 'follow-up message');
       const requestId = requiredText(context.requestId, 'follow-up request ID', 200);
       const duplicate = task.turns.find(turn => turn.requestId === requestId);
@@ -351,6 +354,20 @@ export class Supervisor extends EventEmitter {
       return { taskId: task.id, state: active ? 'queued' : 'dispatching' };
     }
     if (name === 'get_work_status') return this.toolStatus(requiredText(args.taskId, 'task ID', 200));
+    if (name === 'cancel_work') {
+      const task = this.task(requiredText(args.taskId, 'task ID', 200));
+      if (['cancelling', 'cancelled'].includes(task.state)) return { taskId: task.id, state: task.state };
+      if (!this.status(task.id).canCancel) throw new Error('Task is not running or queued');
+      task.state = 'cancelling';
+      for (const turn of task.turns.filter(turn => turn.state === 'queued')) {
+        turn.state = 'cancelled';
+        turn.completedAt = this.now();
+      }
+      const controller = this.activeTasks.get(task.id);
+      if (controller) { controller.abort(); this.save(); }
+      else this.finishCancellation(task);
+      return { taskId: task.id, state: task.state };
+    }
     if (name === 'delete_work') {
       const taskId = typeof args.taskId === 'string' && args.taskId.trim();
       const areaId = typeof args.areaId === 'string' && args.areaId.trim();
@@ -393,14 +410,14 @@ export class Supervisor extends EventEmitter {
     }
     const task = { id: randomUUID(), requestId, areaId: area.id, title: objective.slice(0, 90), objective, backend, model, agent, readOnly, context: selectedContext, state: 'dispatching', createdAt: this.now(), dispatchStartedAt: this.now(), lastObservedAt: null, sessionId: randomUUID(), worktree: null, branch: null, observations: [], turnObservationStart: 0, turns: [] };
     this.state.tasks.push(task);
-    this.activeTasks.add(task.id);
+    this.activeTasks.set(task.id, new AbortController());
     this.save();
     this.dispatch(task, { ...area });
     return { taskId: task.id, state: 'dispatching' };
   }
 
   startTurn(task, area, turn) {
-    this.activeTasks.add(task.id);
+    this.activeTasks.set(task.id, new AbortController());
     turn.state = 'dispatching';
     turn.startedAt = this.now();
     task.state = 'dispatching';
@@ -424,21 +441,24 @@ export class Supervisor extends EventEmitter {
   }
 
   async dispatch(task, area) {
-    this.activeTasks.add(task.id);
+    const { signal } = this.activeTasks.get(task.id);
     let acceptingEvents = true;
     let completed = false;
     try {
-      const prepared = await this.bridge.prepare(task, area);
+      const prepared = await this.bridge.prepare(task, area, { signal });
       Object.assign(task, prepared);
       this.save();
-      const result = await this.bridge.dispatch(task, area, event => { if (acceptingEvents) this.recordAgentEvent(task, event); });
+      signal.throwIfAborted();
+      const result = await this.bridge.dispatch(task, area, event => { if (acceptingEvents && !signal.aborted) this.recordAgentEvent(task, event); }, { signal });
       acceptingEvents = false;
+      signal.throwIfAborted();
       if (result) {
         this.completeTask(task, result);
         completed = true;
       }
     } catch (error) {
-      this.failTask(task, error);
+      if (signal.aborted) this.finishCancellation(task);
+      else this.failTask(task, error);
     } finally {
       acceptingEvents = false;
       this.activeTasks.delete(task.id);
@@ -448,24 +468,36 @@ export class Supervisor extends EventEmitter {
   }
 
   async continueTask(task, area, turn) {
-    this.activeTasks.add(task.id);
+    const { signal } = this.activeTasks.get(task.id);
     let acceptingEvents = true;
     let completed = false;
     try {
-      const result = await this.bridge.continue(task, area, turn.message, event => { if (acceptingEvents) this.recordAgentEvent(task, event); });
+      signal.throwIfAborted();
+      const result = await this.bridge.continue(task, area, turn.message, event => { if (acceptingEvents && !signal.aborted) this.recordAgentEvent(task, event); }, { signal });
       acceptingEvents = false;
+      signal.throwIfAborted();
       if (result) {
         this.completeTask(task, result, turn);
         completed = true;
       }
     } catch (error) {
-      this.failTask(task, error, turn);
+      if (signal.aborted) this.finishCancellation(task, turn);
+      else this.failTask(task, error, turn);
     } finally {
       acceptingEvents = false;
       this.activeTasks.delete(task.id);
       if (completed) this.drainQueue(task, area);
       this.emit('change', this.snapshot());
     }
+  }
+
+  finishCancellation(task, turn = null) {
+    task.state = 'cancelled';
+    task.result = 'Cancelled. Already completed changes were not undone.';
+    delete task.error;
+    if (turn) { turn.state = 'cancelled'; turn.completedAt = this.now(); }
+    this.appendObservation(task, { id: randomUUID(), at: this.now(), kind: 'cancelled', summary: task.result, source: 'supervisor' });
+    this.save();
   }
 
   completeTask(task, result, turn = null) {
@@ -510,6 +542,7 @@ export class Supervisor extends EventEmitter {
 
   observe(event) {
     const task = this.task(event.taskId);
+    if (['cancelling', 'cancelled'].includes(task.state)) return false;
     if (!task.worktree || typeof event.cwd !== 'string') return false;
     let cwd;
     try { cwd = realpathSync(event.cwd); } catch { return false; }

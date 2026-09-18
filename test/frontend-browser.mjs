@@ -30,6 +30,7 @@ const resetRequests = [];
 ipcMain.handle('data-reset:info', () => ({ supported: true, path: 'C:\\Users\\fixture\\AppData\\Local\\VoiceSupervisor' }));
 ipcMain.handle('data-reset:clear', (_event, confirmation) => { resetRequests.push(confirmation); return { started: true }; });
 const calendarRequests = [];
+const cancelRequests = [];
 let configReads = 0;
 let setupHttpStatus = 200;
 const setupRequests = [];
@@ -38,7 +39,7 @@ const voiceNotifications = [];
 let notificationReadRace = false;
 const fixtureTasks = [
   { id: 'finished-task', title: 'Completed coding work', state: 'completed', result: '**Ready for review**', createdAt: '2026-09-16T09:00:00Z' },
-  { id: 'active-task', title: '<img src=x onerror=alert(1)> coding task', state: 'running', canMessage: true, queued: 1, queuePaused: false, turns: [{ state: 'queued', message: 'If successful, summarize <img src=x onerror=alert(1)>.' }], createdAt: '2026-09-16T10:00:00Z' },
+  { id: 'active-task', title: '<img src=x onerror=alert(1)> coding task', state: 'running', canMessage: true, canCancel: true, queued: 1, queuePaused: false, turns: [{ state: 'queued', message: 'If successful, summarize <img src=x onerror=alert(1)>.' }], createdAt: '2026-09-16T10:00:00Z' },
 ];
 const setup = {
   platform: 'win32', supported: true, cacheDir: 'C:\\VoiceSupervisor\\cache', runtimeDir: 'C:\\VoiceSupervisor\\runtime',
@@ -252,6 +253,16 @@ try {
           let body = '';
           for await (const chunk of request) body += chunk;
           const input = JSON.parse(body);
+          if (input.name === 'cancel_work') {
+            cancelRequests.push(input.args.taskId);
+            const task = fixtureTasks.find(item => item.id === input.args.taskId);
+            Object.assign(task, { state: 'cancelled', canCancel: false, canMessage: true, deletable: true, queued: 0, result: 'Cancelled. Already completed changes were not undone.' });
+            for (const turn of task.turns) turn.state = 'cancelled';
+            eventResponse.write(`data: ${JSON.stringify({ type: 'state', state: { areas: [], tasks: fixtureTasks, settings, notifications: fixtureNotifications } })}\n\n`);
+            response.writeHead(200, { 'Content-Type': 'application/json' });
+            response.end(JSON.stringify({ taskId: task.id, state: task.state }));
+            return;
+          }
           if (input.name === 'start_work') {
             calendarRequests.push(input);
             fixtureTasks.push({ id: 'calendar-task', title: 'Today\'s calendar', state: 'running', readOnly: true });
@@ -273,10 +284,14 @@ try {
             let body = '';
             for await (const chunk of request) body += chunk;
             const values = JSON.parse(body).values;
-            config.local.sttProvider = values.LOCAL_STT_PROVIDER;
-            config.configuration.fields.find(field => field.key === 'LOCAL_STT_PROVIDER').value = values.LOCAL_STT_PROVIDER;
-            config.configuration.fields.find(field => field.key === 'AGENCY_WORK_DATA_ACCESS').value = values.AGENCY_WORK_DATA_ACCESS;
-            setup.message = `${values.LOCAL_STT_PROVIDER} selected`;
+            for (const field of config.configuration.fields) {
+              if (field.key in values) field.value = values[field.key];
+            }
+            if (values.LOCAL_STT_PROVIDER) {
+              config.local.sttProvider = values.LOCAL_STT_PROVIDER;
+              setup.message = `${values.LOCAL_STT_PROVIDER} selected`;
+            }
+            if ('AGENCY_WORK_DATA_ACCESS' in values) assert.deepEqual(Object.keys(values), ['AGENCY_WORK_DATA_ACCESS']);
           }
         }
         const routes = {
@@ -951,7 +966,7 @@ try {
   await pointerClick('[data-for="ptt-mode-opt"] button[value="voice"]');
   await pointerClick('#voice-options-btn');
   await visit('settings');
-  Object.assign(fixtureTasks[1], { state: 'completed', result: '## Working changes' });
+  Object.assign(fixtureTasks[1], { state: 'completed', canCancel: false, result: '## Working changes' });
   eventResponse.write(`data: ${JSON.stringify({ type: 'state', state: { areas: [], tasks: fixtureTasks, settings: {} } })}\n\n`);
   await waitFor(() => document.querySelector('.history-entry[data-task-id="active-task"]').dataset.state === 'completed');
   await click('#settings-view button[data-appearance="alpine"]');
@@ -1200,6 +1215,25 @@ try {
   assert.equal(await evaluate(() => document.getElementById('closed-caption').hidden), true);
   assert.equal(await evaluate(() => document.getElementById('history-empty').hidden), true);
   settings.defaultBackend = 'agency';
+  Object.assign(fixtureTasks[1], { state: 'running', canCancel: true });
+  eventResponse.write(`data: ${JSON.stringify({ type: 'state', state: { areas: [], tasks: fixtureTasks, settings, notifications: fixtureNotifications } })}\n\n`);
+  await visit('workspace');
+  assert.equal(await evaluate(() => Boolean(document.querySelector('.task-actions button[title="Stop task and discard queued messages"] svg'))), true);
+  await click('.task-card .task-title');
+  assert.equal(await evaluate(() => Boolean(document.querySelector('#detail-cancel-task-btn svg'))), true);
+  await pointerClick('#detail-cancel-task-btn');
+  await waitFor(() => document.getElementById('task-detail-dialog').dataset.taskState === 'cancelled');
+  assert.deepEqual(cancelRequests, ['active-task']);
+  assert.equal(await evaluate(() => document.getElementById('detail-cancel-task-btn').checkVisibility()), false);
+  Object.assign(fixtureTasks[1], { canMessage: false, deletable: false });
+  eventResponse.write(`data: ${JSON.stringify({ type: 'state', state: { areas: [], tasks: fixtureTasks, settings, notifications: fixtureNotifications } })}\n\n`);
+  await waitFor(() => !document.getElementById('detail-continue-task-btn').checkVisibility());
+  Object.assign(fixtureTasks[1], { canMessage: true, deletable: true });
+  eventResponse.write(`data: ${JSON.stringify({ type: 'state', state: { areas: [], tasks: fixtureTasks, settings, notifications: fixtureNotifications } })}\n\n`);
+  await waitFor(() => document.getElementById('detail-continue-task-btn').checkVisibility() && document.getElementById('detail-delete-task-btn').checkVisibility());
+  assert.match(await evaluate(() => document.getElementById('task-detail-dialog').textContent), /changes were not undone/);
+  await screenshot('cancelled-task');
+  await press('Escape');
   settings.agencySetupPrompted = false;
   settings.localSetupPrompted = true;
   setup.status = 'ready';
@@ -1216,11 +1250,13 @@ try {
   assert.equal(await evaluate(() => document.querySelector('#calendar-view a').href), 'https://outlook.office.com/calendar/');
   await pointerClick('#calendar-check-btn');
   assert.equal(calendarRequests.length, 0, 'opening consent must not read private work sources');
-  assert.equal(await evaluate(() => document.getElementById('config-section').open && document.activeElement.closest('[data-for="config-agency-work-data-access"]') !== null), true);
+  assert.equal(await evaluate(() => document.getElementById('integrations-section').open && document.activeElement.closest('[data-for="config-agency-work-data-access"]') !== null), true);
+  assert.equal(await evaluate(() => document.querySelectorAll('[data-config-key="AGENCY_WORK_DATA_ACCESS"]').length), 1);
+  assert.equal(await evaluate(() => Boolean(document.querySelector('#integrations-section a.btn svg'))), true);
   assert.match(await evaluate(() => document.getElementById('config-agency-work-data-access-hint').textContent), /cloud services/);
   await pointerClick('[data-for="config-agency-work-data-access"] button[value="read-only"]');
-  await pointerClick('#config-save-btn');
-  await waitFor(() => document.getElementById('config-feedback').textContent.includes('Config saved'));
+  await pointerClick('#private-work-save-btn');
+  await waitFor(() => document.getElementById('private-work-feedback').textContent.includes('Access saved'));
   await visit('calendar');
   await screenshot('calendar-connected');
   await pointerClick('#calendar-check-btn');

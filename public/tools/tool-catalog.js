@@ -1,4 +1,4 @@
-export const actionTools = new Set(['start_work', 'send_work_message', 'open_work', 'delete_work', 'invoke_vscode']);
+export const actionTools = new Set(['start_work', 'send_work_message', 'cancel_work', 'open_work', 'delete_work', 'invoke_vscode']);
 
 export function toolLabel(name) {
   return name.replaceAll('_', ' ').replace(/\b\w/g, character => character.toUpperCase());

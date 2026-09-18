@@ -125,7 +125,7 @@ test('shared MCP launch preserves read filters and avoids duplicate coding proxi
   const task = { id: 'task', dataDir: 'C:\\data', worktree: 'C:\\worktree', backend: 'agency', sessionId: 'session', model: 'test', context: 'default' };
   const area = { allowPublish: false };
   const coding = sessionLaunch(task, area, {}, { mcpServers });
-  assert.deepEqual(coding.args.slice(0, 5), ['copilot', '--hub', '--no-default-mcps', '--mcp', 'msft-learn']);
+  assert.deepEqual(coding.args.slice(0, 7), ['copilot', '--hub', '--profile-only', `invoke-work-${task.sessionId}`, '--no-default-mcps', '--mcp', 'msft-learn']);
   const config = launch => JSON.parse(launch.args[launch.args.indexOf('--additional-mcp-config') + 1]).mcpServers;
   assert.deepEqual(config(coding), mcpServers);
   const read = sessionLaunch({ ...task, readOnly: true, directory: 'C:\\read', agencyProfile: 'voice-read-session', agencyReadPolicy: 'read-only-v1' }, area, { AGENCY_WORK_DATA_ACCESS: 'read-only' }, { mcpServers });

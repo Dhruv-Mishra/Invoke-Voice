@@ -72,7 +72,7 @@ export function sessionLaunch(task, area, env = process.env, { resume = false, m
     ? (env.AGENCY_CLI || (process.platform === 'win32' ? 'agency.exe' : 'agency'))
     : (env.COPILOT_CLI || (process.platform === 'win32' ? 'copilot.exe' : 'copilot'));
   const args = readArgs ? [...readArgs, ...common] : task.backend === 'agency'
-    ? ['copilot', '--hub', '--no-default-mcps', ...[...AGENCY_MCP_SERVERS, 'msft-learn'].filter(name => !shared[name]).flatMap(name => ['--mcp', name]), ...common]
+    ? ['copilot', '--hub', '--profile-only', `invoke-work-${task.sessionId}`, '--no-default-mcps', ...[...AGENCY_MCP_SERVERS, 'msft-learn'].filter(name => !shared[name]).flatMap(name => ['--mcp', name]), ...common]
     : common;
   return { executable, args, logDir, directory, env: task.readOnly ? agencyReadEnvironment(env) : env, prompt: copilotPrompt(task, area, env) };
 }
@@ -93,12 +93,12 @@ export function resolveVSCodeInstallation(env = process.env) {
   throw new Error('VS Code not found. Set VSCODE_PATH to its installation directory.');
 }
 
-export function createVSCodeBridge(dataDir, env = process.env, { agencyMcp } = {}) {
+export function createVSCodeBridge(dataDir, env = process.env, { agencyMcp, spawnImpl = spawn } = {}) {
   let handoff = Promise.resolve();
   let workspaceReady;
   let closed = false;
   const sessions = new Map();
-  const git = (cwd, args) => execute('git', args, { cwd, windowsHide: true, timeout: 30000, maxBuffer: 1024 * 1024 });
+  const git = (cwd, args, options = {}) => execute('git', args, { cwd, windowsHide: true, timeout: 30000, maxBuffer: 1024 * 1024, ...options });
   async function ensureWorkspace(repoPath) {
     if (repoPath !== defaultWorkspacePath(dataDir)) return;
     if (realpathSync.native(repoPath) !== repoPath) throw new Error('Default workspace must stay inside the application data directory');
@@ -135,21 +135,30 @@ export function createVSCodeBridge(dataDir, env = process.env, { agencyMcp } = {
     const { executable, cli } = resolveVSCodeInstallation(env);
     return execute(executable, [cli, ...args], { cwd, env: { ...env, ELECTRON_RUN_AS_NODE: '1' }, windowsHide: true, timeout: 20000, maxBuffer: 1024 * 1024 });
   }
-  async function runSession(task, area, report, { prompt = task.objective, resume = false } = {}) {
+  async function runSession(task, area, report, { prompt = task.objective, resume = false, signal } = {}) {
+    signal?.throwIfAborted();
     const backend = task.backend === 'agency' ? 'agency' : 'copilot';
     const sessionDir = path.join(dataDir, backend, 'sessions');
     mkdirSync(sessionDir, { recursive: true });
     const sessionLog = path.join(sessionDir, `${task.id}.jsonl`);
     if (task.backend === 'agency') await agencyMcp?.start();
+    signal?.throwIfAborted();
     if (closed) throw new Error('Application is shutting down; queued messages remain paused.');
     const launchTask = { ...task, dataDir };
-    if (task.readOnly && resume) Object.assign(launchTask, await prepareAgencyRead(task, dataDir, env));
+    if (task.readOnly && resume) Object.assign(launchTask, await prepareAgencyRead(task, dataDir, env, undefined, { signal }));
+    if (backend === 'agency' && !task.readOnly) {
+      await execute(env.AGENCY_CLI || (process.platform === 'win32' ? 'agency.exe' : 'agency'),
+        ['config', 'set', '--local', '--profile', `invoke-work-${task.sessionId}`, '--no-aec', '--mcp', 'msft-learn'],
+        { cwd: task.worktree, env, windowsHide: true, timeout: 30000, maxBuffer: 65536, signal });
+    }
+    signal?.throwIfAborted();
     if (closed) throw new Error('Application is shutting down; queued messages remain paused.');
     const launch = sessionLaunch(launchTask, area, env, { resume, mcpServers: agencyMcp?.configuration() });
     mkdirSync(launch.logDir, { recursive: true });
     const args = [...launch.args, '-p', resume ? copilotPrompt({ ...launchTask, objective: prompt }, area, env) : launch.prompt];
     const { executable } = launch;
-    const child = spawn(executable, args, { cwd: launch.directory, env: launch.env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawnImpl(executable, args, { cwd: launch.directory, env: launch.env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    child.once('spawn', () => report({ kind: 'progress', summary: `${backend === 'agency' ? 'Agency' : 'Copilot'} started working.` }));
     const output = createInterface({ input: child.stdout });
     let diagnostic = '';
     let finalText = '';
@@ -162,6 +171,7 @@ export function createVSCodeBridge(dataDir, env = process.env, { agencyMcp } = {
       else child.kill();
     };
     sessions.set(child, stopSession);
+    signal?.addEventListener('abort', stopSession, { once: true });
     const deadline = task.readOnly ? setTimeout(stopSession, 180000) : null;
     child.stderr.on('data', chunk => { diagnostic = (diagnostic + chunk.toString()).slice(-2000); });
     output.on('line', line => {
@@ -175,7 +185,6 @@ export function createVSCodeBridge(dataDir, env = process.env, { agencyMcp } = {
       }
       const toolName = event.data?.toolName || event.data?.name || event.data?.tool?.name;
       const toolOutput = event.data?.output || event.data?.content || event.data?.result;
-      if (event.type === 'assistant.turn_start') report({ kind: 'progress', summary: `${backend === 'agency' ? 'Agency' : 'Copilot'} started working.` });
       if (event.type === 'tool.execution_start') report({ kind: 'progress', summary: task.readOnly ? 'Checking sources.' : `Running ${String(toolName || 'tool').slice(0, 120)}.` });
       if (!task.readOnly && ['tool.execution_partial_result', 'tool.execution_complete'].includes(event.type) && toolOutput) {
         const summary = typeof toolOutput === 'string' ? toolOutput : JSON.stringify(toolOutput);
@@ -184,14 +193,16 @@ export function createVSCodeBridge(dataDir, env = process.env, { agencyMcp } = {
       if (!task.readOnly && ['assistant.message', 'session.task_complete'].includes(event.type) && finalText) report({ kind: 'progress', summary: finalText.slice(0, 600) });
     });
     return new Promise((resolve, reject) => {
-      child.once('error', error => { clearTimeout(deadline); reject(error); });
-      child.once('close', (code, signal) => {
+      child.once('error', error => { clearTimeout(deadline); signal?.removeEventListener('abort', stopSession); sessions.delete(child); reject(error); });
+      child.once('close', (code, exitSignal) => {
         sessions.delete(child);
+        signal?.removeEventListener('abort', stopSession);
         clearTimeout(deadline);
         output.close();
         const label = backend === 'agency' ? 'Agency' : 'Copilot CLI';
+        if (signal?.aborted) return reject(signal.reason);
         if (task.readOnly && !result && requestedStop) return reject(new Error('Agency read-only task timed out. Try a narrower question.'));
-        if (!result) return reject(new Error(`${label} ended without a result (${signal || (code ?? 'unknown')}). ${diagnostic}`.trim()));
+        if (!result) return reject(new Error(`${label} ended without a result (${exitSignal || (code ?? 'unknown')}). ${diagnostic}`.trim()));
         if (result.sessionId !== task.sessionId) return reject(new Error(`${label} returned a result for a different session.`));
         if (result.exitCode !== 0 || (code !== 0 && !requestedStop)) return reject(new Error(`${label} failed (${result.exitCode ?? code}). ${diagnostic}`.trim()));
         resolve({ sessionLog: task.readOnly ? undefined : sessionLog, result: finalText || `${label} completed.`, usage: result.usage });
@@ -211,9 +222,11 @@ export function createVSCodeBridge(dataDir, env = process.env, { agencyMcp } = {
       const { stdout } = await git(repoPath, ['rev-parse', '--show-prefix']);
       if (stdout.trim()) throw new Error('Register the Git repository root, not a subfolder');
     },
-    async prepare(task, area) {
-      if (task.readOnly) return prepareAgencyRead(task, dataDir, env);
+    async prepare(task, area, { signal } = {}) {
+      signal?.throwIfAborted();
+      if (task.readOnly) return prepareAgencyRead(task, dataDir, env, undefined, { signal });
       await ensureWorkspace(area.repoPath);
+      signal?.throwIfAborted();
       const managedRoot = realpathSync.native(dataDir);
       const worktreeRoot = path.join(realpathSync(dataDir), 'worktrees');
       mkdirSync(worktreeRoot, { recursive: true });
@@ -221,17 +234,17 @@ export function createVSCodeBridge(dataDir, env = process.env, { agencyMcp } = {
       if (normalize(realpathSync.native(worktreeRoot)) !== normalize(path.join(managedRoot, 'worktrees'))) throw new Error('Managed worktrees must stay inside the application data directory');
       const worktree = path.join(worktreeRoot, task.id);
       const branch = `voice/${task.id.slice(0, 8)}`;
-      await git(area.repoPath, ['worktree', 'add', '-b', branch, worktree, area.baseRef]);
+      await git(area.repoPath, ['worktree', 'add', '-b', branch, worktree, area.baseRef], { signal });
       const resolvedWorktree = realpathSync.native(worktree);
       const relative = path.relative(managedRoot, resolvedWorktree);
       if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) throw new Error('Managed worktree escaped the application data directory');
       return { worktree: realpathSync(worktree), branch };
     },
-    dispatch(task, area, report) {
-      return runSession(task, area, report);
+    dispatch(task, area, report, options) {
+      return runSession(task, area, report, options);
     },
-    continue(task, area, prompt, report) {
-      return runSession(task, area, report, { prompt, resume: true });
+    continue(task, area, prompt, report, options) {
+      return runSession(task, area, report, { ...options, prompt, resume: true });
     },
     async invokeVSCode({ prompt, model, context, directory, requestId }) {
       const folder = path.join(dataDir, 'vscode-requests');

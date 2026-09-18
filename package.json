@@ -1,6 +1,6 @@
 {
   "name": "invoke-desktop",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": true,
   "type": "module",
   "main": "desktop.cjs",
@@ -25,6 +25,7 @@
     "local:check": "node --env-file-if-exists=.env scripts/start.mjs --local --check",
     "copilot:check": "node --env-file-if-exists=.env scripts/check-copilot.mjs",
     "agency:check": "node --env-file-if-exists=.env scripts/check-copilot.mjs --agency",
+    "agency:setup:check": "node --env-file-if-exists=.env scripts/check-agency-setup.mjs",
     "agency:read:check": "node scripts/check-agency-read.mjs",
     "test": "node --test test/*.test.mjs",
     "desktop": "npm run build && node scripts/desktop-icon.mjs && electron desktop.cjs",

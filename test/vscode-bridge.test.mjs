@@ -1,10 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
+import { EventEmitter, once } from 'node:events';
+import { PassThrough } from 'node:stream';
 import { copilotPrompt, createVSCodeBridge, sessionEventText, sessionLaunch, worktreeWindowArgs } from '../src/vscode-bridge.mjs';
 import { Supervisor } from '../src/supervisor.mjs';
 import { agencyReadPolicy, prepareAgencyRead } from '../src/agency-read.mjs';
@@ -158,12 +160,54 @@ test('builds explicit Copilot and Agency start and resume commands', () => {
   assert.deepEqual(copilot.args.slice(-4), ['--session-id', base.sessionId, '--agent', 'builder']);
   const agency = sessionLaunch({ ...base, backend: 'agency' }, area, { AGENCY_CLI: 'agency-test' }, { resume: true });
   assert.equal(agency.executable, 'agency-test');
-  assert.deepEqual(agency.args.slice(0, 11), ['copilot', '--hub', '--no-default-mcps', '--mcp', 'bluebird', '--mcp', 'workiq', '--mcp', 'teams', '--mcp', 'msft-learn']);
+  assert.deepEqual(agency.args.slice(0, 13), ['copilot', '--hub', '--profile-only', `invoke-work-${base.sessionId}`, '--no-default-mcps', '--mcp', 'bluebird', '--mcp', 'workiq', '--mcp', 'teams', '--mcp', 'msft-learn']);
   assert.equal(copilot.args.includes('--mcp'), false);
   assert.equal(agency.args.includes('workiq'), true);
   assert.ok(agency.args.includes(`--resume=${base.sessionId}`));
   assert.equal(agency.args.includes('--session-id'), false);
   assert.equal(agency.prompt.includes(base.sessionId), false);
+});
+
+test('agent progress reports one process start across multiple model turns', async context => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-progress-'));
+  context.after(() => rmSync(dataDir, { recursive: true, force: true }));
+  const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough() });
+  const bridge = createVSCodeBridge(dataDir, {}, { spawnImpl: () => child });
+  const reports = [];
+  const task = { id: 'task', backend: 'copilot', worktree: dataDir, sessionId: 'session', objective: 'Check work', model: 'test', context: 'default' };
+  const pending = bridge.dispatch(task, {}, event => reports.push(event));
+  child.emit('spawn');
+  for (let turn = 0; turn < 4; turn++) {
+    child.stdout.write(`${JSON.stringify({ type: 'assistant.turn_start' })}\n`);
+    child.stdout.write(`${JSON.stringify({ type: 'tool.execution_start', data: { toolName: 'read' } })}\n`);
+  }
+  child.stdout.write(`${JSON.stringify({ type: 'session.task_complete', data: { summary: 'Correct answer' } })}\n`);
+  child.stdout.write(`${JSON.stringify({ type: 'result', sessionId: 'session', exitCode: 0 })}\n`);
+  child.emit('close', 0, null);
+  assert.equal((await pending).result, 'Correct answer');
+  assert.equal(reports.filter(event => event.summary.endsWith('started working.')).length, 1);
+  assert.equal(reports.filter(event => event.summary === 'Running read.').length, 4);
+});
+
+test('cancelling a bridge session stops its owned process tree and rejects late results', { timeout: 15000 }, async context => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-cancel-process-'));
+  let child;
+  const bridge = createVSCodeBridge(dataDir, {}, { spawnImpl: () => {
+    child = spawn(process.execPath, ['-e', "const { spawn } = require('node:child_process'); const worker = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' }); process.send({ pid: worker.pid }); setInterval(() => {}, 1000);"], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
+    return child;
+  } });
+  context.after(async () => { await bridge.close(); rmSync(dataDir, { recursive: true, force: true }); });
+  const controller = new AbortController();
+  const task = { id: 'task', backend: 'copilot', worktree: dataDir, sessionId: 'session', objective: 'Check', model: 'test', context: 'default' };
+  const pending = bridge.dispatch(task, {}, () => {}, { signal: controller.signal });
+  const rejected = assert.rejects(pending, error => error.name === 'AbortError');
+  const [{ pid: descendantPid }] = await once(child, 'message');
+  assert.equal(Number.isInteger(descendantPid), true);
+  controller.abort();
+  await rejected;
+  assert.throws(() => process.kill(child.pid, 0), /ESRCH/);
+  if (process.platform === 'win32') assert.throws(() => process.kill(descendantPid, 0), /ESRCH/);
+  else process.kill(descendantPid);
 });
 
 test('read-only Agency launch exposes only curated MCP reads and rejects changed consent', async () => {

@@ -5,7 +5,7 @@ import { assertLoopback, providerProfiles, resolveEndpoint } from './llm/provide
 
 export { assertLoopback, providerProfiles, resolveEndpoint };
 
-export const voiceInstructions = `${supervisorInstructions} Respond in brief, natural spoken sentences without markdown or routing prefixes. If the user says the request is fulfilled or they are done, ask once to confirm ending; after confirmation call end_call.`;
+export const voiceInstructions = `${supervisorInstructions} Respond in brief, natural spoken sentences without markdown or routing prefixes.`;
 
 class ReasoningFilter {
   constructor() {
@@ -145,6 +145,20 @@ function stableMutationId(baseRequestId, name, args) {
   return `${baseRequestId || 'req'}-${hash}`;
 }
 
+function validateToolArgs(args, schema) {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return 'Tool arguments must be a JSON object.';
+  for (const key of schema.required || []) {
+    if (!Object.hasOwn(args, key)) return `Missing required argument: ${key}`;
+  }
+  for (const [key, value] of Object.entries(args)) {
+    const property = schema.properties[key];
+    if (!Object.hasOwn(schema.properties, key)) return `Unknown argument: ${key}. Use only the tool schema fields.`;
+    if (typeof value !== property.type) return `Argument ${key} must be ${property.type}.`;
+    if (property.enum && !property.enum.includes(value)) return `Argument ${key} must be one of: ${property.enum.join(', ')}.`;
+  }
+  return null;
+}
+
 function prepareMessages(messages = [], { maxMessages = 12, maxChars = 16000, maxTextChars = 16000 } = {}) {
   const allowed = [];
   for (const m of messages || []) {
@@ -282,7 +296,7 @@ export async function* streamReply({
   const isAnthropic = provider === 'anthropic';
   const requestTools = profile === 'voice' ? voiceTools : supervisorTools;
   const anthropicTools = requestTools.map(tool => ({ name: tool.function.name, description: tool.function.description, input_schema: tool.function.parameters }));
-  const allowedToolNames = new Set(requestTools.map(tool => tool.function.name));
+  const toolSchemas = new Map(requestTools.map(tool => [tool.function.name, tool.function.parameters]));
   const instructions = themedInstructions(profile === 'voice' ? voiceInstructions : supervisorInstructions, persona);
   const contextTokens = provider === 'local' ? localContextTokens(env) : null;
   let workingMessages = prepareMessages(messages, provider === 'local'
@@ -290,28 +304,35 @@ export async function* streamReply({
     : undefined);
   let completed = false;
 
-  for (let round = 0; round < 4; round++) {
+  const maxToolRounds = 8;
+  for (let round = 0; round <= maxToolRounds; round++) {
     if (signal?.aborted) return;
-    if (provider === 'local') workingMessages = fitLocalMessages(workingMessages, instructions, contextTokens, requestTools);
+    const finalRound = round === maxToolRounds;
+    const roundInstructions = finalRound
+      ? `${instructions} Tool budget reached. Answer now using the tool results. State what succeeded and what remains unfinished; do not claim unconfirmed actions or request more tools.`
+      : instructions;
+    if (provider === 'local') workingMessages = fitLocalMessages(workingMessages, roundInstructions, contextTokens, requestTools);
     const fetchSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(60000)]) : AbortSignal.timeout(60000);
 
     let body;
     if (isAnthropic) {
       body = {
         model: config.model,
-        system: instructions,
+        system: roundInstructions,
         messages: formatAnthropicMessages(workingMessages),
         stream: true,
         max_tokens: profile === 'voice' ? 512 : 1024,
         tools: anthropicTools,
+        ...(finalRound ? { tool_choice: { type: 'none' } } : {}),
       };
     } else {
       body = {
         model: config.model,
-        messages: [{ role: 'system', content: instructions }, ...workingMessages.filter(m => m.role !== 'system')],
+        messages: [{ role: 'system', content: roundInstructions }, ...workingMessages.filter(m => m.role !== 'system')],
         stream: true,
         max_tokens: provider === 'local' || profile === 'voice' ? 512 : 1024,
         tools: requestTools,
+        ...(finalRound ? { tool_choice: 'none' } : {}),
       };
       if (provider === 'local') {
         body.chat_template_kwargs = { enable_thinking: false };
@@ -433,6 +454,8 @@ export async function* streamReply({
       break;
     }
 
+    if (finalRound) throw new Error('The model requested more tools after its budget ended. Completed actions were retained; ask for the remaining work separately.');
+    if (!streamCompleted) throw new Error('Tool call stream ended before completion');
     if (isAnthropic) {
       if (stopReason !== 'tool_use') {
         throw new Error(`Tool call stream ended without valid finish marker (stop_reason: ${stopReason})`);
@@ -476,17 +499,21 @@ export async function* streamReply({
         parsedArgs = { error: `Invalid JSON in tool arguments: ${err.message}` };
       }
 
-      const isStartWork = call.name === 'start_work';
-      const invocationKey = isStartWork
-        ? stableMutationId(requestId, call.name, parsedArgs)
-        : `${requestId || 'req'}-${round}-${i}-${callId}`;
+      const isRead = call.name === 'list_work' || call.name === 'get_work_status';
+      const invocationKey = isRead
+        ? `${requestId || 'req'}-${round}-${i}-${callId}`
+        : stableMutationId(requestId, call.name, parsedArgs);
       const toolCallContext = { requestId: invocationKey };
 
       let result;
-      if (!allowedToolNames.has(call.name)) {
+      const schema = toolSchemas.get(call.name);
+      const argumentError = schema && !parseFailed ? validateToolArgs(parsedArgs, schema) : null;
+      if (!schema) {
         result = { error: `Unauthorized or unknown tool: ${call.name}` };
       } else if (parseFailed) {
         result = parsedArgs;
+      } else if (argumentError) {
+        result = { error: argumentError };
       } else if (executedCalls.has(invocationKey)) {
         result = await executedCalls.get(invocationKey);
       } else {
@@ -528,6 +555,6 @@ export async function* streamReply({
     }
   }
 
-  if (!completed) throw new Error('Response exceeded the tool round limit');
+  if (!completed) throw new Error('Response did not complete');
   yield { type: 'done' };
 }

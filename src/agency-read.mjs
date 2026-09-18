@@ -21,7 +21,8 @@ export function agencyReadPolicy(env = process.env) {
   return { id: `${access}-v1`, executable, servers, tools };
 }
 
-export async function prepareAgencyRead(task, dataDir, env = process.env, run = execute) {
+export async function prepareAgencyRead(task, dataDir, env = process.env, run = execute, { signal } = {}) {
+  signal?.throwIfAborted();
   if (!/^[\w-]+$/.test(task.id) || !/^[\w-]+$/.test(task.sessionId)) throw new Error('Invalid read-only task identity');
   const policy = agencyReadPolicy(env);
   const parent = path.join(realpathSync.native(dataDir), 'agency-read');
@@ -33,7 +34,7 @@ export async function prepareAgencyRead(task, dataDir, env = process.env, run = 
   const profile = `voice-read-${task.sessionId}`;
   await run(policy.executable, ['config', 'set', '--local', '--no-aec', '--profile', profile,
     ...policy.servers.flatMap(server => ['--mcp', `voice-${server}: ${server}`])], {
-    cwd: directory, env: agencyReadEnvironment(env), windowsHide: true, timeout: 30000, maxBuffer: 65536,
+    cwd: directory, env: agencyReadEnvironment(env), windowsHide: true, timeout: 30000, maxBuffer: 65536, signal,
   });
   return { directory, agencyReadPolicy: policy.id, agencyProfile: profile };
 }

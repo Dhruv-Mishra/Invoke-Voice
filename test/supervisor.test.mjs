@@ -13,7 +13,7 @@ test('exports the canonical LLM tool schemas', () => {
   assert.equal(tools, contractTools);
   assert.equal(supervisorTools, contractSupervisorTools);
   assert.equal(supervisorInstructions, contractSupervisorInstructions);
-  assert.deepEqual(tools.map(tool => tool.function.name), ['list_work', 'start_work', 'send_work_message', 'get_work_status', 'open_work', 'delete_work', 'invoke_vscode', 'control_app']);
+  assert.deepEqual(tools.map(tool => tool.function.name), ['list_work', 'start_work', 'send_work_message', 'get_work_status', 'cancel_work', 'open_work', 'delete_work', 'invoke_vscode', 'control_app']);
   assert.equal(Object.hasOwn(tools[0].function.parameters, 'required'), false);
   assert.equal(tools[0].function.parameters.properties.query.type, 'string');
   assert.ok(supervisorInstructions.length < 1350);
@@ -217,7 +217,7 @@ test('deletes stale inactive work while protecting active work', async () => {
   try {
     const supervisor = new Supervisor({ dataDir, bridge: {}, now: () => clock });
     supervisor.state.tasks.push({ id: taskId, state: 'running', createdAt: clock - 180000, lastObservedAt: clock - 180000, observations: [], turns: [] });
-    supervisor.activeTasks.add(taskId);
+    supervisor.activeTasks.set(taskId, new AbortController());
     await assert.rejects(supervisor.callTool('delete_work', { taskId }), /Only finished or stale tasks/);
     supervisor.activeTasks.delete(taskId);
     assert.deepEqual(supervisor.toolStatus(taskId).actions, ['delete_work']);
@@ -426,6 +426,88 @@ test('settling tasks cannot be deleted and late worker logs cannot corrupt a fol
   reportNew({ kind: 'progress', summary: 'Late new log' });
   assert.equal(supervisor.task(receipt.taskId).observations.at(-1).summary, 'Next done');
   assert.equal(supervisor.snapshot().notifications.length, 2);
+});
+
+test('cancellation stops the selected task, drops its queue and ignores late completion', async context => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-cancel-'));
+  context.after(() => rmSync(dataDir, { recursive: true, force: true }));
+  const runs = new Map();
+  const supervisor = new Supervisor({ dataDir, bridge: {
+    prepare: async () => ({ directory: dataDir }),
+    dispatch: (task, _area, report, { signal }) => new Promise(resolve => runs.set(task.id, { signal, report, resolve })),
+    continue: async () => assert.fail('Cancelled follow-ups must not run'),
+  } });
+  const start = requestId => supervisor.callTool('start_work', { objective: requestId, readOnly: true }, { requestId });
+  const first = await start('Misheard task');
+  const other = await start('Other task');
+  await supervisor.callTool('send_work_message', { taskId: first.taskId, message: 'Queued' }, { requestId: 'queued' });
+  assert.equal(supervisor.status(first.taskId).canCancel, true);
+  assert.ok(supervisor.toolStatus(first.taskId).actions.includes('cancel_work'));
+  assert.equal((await supervisor.callTool('cancel_work', { taskId: first.taskId })).state, 'cancelling');
+  assert.equal(runs.get(first.taskId).signal.aborted, true);
+  assert.equal(runs.get(other.taskId).signal.aborted, false);
+  assert.equal(supervisor.status(first.taskId).deletable, false);
+  assert.equal(supervisor.status(first.taskId).canMessage, false);
+  supervisor.on('change', () => {
+    if (supervisor.task(first.taskId).state === 'cancelled' && supervisor.activeTasks.has(first.taskId)) {
+      assert.equal(supervisor.status(first.taskId).canMessage, false);
+      assert.equal(supervisor.status(first.taskId).canCancel, false);
+    }
+  });
+  await assert.rejects(supervisor.callTool('send_work_message', { taskId: first.taskId, message: 'Too late' }, { requestId: 'late' }), /not ready/);
+  runs.get(first.taskId).report({ summary: 'Late progress' });
+  runs.get(first.taskId).resolve({ result: 'Late success' });
+  runs.get(other.taskId).resolve({ result: 'Other result' });
+  await new Promise(setImmediate);
+  assert.equal(supervisor.status(first.taskId).state, 'cancelled');
+  assert.equal(supervisor.status(first.taskId).deletable, true);
+  assert.equal(supervisor.status(first.taskId).canMessage, true);
+  assert.equal(supervisor.task(first.taskId).turns[0].state, 'cancelled');
+  assert.equal(supervisor.task(first.taskId).observations.some(item => /Late/.test(item.summary)), false);
+  assert.equal(supervisor.snapshot().notifications.length, 1);
+  assert.equal((await supervisor.callTool('cancel_work', { taskId: first.taskId })).state, 'cancelled');
+  assert.equal(new Supervisor({ dataDir, bridge: {} }).status(first.taskId).state, 'cancelled');
+});
+
+test('cancellation during preparation never launches an agent', async context => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-cancel-prepare-'));
+  context.after(() => rmSync(dataDir, { recursive: true, force: true }));
+  let prepared;
+  const supervisor = new Supervisor({ dataDir, bridge: {
+    prepare: () => new Promise(resolve => { prepared = resolve; }),
+    dispatch: async () => assert.fail('Cancelled preparation must not dispatch'),
+  } });
+  const receipt = await supervisor.callTool('start_work', { objective: 'Misheard' }, { requestId: 'prepare' });
+  await supervisor.callTool('cancel_work', { taskId: receipt.taskId });
+  prepared({ worktree: dataDir });
+  await new Promise(setImmediate);
+  assert.equal(supervisor.status(receipt.taskId).state, 'cancelled');
+  assert.equal(supervisor.task(receipt.taskId).worktree, dataDir);
+});
+
+test('cancellation stops an active follow-up and clears a paused queue without replay', async context => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-cancel-followup-'));
+  context.after(() => rmSync(dataDir, { recursive: true, force: true }));
+  let finish;
+  let signal;
+  const supervisor = new Supervisor({ dataDir, bridge: {
+    prepare: async () => ({ directory: dataDir }),
+    dispatch: async () => ({ result: 'Initial done' }),
+    continue: (_task, _area, _message, _report, options) => { signal = options.signal; return new Promise((_resolve, reject) => { finish = reject; }); },
+  } });
+  const { taskId } = await supervisor.callTool('start_work', { objective: 'Read', readOnly: true }, { requestId: 'read' });
+  await new Promise(setImmediate);
+  await supervisor.callTool('send_work_message', { taskId, message: 'Follow up' }, { requestId: 'next' });
+  await supervisor.callTool('send_work_message', { taskId, message: 'Queued' }, { requestId: 'queued' });
+  await supervisor.callTool('cancel_work', { taskId });
+  assert.equal(signal.aborted, true);
+  finish(new Error('Stopped'));
+  await new Promise(setImmediate);
+  assert.deepEqual(supervisor.task(taskId).turns.map(turn => turn.state), ['cancelled', 'cancelled']);
+  supervisor.task(taskId).turns.push({ state: 'queued', message: 'Old paused message' });
+  supervisor.task(taskId).state = 'agent_failed';
+  assert.equal((await supervisor.callTool('cancel_work', { taskId })).state, 'cancelled');
+  assert.equal(supervisor.status(taskId).queued, undefined);
 });
 
 test('active follow-ups are persisted, idempotent and drain FIFO in the same session', async context => {

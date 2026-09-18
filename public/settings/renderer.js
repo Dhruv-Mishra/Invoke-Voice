@@ -19,6 +19,7 @@ export function createSettingsRenderer({
   idleEnd,
   integrationsTableBody,
   configFields,
+  privateWorkFields,
   configFeedback,
 }) {
   function populateOptions() {
@@ -146,9 +147,10 @@ export function createSettingsRenderer({
   function renderApplicationConfig() {
     if (!configFields) return;
     const config = getConfig();
-    const focusedField = configFields.contains(document.activeElement)
+    const focusedField = configFields.contains(document.activeElement) || privateWorkFields?.contains(document.activeElement)
       ? document.activeElement.closest('.config-field')?.querySelector('[data-config-key]')?.id : null;
     configFields.replaceChildren();
+    privateWorkFields?.replaceChildren();
     const warnings = Array.isArray(config?.configuration?.warnings) ? config.configuration.warnings : [];
     if (warnings.length && configFeedback && !configFeedback.textContent) {
       configFeedback.textContent = warnings.join(' ');
@@ -232,10 +234,11 @@ export function createSettingsRenderer({
           saved.textContent = 'Saved on this device';
           wrapper.appendChild(saved);
         }
-        grid.appendChild(wrapper);
+        if (field.key === 'AGENCY_WORK_DATA_ACCESS' && privateWorkFields) privateWorkFields.appendChild(wrapper);
+        else grid.appendChild(wrapper);
       }
       group.append(legend, grid);
-      configFields.appendChild(group);
+      if (grid.childElementCount) configFields.appendChild(group);
     }
     refreshPillbars();
     if (focusedField) {

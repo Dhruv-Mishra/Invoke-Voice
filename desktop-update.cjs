@@ -6,7 +6,7 @@ const { pipeline } = require('node:stream/promises');
 const semver = require('semver');
 
 const OWNER = 'Dhruv-Mishra';
-const REPOSITORY = 'VoiceOrchestration';
+const REPOSITORY = 'Invoke-Voice';
 const PRODUCT_NAME = 'Invoke';
 const RELEASES_URL = `https://api.github.com/repos/${OWNER}/${REPOSITORY}/releases?per_page=100`;
 const UPDATE_MANIFEST_URL = `https://github.com/${OWNER}/${REPOSITORY}/releases/latest/download/invoke-update.json`;

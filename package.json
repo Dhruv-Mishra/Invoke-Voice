@@ -5,10 +5,10 @@
   "type": "module",
   "main": "desktop.cjs",
   "description": "Invoke - From Voice to Agency. Local-first voice orchestration for coding, research and work.",
-  "homepage": "https://github.com/Dhruv-Mishra/VoiceOrchestration",
+  "homepage": "https://github.com/Dhruv-Mishra/Invoke-Voice",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Dhruv-Mishra/VoiceOrchestration.git"
+    "url": "https://github.com/Dhruv-Mishra/Invoke-Voice.git"
   },
   "author": {
     "name": "Dhruv Mishra",

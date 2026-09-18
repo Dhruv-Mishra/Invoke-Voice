@@ -4,7 +4,7 @@
 
 Invoke is a voice-first orchestration platform that transforms spoken intent into action, routing tasks across local and cloud models and initiating agentic sessions on the user's behalf.
 
-[Download for Windows](https://github.com/Dhruv-Mishra/VoiceOrchestration/releases/latest) | [Setup and operations](docs/operations.md) | [Demo guide](VIDEO_OVERVIEW.md)
+[Download for Windows](https://github.com/Dhruv-Mishra/Invoke-Voice/releases/latest) | [Setup and operations](docs/operations.md) | [Demo guide](VIDEO_OVERVIEW.md)
 
 ![Invoke home](docs/screenshots/home.webp)
 

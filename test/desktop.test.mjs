@@ -115,7 +115,7 @@ test('beta publisher builds before atomically pushing its version tag and prerel
 test('desktop allows setup documentation sources but rejects arbitrary URLs and protocols', context => {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'voice-desktop-links-'));
   context.after(() => rmSync(directory, { recursive: true, force: true }));
-  for (const url of ['https://aka.ms/agency', 'https://github.com/Dhruv-Mishra/VoiceOrchestration/releases', 'https://github.com/Dhruv-Mishra/VoiceOrchestration/releases/latest']) assert.equal(desktopLaunch.allowedExternal(url), true);
+  for (const url of ['https://aka.ms/agency', 'https://github.com/Dhruv-Mishra/Invoke-Voice/releases', 'https://github.com/Dhruv-Mishra/Invoke-Voice/releases/latest']) assert.equal(desktopLaunch.allowedExternal(url), true);
   for (const provider of ['whisper', 'moonshine']) {
     const setup = createLocalSetup({ env: { LOCALAPPDATA: directory, LOCAL_STT_PROVIDER: provider } });
     for (const component of setup.snapshot().components) assert.equal(desktopLaunch.allowedExternal(component.sourceUrl), true, component.sourceUrl);

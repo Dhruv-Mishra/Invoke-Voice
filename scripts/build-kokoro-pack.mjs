@@ -123,7 +123,7 @@ async function buildCompressedPack() {
   let descriptor;
   try { descriptor = JSON.parse(readFileSync(descriptorFile, 'utf8')); } catch {}
   if (descriptor?.format === 'wheelhouse-tar-xz-v1' && descriptor.sourceSha256 === sourceSha256 && existsSync(path.join(target, descriptor.filename)) && await sha256(path.join(target, descriptor.filename)) === descriptor.sha256) {
-    descriptor.urls = [`https://github.com/Dhruv-Mishra/VoiceOrchestration/releases/download/v${version}/${descriptor.filename}`];
+    descriptor.urls = [`https://github.com/Dhruv-Mishra/Invoke-Voice/releases/download/v${version}/${descriptor.filename}`];
     writeFileSync(descriptorFile, JSON.stringify(descriptor, null, 2) + '\n');
     console.log(`Verified compressed voice pack is current: ${target}`);
     return;
@@ -146,7 +146,7 @@ async function buildCompressedPack() {
     await verifyInstall(python, unpacked);
     const digest = await sha256(archive);
     const filename = `voice-dependencies-${digest.slice(0, 16)}.tar.xz`;
-    descriptor = { format: 'wheelhouse-tar-xz-v1', sourceSha256, filename, sha256: digest, size: statSync(archive).size, expandedSize, manifestSha256: await sha256(path.join(normalized, 'manifest.json')), urls: [`https://github.com/Dhruv-Mishra/VoiceOrchestration/releases/download/v${version}/${filename}`] };
+    descriptor = { format: 'wheelhouse-tar-xz-v1', sourceSha256, filename, sha256: digest, size: statSync(archive).size, expandedSize, manifestSha256: await sha256(path.join(normalized, 'manifest.json')), urls: [`https://github.com/Dhruv-Mishra/Invoke-Voice/releases/download/v${version}/${filename}`] };
     mkdirSync(target, { recursive: true });
     copyFileSync(archive, path.join(target, filename));
     writeFileSync(descriptorFile, JSON.stringify(descriptor, null, 2) + '\n');

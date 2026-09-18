@@ -9,7 +9,7 @@ import updater from '../desktop-update.cjs';
 
 const asset = (tag, version, suffix = '') => ({
   name: `Invoke-Setup-${version}.exe${suffix}`,
-  browser_download_url: `https://github.com/Dhruv-Mishra/VoiceOrchestration/releases/download/${tag}/Invoke-Setup-${version}.exe${suffix}`,
+  browser_download_url: `https://github.com/Dhruv-Mishra/Invoke-Voice/releases/download/${tag}/Invoke-Setup-${version}.exe${suffix}`,
 });
 
 const release = (version, { prerelease = version.includes('-'), draft = false, complete = true } = {}) => ({
@@ -29,13 +29,15 @@ test('update selection compares prereleases semantically and keeps stable instal
 });
 
 test('update asset URLs must belong to the selected repository, tag and filename', () => {
+  assert.equal(updater.RELEASES_URL, 'https://api.github.com/repos/Dhruv-Mishra/Invoke-Voice/releases?per_page=100');
+  assert.equal(updater.UPDATE_MANIFEST_URL, 'https://github.com/Dhruv-Mishra/Invoke-Voice/releases/latest/download/invoke-update.json');
   const name = 'Invoke-Setup-0.1.2.exe';
-  const valid = `https://github.com/Dhruv-Mishra/VoiceOrchestration/releases/download/v0.1.2/Invoke-Setup-0.1.2.exe`;
+  const valid = `https://github.com/Dhruv-Mishra/Invoke-Voice/releases/download/v0.1.2/Invoke-Setup-0.1.2.exe`;
   assert.equal(updater.validateReleaseAssetUrl(valid, 'v0.1.2', name), valid);
   for (const value of [
-    'https://github.com/evil/VoiceOrchestration/releases/download/v0.1.2/Voice%20Work%20Supervisor-Setup-0.1.2.exe',
-    'https://github.com/Dhruv-Mishra/VoiceOrchestration/releases/download/v9.0.0/Voice%20Work%20Supervisor-Setup-0.1.2.exe',
-    'https://github.com@evil.test/Dhruv-Mishra/VoiceOrchestration/releases/download/v0.1.2/Voice%20Work%20Supervisor-Setup-0.1.2.exe',
+    'https://github.com/evil/Invoke-Voice/releases/download/v0.1.2/Invoke-Setup-0.1.2.exe',
+    'https://github.com/Dhruv-Mishra/Invoke-Voice/releases/download/v9.0.0/Invoke-Setup-0.1.2.exe',
+    'https://github.com@evil.test/Dhruv-Mishra/Invoke-Voice/releases/download/v0.1.2/Invoke-Setup-0.1.2.exe',
   ]) assert.throws(() => updater.validateReleaseAssetUrl(value, 'v0.1.2', name), /release|trusted|match/i);
 });
 

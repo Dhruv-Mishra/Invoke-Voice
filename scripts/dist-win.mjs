@@ -46,7 +46,7 @@ const installerNames = [`${config.build.productName}-Setup-${config.version}.exe
 const manifest = {
   tag_name: tag, name: `${config.build.productName} ${config.version}`, draft: false,
   prerelease: config.version.includes('-'), published_at: new Date().toISOString(),
-  assets: installerNames.flatMap(name => [name, `${name}.sha256`]).map(name => ({ name, browser_download_url: `https://github.com/Dhruv-Mishra/VoiceOrchestration/releases/download/${tag}/${encodeURIComponent(name)}` })),
+  assets: installerNames.flatMap(name => [name, `${name}.sha256`]).map(name => ({ name, browser_download_url: `https://github.com/Dhruv-Mishra/Invoke-Voice/releases/download/${tag}/${encodeURIComponent(name)}` })),
 };
 writeFileSync(path.join(root, 'release', 'invoke-update.json'), `${JSON.stringify(manifest, null, 2)}\n`);
 await checksum(path.join(root, 'release', 'invoke-update.json'));

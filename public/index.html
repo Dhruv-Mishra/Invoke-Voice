@@ -165,7 +165,7 @@
     section.conversation-pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; border-left: 1px solid var(--cp-border); background: var(--cp-bg-elevated); overflow: hidden; }
 
     /* Work Areas Disclosure */
-    .areas-disclosure { flex-shrink: 0; border-bottom: 1px solid var(--cp-border); background: var(--cp-bg-elevated); }
+    .areas-disclosure { flex-shrink: 0; border: 0; background: var(--cp-bg-elevated); }
     .areas-summary {
       list-style: none;
       cursor: pointer;
@@ -234,7 +234,6 @@
       gap: 8px;
       font-size: 11px;
       color: var(--cp-text-muted);
-      border-top: 1px solid var(--cp-surface-soft);
       padding-top: 6px;
     }
 
@@ -247,7 +246,7 @@
     .chat-bubble.tool { align-self: flex-start; background: var(--cp-bg-elevated); border: 1px dashed var(--cp-border-strong); color: var(--cp-text-muted); font-size: 11px; }
     .chat-bubble.system { align-self: center; background: transparent; border: none; color: var(--cp-text-muted); font-size: var(--cp-type-xs); }
     .partial-line { color: var(--cp-text-muted); font-size: var(--cp-type-sm); padding: 4px 16px; flex-shrink: 0; }
-    .chat-input-bar { padding: 8px 16px; border-top: 1px solid var(--cp-border); background: var(--cp-surface); display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+    .chat-input-bar { padding: 8px 16px; border: 0; background: linear-gradient(var(--cp-border), var(--cp-border)) center top / calc(100% - 32px) 1px no-repeat var(--cp-surface); display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
     .chat-input-bar input { flex: 1; min-height: 36px; }
 
     /* Markdown Formatted Content */
@@ -279,6 +278,8 @@
     .btn-danger { background: var(--cp-surface); color: var(--cp-danger); border-color: var(--cp-danger); }
     .btn-danger:hover:not(:disabled) { background: var(--cp-surface-soft); }
     .btn-icon { width: 44px; min-width: 44px; height: 44px; padding: 0; justify-content: center; background: transparent; border-color: transparent; }
+    .btn-icon.btn-accent { background: var(--cp-accent); color: var(--cp-accent-fg); border-color: var(--cp-accent); }
+    .btn-icon.btn-accent:hover:not(:disabled) { background: var(--cp-accent-hover); border-color: var(--cp-accent-hover); }
     #quiet-mode-btn { width: auto; min-width: 36px; padding: 0 8px; gap: 4px; }
     .btn svg, .view-tab svg, .item-row svg, .task-card svg { width: 18px; height: 18px; flex-shrink: 0; vertical-align: middle; stroke-width: 1.75; }
     .btn-icon svg { width: 18px; height: 18px; }
@@ -299,6 +300,7 @@
     textarea { resize: vertical; }
     input:is([type="text"], [type="url"], [type="number"], [type="password"]):hover:not(:disabled), textarea:hover:not(:disabled), select:hover:not(:disabled) { border-color: var(--cp-border-strong); }
     input:is([type="text"], [type="url"], [type="number"], [type="password"]):focus, textarea:focus, select:focus { border-color: var(--cp-accent); }
+    input:is([type="text"], [type="url"], [type="number"], [type="password"]):focus-visible, textarea:focus-visible, select:focus-visible { outline-offset: 0; }
     input::placeholder, textarea::placeholder { color: var(--cp-text-soft); opacity: 1; }
     input:disabled, textarea:disabled, select:disabled { opacity: 0.6; cursor: not-allowed; }
     input[type="checkbox"], input[type="radio"] { accent-color: var(--cp-accent); flex-shrink: 0; width: 16px; height: 16px; }
@@ -391,15 +393,16 @@
       width: min(520px, calc(100vw - 32px)); margin: auto;
     }
     dialog::backdrop { background: var(--cp-overlay); }
-    .dialog-header { font-size: 18px; font-weight: 600; margin-bottom: var(--cp-space-6); padding-bottom: var(--cp-space-4); border-bottom: 1px solid var(--cp-border); display: flex; justify-content: space-between; align-items: center; gap: var(--cp-space-3); }
+    .dialog-header { font-size: 18px; font-weight: 600; margin-bottom: var(--cp-space-6); padding-bottom: var(--cp-space-4); border: 0; background: linear-gradient(color-mix(in srgb, var(--cp-border) 44%, transparent), color-mix(in srgb, var(--cp-border) 44%, transparent)) center bottom / 100% 1px no-repeat; display: flex; justify-content: space-between; align-items: center; gap: var(--cp-space-3); }
     .dialog-header .btn { min-height: 44px; width: 44px; flex-shrink: 0; padding: 0; justify-content: center; border-radius: var(--cp-radius-control); }
-    .dialog-actions { margin-top: var(--cp-space-6); padding-top: var(--cp-space-4); border-top: 1px solid var(--cp-border); }
+    .dialog-actions { margin-top: var(--cp-space-6); padding-top: 0; border: 0; }
+    .app-dialog .dialog-header { margin-bottom: var(--cp-space-5); padding-bottom: 0; background: none; }
     .form-group { min-width: 0; display: flex; flex-direction: column; gap: var(--cp-space-2); margin-bottom: var(--cp-space-4); }
     .form-group:last-child { margin-bottom: 0; }
     .form-row-checkbox { display: flex; align-items: center; gap: var(--cp-space-3); min-height: var(--cp-control-height); margin-bottom: 0; font-size: 13px; }
     label.control-label { font-size: var(--cp-type-sm); color: var(--cp-text-muted); font-weight: 400; text-transform: none; letter-spacing: 0; }
 
-    .advanced-disclosure { margin: var(--cp-space-4) 0; padding: var(--cp-space-3) 0; border-block: 1px solid var(--cp-border); background: transparent; }
+    .advanced-disclosure { margin: var(--cp-space-4) 0; padding: var(--cp-space-3); border: 0; border-radius: var(--cp-radius-control); background: var(--cp-surface-soft); }
     .advanced-disclosure summary { cursor: pointer; font-weight: 600; font-size: 13px; color: var(--cp-text-muted); letter-spacing: 0; user-select: none; }
     .advanced-disclosure .form-group { margin-top: 0; }
 
@@ -526,7 +529,7 @@
         <div class="areas-toolbar">
           <button class="btn" id="btn-new-area" type="button" aria-label="Register Work Area">
             <i data-lucide="plus"></i>
-            <span>Add Area</span>
+            <span>Add area</span>
           </button>
         </div>
         <div class="scroll-list" id="areas-list" role="region" aria-label="Registered Work Areas">
@@ -577,7 +580,7 @@
   <section class="tool-lab" id="tool-lab-view" role="tabpanel" aria-label="Tool Lab" hidden>
     <aside class="tool-catalog" aria-label="Available LLM tools">
       <div class="tool-catalog-header">
-        <span class="section-title">LLM Tools</span>
+        <span class="section-title">LLM tools</span>
         <span class="badge" id="tool-count">0</span>
       </div>
       <div class="tool-list" id="tool-list" role="listbox" aria-label="Tool selector"></div>
@@ -594,7 +597,7 @@
         <form class="tool-form" id="tool-form"></form>
         <details class="tool-output advanced-disclosure">
           <summary class="tool-output-header">
-            <span class="section-title">Request &amp; Result</span>
+            <span class="section-title">Request &amp; result</span>
             <span class="badge" id="tool-run-status">Idle</span>
           </summary>
           <pre id="tool-result" aria-live="polite">Select a tool to inspect its arguments.</pre>
@@ -794,7 +797,7 @@
       <div class="section-header">
         <h2 class="section-title" id="conversation-title">Conversation</h2>
         <div class="conversation-actions">
-          <span id="session-reset-notice" class="badge badge-warning" style="display: none;">Session Context Reset</span>
+          <span id="session-reset-notice" class="badge badge-warning" style="display: none;">Session context reset</span>
           <button class="btn btn-icon" id="btn-clear-chat" type="button" aria-label="Clear Chat History" title="Clear conversation"><i data-lucide="trash-2"></i></button>
           <button class="btn btn-icon" id="close-chat-btn" type="button" aria-label="Close conversation" title="Close conversation"><i data-lucide="x"></i></button>
         </div>
@@ -811,16 +814,16 @@
   <dialog id="area-dialog" aria-labelledby="area-dialog-title">
     <form id="area-form" method="dialog">
       <div class="dialog-header">
-        <span id="area-dialog-title">Register Work Area</span>
+        <span id="area-dialog-title">Register work area</span>
         <button type="button" class="btn btn-icon" id="area-dialog-close" aria-label="Close dialog" title="Close dialog"><i data-lucide="x"></i></button>
       </div>
       <input type="hidden" id="area-id-input">
       <div class="form-group">
-        <label class="control-label" for="area-name-input">Area Name *</label>
+        <label class="control-label" for="area-name-input">Area name *</label>
         <input type="text" id="area-name-input" required placeholder="e.g. PDF Encryption">
       </div>
       <div class="form-group">
-        <label class="control-label" for="area-repo-input">Repository Path *</label>
+        <label class="control-label" for="area-repo-input">Repository path *</label>
         <input type="text" id="area-repo-input" required placeholder="C:\path\to\repo or relative">
       </div>
       <div class="form-group">
@@ -832,20 +835,20 @@
         <textarea id="area-instructions-input" rows="3" placeholder="Context or constraints for coding agents in this area..."></textarea>
       </div>
       <div class="form-group">
-        <label class="control-label" for="area-agent-select">Agent Choice</label>
+        <label class="control-label" for="area-agent-select">Agent choice</label>
         <select id="area-agent-select" aria-label="Agent Choice"></select>
       </div>
       <div class="form-group" id="area-custom-agent-group">
-        <label class="control-label" for="area-agent-input">Agent Identifier</label>
+        <label class="control-label" for="area-agent-input">Agent identifier</label>
         <input type="text" id="area-agent-input" value="agent" placeholder="agent">
       </div>
       <div class="form-group">
-        <label class="control-label" for="area-base-ref-input">Base Git Ref (default: HEAD)</label>
+        <label class="control-label" for="area-base-ref-input">Base Git ref (default: HEAD)</label>
         <input type="text" id="area-base-ref-input" value="HEAD" placeholder="HEAD">
       </div>
       <label class="form-row-checkbox toggle-control" for="area-allow-publish-input">
         <input type="checkbox" id="area-allow-publish-input">
-        <span class="toggle-track" aria-hidden="true"></span><span>Allow Publish (commits, pushes, draft PRs)</span>
+        <span class="toggle-track" aria-hidden="true"></span><span>Allow publishing (commits, pushes, draft PRs)</span>
       </label>
       <label class="form-row-checkbox toggle-control" for="area-default-input">
         <input type="checkbox" id="area-default-input">
@@ -854,10 +857,10 @@
       <div class="dialog-actions">
         <button type="button" class="btn btn-danger" id="area-delete-btn" style="margin-right: auto; display: none;">
           <i data-lucide="trash-2"></i>
-          <span>Delete Area</span>
+          <span>Delete area</span>
         </button>
         <button type="button" class="btn" id="area-cancel-btn">Cancel</button>
-        <button type="submit" class="btn btn-accent" id="area-save-btn">Save Area</button>
+        <button type="submit" class="btn btn-accent" id="area-save-btn">Save area</button>
       </div>
     </form>
   </dialog>
@@ -869,11 +872,11 @@
         <button type="button" class="btn btn-icon" id="task-dialog-close" aria-label="Close dialog" title="Close dialog"><i data-lucide="x"></i></button>
       </div>
       <div class="form-group">
-        <label class="control-label" for="task-area-select">Work Area</label>
+        <label class="control-label" for="task-area-select">Work area</label>
         <select id="task-area-select" aria-label="Select Work Area"></select>
       </div>
       <div class="form-group">
-        <label class="control-label" for="task-backend-select">Coding Backend</label>
+        <label class="control-label" for="task-backend-select">Coding agent</label>
         <select id="task-backend-select" data-pillbar aria-label="Select Coding Backend"></select>
       </div>
       <div class="form-group">
@@ -883,7 +886,7 @@
       <details class="advanced-disclosure">
         <summary>Model &amp; agent options</summary>
         <div class="form-group">
-          <label class="control-label" for="task-model-select">Copilot Model</label>
+          <label class="control-label" for="task-model-select">Copilot model</label>
           <select id="task-model-select" aria-label="Copilot Model"></select>
         </div>
         <div class="form-group">
@@ -928,13 +931,13 @@
   <dialog id="continue-thread-dialog" aria-labelledby="continue-dialog-title">
     <form id="continue-thread-form" method="dialog">
       <div class="dialog-header">
-        <span id="continue-dialog-title">Continue Thread</span>
+        <span id="continue-dialog-title">Continue task</span>
         <button type="button" class="btn btn-icon" id="continue-dialog-close" aria-label="Close dialog" title="Close dialog"><i data-lucide="x"></i></button>
       </div>
       <input type="hidden" id="continue-task-id">
       <div id="continue-task-context" class="form-group"></div>
       <div class="form-group">
-        <label class="control-label" for="continue-message-input">Follow-up Instructions *</label>
+        <label class="control-label" for="continue-message-input">Follow-up instructions *</label>
         <textarea id="continue-message-input" required rows="4" placeholder="Describe the follow-up request or next steps..."></textarea>
       </div>
       <div class="dialog-actions">
@@ -1023,8 +1026,8 @@
       <button class="btn btn-icon" id="quiet-mode-btn" type="button" aria-label="Toggle Quiet Mode" aria-pressed="false" title="Block proactive spoken notifications">
         <i data-lucide="bell-off"></i><span class="badge" id="quiet-badge" style="display: none;">On</span>
       </button>
-      <button class="btn" id="ptt-btn" type="button" disabled aria-label="Hold to talk or commit speech" title="Commit speech or hold to talk in PTT mode">
-        <i data-lucide="radio"></i><span id="ptt-btn-label">Commit</span>
+      <button class="btn" id="ptt-btn" type="button" disabled hidden aria-label="Push to talk" title="Hold while speaking">
+        <i data-lucide="radio"></i><span id="ptt-btn-label">Push to talk</span>
       </button>
     </div>
     </div>

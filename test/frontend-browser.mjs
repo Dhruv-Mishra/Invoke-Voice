@@ -455,6 +455,15 @@ try {
   for (const width of [820, 390]) {
     resizeWindow(width, 844);
     await visit('workspace');
+    if (width === 390 && await evaluate(() => document.getElementById('areas-disclosure').open)) await pointerClick('#areas-disclosure > summary');
+    if (width === 390) {
+      assert.equal(await evaluate(() => {
+        const title = document.querySelector('.task-card .task-title').getBoundingClientRect();
+        const actions = document.querySelector('.task-card .task-actions').getBoundingClientRect();
+        return Math.abs(title.top - actions.top) < 2;
+      }), true, 'mobile task actions stay aligned with long titles');
+      await screenshot('tasks-mobile');
+    }
     if (!await evaluate(() => document.getElementById('areas-disclosure').open)) await pointerClick('#areas-disclosure > summary');
     await pointerClick('#btn-new-area');
     await waitFor(() => document.getElementById('area-dialog').matches(':modal'));
@@ -467,6 +476,7 @@ try {
     assert.equal(await evaluate(() => document.body.dataset.view), 'workspace');
     await pointerClick('#btn-new-task');
     assert.ok(await checkEditableInputs('#new-task-dialog') >= 1);
+    if (width === 390) await screenshot('new-task-mobile');
     await pointerClick('#task-dialog-close');
     await visit('settings');
     await pointerClick('#settings-route-btn');
@@ -483,6 +493,32 @@ try {
   }
   resizeWindow(1440, 960);
   await settle();
+  await visit('workspace');
+  assert.equal(await evaluate(() => {
+    const dialogHeader = document.querySelector('.view-dialog-header');
+    const style = getComputedStyle(dialogHeader);
+    return style.borderBottomWidth === '0px'
+      && style.backgroundImage !== 'none'
+      && style.backgroundSize.endsWith(' 1px')
+      && style.backgroundSize !== 'auto';
+  }), true, 'view titles use a subtle inset divider');
+  assert.equal(await evaluate(() => {
+    const disclosure = document.getElementById('areas-disclosure').getBoundingClientRect();
+    const taskListElement = document.getElementById('tasks-list');
+    const taskList = taskListElement.getBoundingClientRect();
+    const taskContentLeft = taskList.left + parseFloat(getComputedStyle(taskListElement).paddingLeft);
+    return Math.abs(disclosure.left - taskContentLeft) < 1
+      && getComputedStyle(document.querySelector('.section-header')).borderBottomWidth === '0px';
+  }), true, 'task chrome aligns with content without stacked rules');
+  await screenshot('tasks-desktop');
+  await pointerClick('#btn-new-task');
+  assert.equal(await evaluate(() => {
+    const field = getComputedStyle(document.getElementById('task-objective-input'));
+    const option = getComputedStyle(document.querySelector('#new-task-dialog [data-for="task-backend-select"] button'));
+    return field.fontFamily === option.fontFamily && field.fontSize === option.fontSize;
+  }), true, 'new task fields share one type treatment');
+  await screenshot('new-task-desktop');
+  await pointerClick('#task-dialog-close');
   await visit('settings');
   const themeEventConnections = eventConnections;
   const themeBeforePreview = await evaluate(() => document.documentElement.dataset.appearance);
@@ -650,6 +686,13 @@ try {
   assert.equal(await evaluate(() => document.querySelector('#new-task-dialog details').open), false);
   await click('#task-dialog-close');
   await click('#open-chat-btn');
+  await settle();
+  assert.equal(await evaluate(() => {
+    const send = getComputedStyle(document.getElementById('btn-send-chat'));
+    return send.backgroundColor !== 'rgba(0, 0, 0, 0)' && send.color !== send.backgroundColor;
+  }), true, 'composer send action remains visually distinct');
+  await assertPainted('#conversation-dialog');
+  await screenshot('conversation-desktop');
   console.log('Browser fixture: checking typed chat');
   await typeText('#chat-input', '<img src=x onerror=alert(1)> hello');
   await click('#btn-send-chat');
@@ -676,7 +719,8 @@ try {
 
   await pointerClick('#voice-options-btn');
   assert.equal(await evaluate(() => !document.getElementById('mute-mic-opt')
-    && document.querySelector('[data-for="ptt-mode-opt"] [aria-checked="true"]').value === 'voice'), true);
+    && document.querySelector('[data-for="ptt-mode-opt"] [aria-checked="true"]').value === 'voice'
+    && document.getElementById('ptt-btn').hidden), true);
   await pointerClick('#dock-route-btn');
   assert.equal(await evaluate(() => document.querySelector('[data-for="pipeline-mode"] [aria-checked="true"]').value), 'dedicated');
   assert.equal(await evaluate(() => [...document.querySelectorAll('#dedicated-pipeline [data-for] button')].every(button => button.querySelector('svg'))), true);
@@ -719,8 +763,13 @@ try {
   await waitFor(() => document.getElementById('app-dialog').open);
   assert.equal(await evaluate(() => {
     const dialog = document.getElementById('app-dialog');
-    return dialog.matches(':modal') && dialog.textContent.includes('Selected route is not configured.');
+    const header = getComputedStyle(dialog.querySelector('.dialog-header'));
+    const actions = getComputedStyle(dialog.querySelector('.dialog-actions'));
+    return dialog.matches(':modal') && dialog.textContent.includes('Selected route is not configured.')
+      && header.backgroundImage === 'none' && actions.borderTopWidth === '0px';
   }), true);
+  await settle();
+  await screenshot('alert-desktop');
   await click('[data-app-dialog-accept]');
   await choose('#provider-select', 'local');
 
@@ -790,6 +839,10 @@ try {
   await voice({ type: 'transcript', role: 'assistant', text: 'Agent reply', partial: false });
   await pointerClick('#voice-options-btn');
   await pointerClick('[data-for="ptt-mode-opt"] button[value="ptt"]');
+  assert.equal(await evaluate(() => {
+    const button = document.getElementById('ptt-btn');
+    return !button.hidden && button.textContent.trim() === 'Push to talk';
+  }), true);
   await pointerClick('#open-chat-btn');
   await typeText('#chat-input', 'Spaces remain editable during push to talk');
   await pointerClick('#close-chat-btn');

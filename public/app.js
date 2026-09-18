@@ -1127,12 +1127,11 @@ document.addEventListener('visibilitychange', syncVoiceMeter);
 
 pttModeOpt.addEventListener('change', () => {
   isPttMode = pttModeOpt.value === 'ptt';
+  pttBtn.hidden = !isPttMode;
   if (isPttMode) {
-    pttBtnLabel.textContent = 'Push to Talk';
-    pttBtn.title = 'Hold while speaking or hold Spacebar, release to commit';
+    pttBtnLabel.textContent = 'Push to talk';
+    pttBtn.title = 'Hold while speaking or hold Spacebar';
   } else {
-    pttBtnLabel.textContent = 'Commit';
-    pttBtn.title = 'Click to flush and commit speech';
     if (isPttHeld) {
       endPttHold();
     }
@@ -1141,10 +1140,7 @@ pttModeOpt.addEventListener('change', () => {
 
 pttBtn.addEventListener('pointerdown', (e) => {
   if (!voiceSocket || voiceSocket.readyState !== WebSocket.OPEN || !isServerReady) return;
-  if (!isPttMode) {
-    flushAndCommit();
-    return;
-  }
+  if (!isPttMode) return;
   startPttHold();
   try { pttBtn.setPointerCapture(e.pointerId); } catch (_) {}
 });

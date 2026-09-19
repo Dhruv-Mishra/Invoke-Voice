@@ -654,7 +654,7 @@ function syncPipelineControls() {
   document.getElementById('cloud-consent-row').hidden = native || [sttProvider.value, providerSelect.value, ttsProvider.value].every(provider => provider === 'local');
   const configuredValue = (key, fallback) => appConfig?.configuration?.fields?.find(field => field.key === key)?.value || fallback;
   const model = selectedTextModel();
-  modelName.value = ({ 'ling-local': 'Ling', 'gpt-5.6-sol': 'GPT-5.6 Sol', 'gemini-3.8-flash': 'Gemini 3.8 Flash' })[model] || model;
+  modelName.value = ({ 'ling-local': 'Local GGUF', 'gpt-5.6-sol': 'GPT-5.6 Sol', 'gemini-3.8-flash': 'Gemini 3.8 Flash' })[model] || model;
   modelName.title = model;
   document.getElementById('native-model-name').textContent = appConfig?.voiceModes?.find(mode => mode.id === nativeProvider.value)?.model || '';
   document.getElementById('stt-model-name').textContent = sttProvider.value === 'local' ? appConfig?.local?.sttLabel || 'Local speech recognition' : sttProvider.value === 'openai' ? configuredValue('OPENAI_STT_MODEL', 'gpt-4o-mini-transcribe') : configuredValue('GEMINI_STT_MODEL', 'gemini-3.8-flash');
@@ -929,6 +929,8 @@ async function startVoiceSession() {
   }
 
   const sessionToken = ++currentSessionToken;
+  pendingNotifications.length = 0;
+  notificationInFlight = null;
   isServerReady = false;
   isVoiceStarting = true;
   let sessionAudioContext;
@@ -1118,6 +1120,7 @@ function stopVoiceSession() {
   pendingCommit = false;
   isVoiceThinking = false;
   notificationInFlight = null;
+  pendingNotifications.length = 0;
   isServerReady = false;
   isCapturing = false;
   isPttHeld = false;
@@ -1348,9 +1351,8 @@ function handleNotification(n) {
     } catch (_) {}
   }
 
-  if (settings.voiceNotifications !== false && isNotificationScenarioEnabled(n.state) && !isQuietMode) {
-    pendingNotifications.push({ id: n.id || crypto.randomUUID(), text: notificationHeading(n) });
-    if (pendingNotifications.length > 100) pendingNotifications.shift();
+  if (isServerReady && settings.voiceNotifications !== false && isNotificationScenarioEnabled(n.state) && !isQuietMode) {
+    pendingNotifications.splice(0, pendingNotifications.length, { id: n.id || crypto.randomUUID(), text: notificationHeading(n) });
   }
 }
 

@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { tools as supervisorTools, supervisorInstructions, voiceTools } from './supervisor/contract.mjs';
+import { modelTools as supervisorTools, supervisorInstructions, voiceTools } from './supervisor/contract.mjs';
+import { validateToolArgs } from './supervisor/contract.mjs';
 import { themedInstructions } from './theme-session.mjs';
 import { assertLoopback, providerProfiles, resolveEndpoint } from './llm/provider-config.mjs';
 
@@ -67,7 +68,7 @@ export function compactToolResult(result, limit = 6000) {
   const value = result ?? {};
   const serialized = JSON.stringify(value);
   if (serialized.length <= limit) return value;
-  const truth = Object.fromEntries(['taskId', 'id', 'state', 'status', 'stale', 'actions', 'error', 'duplicate', 'receipt', 'opened', 'invoked', 'deleted', 'saved', 'action', 'value']
+  const truth = Object.fromEntries(['taskId', 'id', 'state', 'status', 'stale', 'actions', 'error', 'duplicate', 'receipt', 'opened', 'invoked', 'deleted', 'deletedCount', 'failedCount', 'remaining', 'clarificationRequired', 'saved', 'action', 'value']
     .filter(key => value[key] !== undefined)
     .map(key => [key, value[key]]));
   if (Array.isArray(value.tasks)) {
@@ -146,32 +147,35 @@ function stableMutationId(baseRequestId, name, args) {
   return `${baseRequestId || 'req'}-${hash}`;
 }
 
-function validateToolArgs(args, schema) {
-  if (!args || typeof args !== 'object' || Array.isArray(args)) return 'Tool arguments must be a JSON object.';
-  for (const key of schema.required || []) {
-    if (!Object.hasOwn(args, key)) return `Missing required argument: ${key}`;
-  }
-  for (const [key, value] of Object.entries(args)) {
-    const property = schema.properties[key];
-    if (!Object.hasOwn(schema.properties, key)) return `Unknown argument: ${key}. Use only the tool schema fields.`;
-    if (typeof value !== property.type) return `Argument ${key} must be ${property.type}.`;
-    if (property.enum && !property.enum.includes(value)) return `Argument ${key} must be one of: ${property.enum.join(', ')}.`;
-  }
-  return null;
-}
-
-function localResponseSchema(requestTools, finalRound, intent) {
+function localResponseSchema(requestTools, finalRound, intent, taskIds) {
   const answer = {
     type: 'object', properties: { answer: { type: 'string', description: 'Brief user-facing answer. Use task titles, not IDs or tool names. Only report confirmed outcomes.' } },
     required: ['answer'], additionalProperties: false,
   };
   if (finalRound) return answer;
   return { oneOf: [answer, {
-    type: 'object', properties: { intent: { type: 'string', enum: intent ? [intent] : ['read', 'change'], description: 'read for questions and status; change only for an explicit user request to modify, resume, delete or control something' }, calls: { type: 'array', minItems: 1, maxItems: 8, items: { oneOf: requestTools.map(({ function: tool }) => ({
-      type: 'object', properties: { name: { const: tool.name }, arguments: tool.parameters },
+    type: 'object', properties: { calls: { type: 'array', minItems: 1, maxItems: 8, items: { oneOf: requestTools.filter(({ function: tool }) => intent !== 'read' || ['list_work', 'get_work_status', 'start_work'].includes(tool.name)).map(({ function: tool }) => ({
+      type: 'object', properties: { name: { const: tool.name }, arguments: localArgumentSchema(tool, intent, taskIds) },
       required: ['name', 'arguments'], additionalProperties: false,
-    })) } } }, required: ['intent', 'calls'], additionalProperties: false,
+    })) } } }, required: ['calls'], additionalProperties: false,
   }] };
+}
+
+function localArgumentSchema(tool, intent, taskIds) {
+  const schema = tool.parameters;
+  if (schema.properties.taskId) {
+    const selectors = ['taskId', 'query', 'areaId', 'all'].filter(key => schema.properties[key]);
+    return { oneOf: selectors.filter(selector => selector !== 'taskId' || taskIds.length).map(selector => ({ ...schema,
+      properties: Object.fromEntries(Object.entries(schema.properties).filter(([key]) => !selectors.includes(key) || key === selector).map(([key, value]) => [key, key === 'all' ? { const: true } : key === 'taskId' ? { ...value, enum: taskIds } : value])),
+      required: [...(schema.required || []), selector],
+    })) };
+  }
+  if (tool.name === 'control_app') return { oneOf: schema.properties.action.enum.map(action => ({
+    type: 'object', properties: { action: { const: action }, ...(action.startsWith('set_') ? { value: { type: 'string', enum: action === 'set_theme' ? ['copilot', 'jarvis', 'baymax'] : ['on', 'off'] } } : {}) },
+    required: action.startsWith('set_') ? ['action', 'value'] : ['action'], additionalProperties: false,
+  })) };
+  if (tool.name === 'start_work' && intent === 'read') return { ...schema, properties: { ...schema.properties, readOnly: { const: true } }, required: [...schema.required, 'readOnly'] };
+  return schema;
 }
 
 function parseLocalResponse(text, toolSchemas, finalRound) {
@@ -180,7 +184,7 @@ function parseLocalResponse(text, toolSchemas, finalRound) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid local response shape.');
   if (typeof value.answer === 'string' && Object.keys(value).length === 1) return { text: value.answer, calls: [] };
   if (finalRound) throw new Error('The model requested more tools after its budget ended.');
-  if (Object.keys(value).length !== 2 || !['read', 'change'].includes(value.intent)) throw new Error('Local tools require a read or change intent.');
+  if (Object.keys(value).some(key => !['calls', 'intent'].includes(key)) || (value.intent !== undefined && !['read', 'change'].includes(value.intent))) throw new Error('Invalid local tool envelope.');
   if (!Array.isArray(value.calls) || !value.calls.length || value.calls.length > 8) throw new Error('Invalid local tool batch.');
   const calls = value.calls.map(call => {
     if (!call || Object.keys(call).length !== 2 || !Object.hasOwn(call, 'arguments') || !toolSchemas.has(call.name)) throw new Error('Invalid local tool call.');
@@ -189,7 +193,8 @@ function parseLocalResponse(text, toolSchemas, finalRound) {
     if (value.intent === 'read' && !['list_work', 'get_work_status'].includes(call.name) && !(call.name === 'start_work' && call.arguments.readOnly === true)) throw new Error('Read-only local turns cannot change work.');
     return { name: call.name, arguments: JSON.stringify(call.arguments) };
   });
-  return { text: '', calls, intent: value.intent };
+  const intent = value.intent || (value.calls.every(call => ['list_work', 'get_work_status'].includes(call.name) || (call.name === 'start_work' && call.arguments.readOnly === true)) ? 'read' : 'change');
+  return { text: '', calls, intent };
 }
 
 function summaryResult(value, titles) {
@@ -203,19 +208,25 @@ function summaryResult(value, titles) {
 
 export function localRequestBody(body, requestTools, finalRound = false, intent) {
   const { tools, tool_choice, ...request } = body;
+  const taskIds = [...new Set(body.messages.filter(message => message.role === 'tool').flatMap(message => {
+    try {
+      const result = JSON.parse(message.content);
+      return [result?.taskId, ...(result?.tasks || []).map(task => task.taskId || task.id)].filter(value => typeof value === 'string' && value);
+    } catch { return []; }
+  }))];
   return {
     ...request,
     messages: body.messages.map(message => message.tool_calls ? {
-      role: 'assistant', content: JSON.stringify({ intent, calls: message.tool_calls.map(call => ({ name: call.function.name, arguments: JSON.parse(call.function.arguments) })) }),
+      role: 'assistant', content: JSON.stringify({ calls: message.tool_calls.map(call => ({ name: call.function.name, arguments: JSON.parse(call.function.arguments) })) }),
     } : message),
-    response_format: { type: 'json_schema', json_schema: { name: 'supervisor_turn', strict: true, schema: localResponseSchema(requestTools, finalRound, intent) } },
+    response_format: { type: 'json_schema', json_schema: { name: 'supervisor_turn', strict: true, schema: localResponseSchema(requestTools, finalRound, intent, taskIds) } },
     chat_template_kwargs: { enable_thinking: false }, cache_prompt: true, temperature: 0.2,
   };
 }
 
 export function localInstructions(instructions, requestTools) {
   if (!requestTools.length) return `${instructions}\nReturn JSON: {"answer":"brief reply"}.`;
-  return `${instructions}\nReturn JSON: {"intent":"read","calls":[{"name":"tool_name","arguments":{}}]} for questions, status or research. Use intent "change" only when the user explicitly requests a change or follow-up instruction to a worker. This intent is fixed for the turn. For general work status use list_work with {}. For a named subject use query. Return {"answer":"brief reply"} to speak to the user. Available tools:\n${JSON.stringify(requestTools.map(tool => tool.function))}`;
+  return `${instructions}\nReturn JSON: {"calls":[{"name":"tool_name","arguments":{}}]} to use tools, or {"answer":"brief reply"} for conversation. For general work status call list_work with {}. For a named task use its subject in query. Only use tools needed by the user's request. Available tools:\n${JSON.stringify(requestTools.map(tool => tool.function))}`;
 }
 
 function prepareMessages(messages = [], { maxMessages = 12, maxChars = 16000, maxTextChars = 16000 } = {}) {
@@ -371,7 +382,7 @@ export async function* streamReply({
   async function* summarize() {
     const results = [...summaries.values()].map(value => compactToolResult(value, Math.max(256, Math.floor(5000 / summaries.size))));
     const ambiguous = results.find(result => result.selectionRequired);
-    if (localIntent === 'read' && (ambiguous || results.some(result => result.missingSubject))) {
+    if (ambiguous || results.some(result => result.missingSubject)) {
       const candidates = ambiguous?.tasks?.map(task => task.title).filter(Boolean).slice(0, 3);
       yield { type: 'text', text: candidates?.length ? `Which task do you mean: ${candidates.join(', ')}, or another task?` : 'What is the task title or another identifying detail?' };
       yield { type: 'done' };
@@ -528,8 +539,8 @@ export async function* streamReply({
       if (toolCalls.length) throw new Error('Local endpoint ignored the structured response contract. No tools were executed.');
       const parsed = parseLocalResponse(roundText, toolSchemas, finalRound);
       if (parsed.intent) {
-        if (localIntent && parsed.intent !== localIntent) throw new Error('Local turn intent cannot change after tool execution.');
-        localIntent = parsed.intent;
+        if (localIntent === 'read' && parsed.intent !== 'read') throw new Error('Read-only local turns cannot change work.');
+        localIntent ??= parsed.intent;
       }
       roundText = parsed.text;
       toolCalls.push(...parsed.calls);
@@ -625,7 +636,14 @@ export async function* streamReply({
         result = await pending;
         if (executedCalls.get(invocationKey) === pending) {
           if (result?.error) executedCalls.delete(invocationKey);
-          else executedCalls.set(invocationKey, result);
+          else {
+            executedCalls.set(invocationKey, result);
+            if (!isRead && parsedArgs.query && typeof result?.taskId === 'string') {
+              const canonicalArgs = { ...parsedArgs, taskId: result.taskId };
+              delete canonicalArgs.query;
+              executedCalls.set(stableMutationId(requestId, call.name, canonicalArgs), result);
+            }
+          }
         }
       }
 
@@ -644,7 +662,7 @@ export async function* streamReply({
       const compactResult = compactToolResult(result);
       if (provider === 'local') {
         const summary = summaryResult(compactResult, titles);
-        if (call.name === 'list_work' && args.query?.trim() && Array.isArray(result?.tasks)) {
+        if ((call.name === 'list_work' || result?.clarificationRequired) && args.query?.trim() && Array.isArray(result?.tasks)) {
           summary.selectionRequired = result.hasMore === true || result.tasks.length > 1;
           summary.missingSubject = result.tasks.length === 0;
         }

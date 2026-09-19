@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { stripVTControlCharacters } from 'node:util';
-import { ASSETS, assetReady, ensureAsset, localSetupAssets, localSttProvider, readJson, setupError, stackPaths, withSetupLock, writeJson } from '../scripts/models.mjs';
+import { ASSETS, LEGACY_LING_ASSETS, assetReady, ensureAsset, localSetupAssets, localSttProvider, readJson, setupError, stackPaths, withSetupLock, writeJson } from '../scripts/models.mjs';
 import { createSetup } from './setup.mjs';
 import { closeLocalVoice, isLocalVoiceWarm, localConfiguration, onLocalVoiceRuntimeExit, warmLocalVoice } from './local-voice.mjs';
 import { verifyKokoroPack, verifyWhisperPack } from './kokoro-pack.mjs';
@@ -139,10 +139,9 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
   const completionFile = path.join(paths.home, 'local-setup.json');
   const saved = readJson(completionFile);
   const pathInputs = Object.fromEntries(['LOCAL_LLM_PATH', 'MOONSHINE_MODEL', 'WHISPER_MODEL_DIR', 'LLAMA_SERVER_BIN', 'CRISPASR_BIN', 'VAD_MODEL', 'PYTHON_BIN'].map(key => [key, env[key] || '']));
-  const previousModel = { ...ASSETS[0], name: 'Ling-3.0-tiny-abliterated-APEX-I-Compact.gguf', sourceUrl: ASSETS[0].sourceUrl.replace('APEX-I-Quality.gguf', 'APEX-I-Compact.gguf') };
   const upgradeManagedModel = saved?.version === 1 && !pathInputs.LOCAL_LLM_PATH && !saved.pathInputs?.LOCAL_LLM_PATH
-    && saved.paths?.ling === path.join(paths.modelDir, previousModel.name)
-    && assetReady(paths, previousModel, saved.paths.ling);
+    && LEGACY_LING_ASSETS.some(previousModel => saved.paths?.ling === path.join(paths.modelDir, previousModel.name)
+      && assetReady(paths, previousModel, saved.paths.ling));
   if (saved?.version === 1 && saved.paths && JSON.stringify(saved.pathInputs) === JSON.stringify(pathInputs)) {
     for (const asset of ASSETS) {
       const candidate = saved.paths[asset.id];

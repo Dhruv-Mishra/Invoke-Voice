@@ -85,19 +85,19 @@ Installing Agency does not start Teams MCP. Invoke explicitly runs `agency mcp -
 
 Local setup is opt-in and provisions:
 
-- Ling APEX-I Quality through llama.cpp for chat and tool calls.
-- Moonshine Streaming Tiny by default, or Whisper Small for multilingual recognition.
+- Gemma 4 E2B IT QAT Q4_0 through llama.cpp for chat and tool calls.
+- Whisper Small CPU INT8 by default; Moonshine Streaming Tiny is opt-in.
 - Kokoro for speech synthesis in an isolated Python 3.12 environment.
 
 Downloads are pinned and hash-verified. Working chat remains available if speech setup fails. Detailed model, mirror, and release-pack behavior is documented in [docs/operations.md](docs/operations.md#voice-routes).
 
-The Quality model is 5.77 GB. Previously consented, verified managed Compact installations download it automatically on startup; custom model paths and fresh-install consent are preserved. The previous model stays on disk. Quality follows the publisher's accuracy recommendation but costs more memory than Compact and may be slower on constrained machines; this is not an independently measured accuracy or speed gain.
+The Gemma text model is 3.35 GB. Previously consented, verified managed Ling Compact/Quality installations upgrade on startup; custom model paths and fresh-install consent are preserved. Previous files stay on disk. Gemma passed the expanded 21-case synthetic tool gate after API fixes, but is slower than Ling on the measured CPU. See the [comparison and limitations](docs/operations.md#local-acceptance-checks); this is not a guarantee across requests or hardware. The `ling-local` endpoint alias remains for compatibility.
 
 Local turns use llama.cpp JSON-schema generation: either a validated tool batch or an answer, never executable XML embedded in prose. Only completed answers are published. After tools, a separate tool-free summary receives bounded outcomes and titles without routing IDs or action names. This adds a local generation pass but prevents routing output from becoming speech. Thinking stays disabled; warm-up uses the same contract.
 
-Local text and voice allow at most three tool rounds and six executed calls per turn, followed by a tool-free answer. Hosted providers retain eight rounds. Independent calls run concurrently; invalid local batches fail before dispatch. Successful calls reuse receipts within a local turn; reads can refresh after a successful change. Failed calls remain retryable within the budget. Local read intent cannot escalate to changes after execution starts, and completed reads stop without polling. Explicit task deletion stops app-owned work before removing history; files remain. Intent selection is still model-generated, not a guarantee that the requested action was understood correctly.
+Local text and voice allow at most three tool rounds and six executed calls per turn, followed by a tool-free answer. Hosted providers retain eight rounds. Independent calls run concurrently; invalid local batches fail before dispatch. Successful calls reuse receipts, including subject-to-ID retries; failures remain retryable. Read-only first batches cannot escalate to changes, while action batches may read results. This guard follows the model's selected calls, not independent authorization of user intent. Task tools accept a subject directly and clarify ambiguous matches. `delete_work` with `all:true` deletes task chats, stops owned work and keeps files; protected work is reported as a partial failure. Worker model/backend selection comes from Settings, not generated arguments.
 
-For non-streaming recognition, select **Whisper** in **Settings > Providers & keys > Local speech** and complete local setup. Hands-free speech waits for 1.4 seconds of silence by default; both recognizers expose their pause threshold in Settings. Whisper push-to-talk holds the utterance until release, including pauses while held. Interrupted announcements and duplicate recognition finals are not replayed. Recognition accuracy and latency still depend on the microphone, speech and hardware; see the [measured checks and remaining limitations](docs/operations.md#local-acceptance-checks).
+Whisper is the fresh default; saved Moonshine choices remain unchanged. Select **Whisper** in **Settings > Providers & keys > Local speech** and complete setup to switch an existing installation. Hands-free speech waits for 1.4 seconds of silence by default; both recognizers expose their pause threshold in Settings. Whisper push-to-talk holds the utterance until release, including pauses while held. Interrupted announcements and duplicate recognition finals are not replayed. Recognition accuracy and latency still depend on microphone, speech and hardware.
 
 Setup shows download percentage, bytes and an approximate time remaining for the current component. Verification, unpacking and startup use an indeterminate bar rather than a guessed installation time.
 
@@ -105,7 +105,7 @@ Setup shows download percentage, bytes and an approximate time remaining for the
 
 Calls open with an optional short greeting. The red hang-up control ends an active call. Idle calls check in after 40 seconds and end after 60 seconds by default; both values are configurable.
 
-The inbox shows concise task-outcome headings; full answers stay in task details. Announcements are queued and deduplicated. Text-model routes publish completed final answers without prose rewriting; native hosted realtime speech remains provider-controlled. The inbox retains the latest 100 updates; quiet mode suppresses speech without removing history.
+The inbox shows concise task-outcome headings; full answers stay in task details. New calls never announce the existing inbox backlog. Only the latest pending update received during the active call is eligible for speech; superseded updates remain in the inbox. Text-model routes publish completed final answers without prose rewriting; native hosted realtime speech remains provider-controlled. The inbox retains the latest 100 updates; quiet mode suppresses speech without removing history.
 
 Ask Invoke to switch themes, clear notifications, mark them read, or turn spoken updates on or off. These controls use the same persisted state as the UI and cannot change credentials or Agency access consent.
 

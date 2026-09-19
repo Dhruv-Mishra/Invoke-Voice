@@ -314,6 +314,17 @@ export class Supervisor extends EventEmitter {
   async callTool(name, args = {}, context = {}) {
     if (!tools.some(tool => tool.function.name === name)) throw new Error('Unknown tool');
     if (this.closed && ['start_work', 'send_work_message', 'invoke_vscode'].includes(name)) throw new Error('Application is shutting down');
+    if (['send_work_message', 'get_work_status', 'cancel_work', 'open_work', 'delete_work'].includes(name)) {
+      const selectors = ['taskId', 'query', ...(name === 'delete_work' ? ['areaId', 'all'] : [])].filter(key => args[key] !== undefined);
+      if (selectors.length !== 1) throw new Error('Provide exactly one taskId or query, or areaId or all:true for deletion');
+      if (args.query !== undefined) {
+        const exactTask = this.state.tasks.find(task => task.id === args.query);
+        const matches = exactTask ? { tasks: [this.toolStatus(exactTask.id)], hasMore: false } : await this.searchWork(args.query);
+        if (matches.hasMore || matches.tasks.length !== 1) return { clarificationRequired: true, ...matches };
+        args = { ...args, taskId: matches.tasks[0].taskId };
+        delete args.query;
+      }
+    }
     if (name === 'control_app') {
       if (args.action === 'set_theme') {
         const appearanceTheme = { copilot: 'alpine', jarvis: 'jarvis', baymax: 'baymax' }[args.value];
@@ -330,7 +341,7 @@ export class Supervisor extends EventEmitter {
       return { saved: true, action: args.action, ...(args.value === undefined ? {} : { value: args.value }) };
     }
     if (name === 'list_work' && args.query !== undefined) return this.searchWork(args.query);
-    if (name === 'list_work') return { defaultAreaId: this.state.settings.defaultAreaId, areas: this.state.areas.map(({ id, name, aliases }) => ({ id, name, aliases })), tasks: this.state.tasks.slice(-25).map(task => { const status = this.status(task.id); return { id: status.id, title: status.title, areaId: status.areaId, backend: status.backend, state: status.state }; }) };
+    if (name === 'list_work') return { defaultAreaId: this.state.settings.defaultAreaId, areas: this.state.areas.map(({ id, name, aliases }) => ({ id, name, aliases })), tasks: this.state.tasks.slice(-25).map(task => ({ ...this.toolStatus(task.id), id: task.id, areaId: task.areaId, backend: task.backend })) };
     if (name === 'send_work_message') {
       const task = this.task(requiredText(args.taskId, 'task ID', 200));
       if (!this.status(task.id).canMessage) throw new Error('Task is not ready for a follow-up');
@@ -367,6 +378,17 @@ export class Supervisor extends EventEmitter {
       return { taskId: task.id, state: task.state };
     }
     if (name === 'delete_work') {
+      if (args.all !== undefined) {
+        if (args.all !== true) throw new Error('Use all:true to delete all task chats');
+        const targets = this.state.tasks.map(task => ({ id: task.id, title: task.title }));
+        let deletedCount = 0;
+        const failed = [];
+        for (const task of targets) {
+          try { await this.callTool('delete_work', { taskId: task.id }, context); deletedCount += 1; }
+          catch (error) { failed.push({ taskId: task.id, title: task.title, error: error.message }); }
+        }
+        return { deleted: 'tasks', deletedCount, failedCount: failed.length, failed: failed.slice(0, 5), remaining: this.state.tasks.length };
+      }
       const taskId = typeof args.taskId === 'string' && args.taskId.trim();
       const areaId = typeof args.areaId === 'string' && args.areaId.trim();
       if (Boolean(taskId) === Boolean(areaId)) throw new Error('Provide exactly one taskId or areaId');

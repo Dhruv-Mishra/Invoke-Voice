@@ -8,7 +8,7 @@ import { EventEmitter } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { deflateRawSync } from 'node:zlib';
 import { createSetup } from '../src/setup.mjs';
-import { ASSETS, CRISPASR_AVX2_ASSET, TASK_SEARCH_ASSETS, assetReady, ensureAsset, localSetupAssets, localSttProvider, stackPaths, trustedDownloadUrl, withSetupLock } from '../scripts/models.mjs';
+import { ASSETS, LEGACY_LING_ASSETS, CRISPASR_AVX2_ASSET, TASK_SEARCH_ASSETS, assetReady, ensureAsset, localSetupAssets, localSttProvider, stackPaths, trustedDownloadUrl, withSetupLock } from '../scripts/models.mjs';
 import { approvedPythonProbe, createLocalSetup, isolatedEnvironment, runSetupCommand } from '../src/local-setup.mjs';
 import { startSupervisor } from '../src/server.mjs';
 import { createRuntimeConfig } from '../src/runtime-config.mjs';
@@ -21,16 +21,16 @@ function fixture(context) {
   return { directory, paths: stackPaths({ LOCALAPPDATA: directory }, path.join(directory, 'app')) };
 }
 
-test('local STT defaults to Moonshine Tiny streaming and Whisper remains optional', () => {
-  assert.equal(localSttProvider({}), 'moonshine');
-  assert.equal(localSttProvider({ LOCAL_STT_PROVIDER: 'whisper' }), 'whisper');
+test('local STT defaults to Whisper and Moonshine remains opt-in', () => {
+  assert.equal(localSttProvider({}), 'whisper');
+  assert.equal(localSttProvider({ LOCAL_STT_PROVIDER: 'moonshine' }), 'moonshine');
   assert.throws(() => localSttProvider({ LOCAL_STT_PROVIDER: 'browser' }), /LOCAL_STT_PROVIDER/);
   const defaults = localSetupAssets({}).map(asset => asset.id);
-  assert.equal(defaults.some(id => id.startsWith('whisper')), false);
-  for (const id of ['moonshine', 'tokenizer', 'vad', 'crispasr']) assert.ok(defaults.includes(id));
-  const whisper = localSetupAssets({ LOCAL_STT_PROVIDER: 'whisper' }).map(asset => asset.id);
-  assert.ok(whisper.includes('whisperModel'));
-  assert.equal(whisper.includes('moonshine'), false);
+  assert.ok(defaults.includes('whisperModel'));
+  assert.equal(defaults.includes('moonshine'), false);
+  const moonshine = localSetupAssets({ LOCAL_STT_PROVIDER: 'moonshine' }).map(asset => asset.id);
+  assert.equal(moonshine.some(id => id.startsWith('whisper')), false);
+  for (const id of ['moonshine', 'tokenizer', 'vad', 'crispasr']) assert.ok(moonshine.includes(id));
   assert.equal(ASSETS[1].name, 'moonshine-streaming-tiny-q4_k.gguf');
   assert.equal(ASSETS[1].revision, ASSETS[2].revision);
   const config = localConfiguration({});
@@ -54,7 +54,7 @@ test('saved managed Tiny selection overrides older model environment after resta
   const { directory, paths } = fixture(context);
   const oldModel = path.join(directory, 'moonshine-streaming-small-q4_k.gguf');
   writeFileSync(oldModel, 'existing custom model');
-  const env = { SUPERVISOR_CACHE_DIR: paths.home, MOONSHINE_MODEL: oldModel };
+  const env = { SUPERVISOR_CACHE_DIR: paths.home, LOCAL_STT_PROVIDER: 'moonshine', MOONSHINE_MODEL: oldModel };
   const config = createRuntimeConfig({ dataDir: directory, env });
   assert.equal(localConfiguration(env).sttLabel, 'Moonshine Small streaming');
   const saved = config.update({ values: { MOONSHINE_MODEL: '' } });
@@ -1236,19 +1236,19 @@ test('setup API is same-origin, consent-gated and returns 202 without waiting fo
   } finally { release(); await app.close(); }
 });
 
-test('speech settings expose Moonshine by default and persist Whisper without a restart', context => {
+test('speech settings expose Whisper by default and persist Moonshine opt-in without a restart', context => {
   const { directory } = fixture(context);
   const env = {};
   const config = createRuntimeConfig({ dataDir: directory, env });
   const field = config.snapshot().fields.find(field => field.key === 'LOCAL_STT_PROVIDER');
-  assert.equal(field.value, 'moonshine');
-  assert.deepEqual(field.options.map(option => option.value), ['moonshine', 'whisper']);
+  assert.equal(field.value, 'whisper');
+  assert.deepEqual(field.options.map(option => option.value), ['whisper', 'moonshine']);
   assert.equal(field.restartRequired, false);
-  config.update({ values: { LOCAL_STT_PROVIDER: 'whisper' } });
-  assert.equal(env.LOCAL_STT_PROVIDER, 'whisper');
+  config.update({ values: { LOCAL_STT_PROVIDER: 'moonshine' } });
+  assert.equal(env.LOCAL_STT_PROVIDER, 'moonshine');
   const restored = {};
   createRuntimeConfig({ dataDir: directory, env: restored });
-  assert.equal(restored.LOCAL_STT_PROVIDER, 'whisper');
+  assert.equal(restored.LOCAL_STT_PROVIDER, 'moonshine');
   assert.throws(() => config.update({ values: { LOCAL_STT_PROVIDER: 'chrome' } }), /unsupported value/);
 });
 
@@ -1411,11 +1411,12 @@ test('cached chat resumes after restart when Kokoro installation was incomplete'
   assert.equal(resumed.capabilities.voice.ready, false);
 });
 
-test('managed Compact upgrades to Quality on resume without upgrading custom paths or new installs', windowsSetup, async context => {
-  assert.match(ASSETS[0].name, /APEX-I-Quality\.gguf$/);
-  for (const scenario of ['upgrade', 'failure', 'custom', 'fresh']) await context.test(scenario, async childContext => {
+test('managed Ling upgrades to Gemma on resume without upgrading custom paths or new installs', windowsSetup, async context => {
+  assert.equal(ASSETS[0].name, 'gemma-4-E2B_q4_0-it.gguf');
+  for (const scenario of ['upgrade', 'upgrade-compact', 'failure', 'custom', 'fresh']) await context.test(scenario, async childContext => {
     const { directory, paths } = fixture(childContext);
-    const oldName = 'Ling-3.0-tiny-abliterated-APEX-I-Compact.gguf';
+    const previousModel = LEGACY_LING_ASSETS[scenario === 'upgrade-compact' ? 0 : 1];
+    const oldName = previousModel.name;
     const oldModel = path.join(paths.modelDir, oldName);
     const env = { SUPERVISOR_CACHE_DIR: paths.home, ...(scenario === 'custom' ? { LOCAL_LLM_PATH: oldModel } : {}) };
     const pathInputs = Object.fromEntries(['LOCAL_LLM_PATH', 'MOONSHINE_MODEL', 'WHISPER_MODEL_DIR', 'LLAMA_SERVER_BIN', 'CRISPASR_BIN', 'VAD_MODEL', 'PYTHON_BIN'].map(key => [key, env[key] || '']));
@@ -1426,7 +1427,7 @@ test('managed Compact upgrades to Quality on resume without upgrading custom pat
       writeFileSync(destination, 'previous verified asset');
       const stat = statSync(destination);
       const receipt = path.join(paths.receiptDir, `${asset.id}-${createHash('sha256').update(destination).digest('hex').slice(0, 20)}.json`);
-      writeFileSync(receipt, JSON.stringify({ sourceUrl: asset.sourceUrl.replace('APEX-I-Quality.gguf', 'APEX-I-Compact.gguf'), files: [{ path: destination, size: stat.size, mtimeMs: stat.mtimeMs }] }));
+      writeFileSync(receipt, JSON.stringify({ sourceUrl: asset.id === 'ling' ? previousModel.sourceUrl : asset.sourceUrl, files: [{ path: destination, size: stat.size, mtimeMs: stat.mtimeMs }] }));
     }
     const savedFile = path.join(paths.home, 'local-setup.json');
     if (scenario !== 'fresh') writeFileSync(savedFile, JSON.stringify({ version: 1, pathInputs, paths: { ling: oldModel, llama: paths.llama } }));
@@ -1436,7 +1437,7 @@ test('managed Compact upgrades to Quality on resume without upgrading custom pat
       provision: async (destinations, asset, options) => {
         provisioned.push(asset.id);
         if (scenario === 'failure') throw Object.assign(new Error('Download unavailable'), { setupMessage: 'Download unavailable' });
-        const content = Buffer.from('synthetic Quality');
+        const content = Buffer.from('synthetic Gemma');
         return ensureAsset(destinations, asset, { ...options, fetchImpl: async url => url.includes('/api/models/')
           ? Response.json([{ path: asset.name, size: content.length, lfs: { oid: createHash('sha256').update(content).digest('hex') } }]) : new Response(content) });
       },
@@ -1447,9 +1448,9 @@ test('managed Compact upgrades to Quality on resume without upgrading custom pat
     setup.resume();
     const result = await setup.settled();
     assert.equal(readFileSync(oldModel, 'utf8'), 'previous verified asset');
-    assert.deepEqual(provisioned, ['upgrade', 'failure'].includes(scenario) ? ['ling'] : []);
-    assert.deepEqual(activated, scenario === 'upgrade' ? [paths.ling] : []);
-    if (scenario === 'upgrade') {
+    assert.deepEqual(provisioned, ['upgrade', 'upgrade-compact', 'failure'].includes(scenario) ? ['ling'] : []);
+    assert.deepEqual(activated, scenario.startsWith('upgrade') ? [paths.ling] : []);
+    if (scenario.startsWith('upgrade')) {
       assert.equal(result.capabilities.chat.ready, true);
       assert.equal(assetReady(paths, ASSETS[0]), true);
       assert.equal(JSON.parse(readFileSync(savedFile, 'utf8')).paths.ling, paths.ling);

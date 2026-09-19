@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { Supervisor, tools } from './supervisor.mjs';
+import { voiceTools, validateToolArgs } from './supervisor/contract.mjs';
 import { createVSCodeBridge } from './vscode-bridge.mjs';
 import { providerProfiles, streamReply } from './llm.mjs';
 import { createRealtimeVoice, DEFAULT_GEMINI_LIVE_MODEL } from './realtime.mjs';
@@ -22,6 +23,8 @@ const frontendDir = path.join(root, 'dist');
 
 export function createVoiceToolCaller(supervisor, send) {
   return (name, args, context) => {
+    const error = validateToolArgs(args, voiceTools.find(tool => tool.function.name === name)?.function.parameters);
+    if (error) return { error };
     if (name === 'end_call') {
       send({ type: 'end_call' });
       return { ended: true };
@@ -159,7 +162,7 @@ export async function startSupervisor(options = {}) {
     ], providers: providerProfiles(), voiceModes: [
       { id: 'gemini-live', label: 'Gemini Live', configured: Boolean(process.env.GEMINI_API_KEY), model: process.env.GEMINI_LIVE_MODEL || DEFAULT_GEMINI_LIVE_MODEL },
       { id: 'openai-realtime', label: 'OpenAI Realtime', configured: Boolean(process.env.OPENAI_API_KEY), model: process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime' },
-      { id: 'local', label: `${localConfiguration().sttLabel} + Ling + Kokoro`, configured: localConfiguration().configured },
+      { id: 'local', label: `${localConfiguration().sttLabel} + Local LLM + Kokoro`, configured: localConfiguration().configured },
     ], local: localConfiguration(), configuration: runtimeConfig.snapshot(), dataDir };
   }
 
@@ -295,6 +298,7 @@ export async function startSupervisor(options = {}) {
     let session;
     let starting = false;
     let cancelled = false;
+    let previousNotifications = new Set();
     const send = event => { if (socket.readyState === 1) socket.send(JSON.stringify(event)); };
     const callVoiceTool = createVoiceToolCaller(supervisor, send);
     socket.on('message', async raw => {
@@ -308,6 +312,7 @@ export async function startSupervisor(options = {}) {
           voiceOwner = socket;
           starting = true;
           cancelled = false;
+          previousNotifications = new Set(supervisor.snapshot().notifications.map(item => item.id));
           const options = { mode: message.mode, provider: message.provider, sttProvider: message.sttProvider, ttsProvider: message.ttsProvider, model: message.model, allowCloud: message.allowCloud === true, ...sessionThemeOptions(message), send, callTool: callVoiceTool };
           session = message.mode === 'local' ? await createLocalVoice(options) : await voiceFactory(options);
           starting = false;
@@ -322,9 +327,13 @@ export async function startSupervisor(options = {}) {
           else if (message.type === 'playback_done') session?.playbackDone?.(String(message.responseId || ''), ['played', 'interrupted', 'failed'].includes(message.outcome) ? message.outcome : 'failed');
           else if (message.type === 'notify') {
             const notificationId = String(message.notificationId || '').slice(0, 100);
-            const notification = supervisor.snapshot().notifications.find(item => item.id === notificationId);
-            if (session && (notification?.read || session.notify(String(message.text || '').slice(0, 1800), notificationId) === true)) {
-              if (notification && !notification.read) supervisor.readNotifications({ ids: [notificationId] });
+            const notifications = supervisor.snapshot().notifications;
+            const notification = notifications.find(item => item.id === notificationId);
+            const latest = notifications.filter(item => !item.read && !previousNotifications.has(item.id)).at(-1);
+            const obsolete = !notification || notification.read || previousNotifications.has(notificationId) || latest?.id !== notificationId;
+            const outcome = { result_ready: 'completed', completed: 'completed', agent_failed: 'failed', failed: 'failed', needs_input: 'needs your input' }[notification?.state] || 'updated';
+            if (session && (obsolete || session.notify(`${notification.title || 'Task'}: ${outcome}`, notificationId) === true)) {
+              if (!obsolete) supervisor.readNotifications({ ids: [notificationId] });
               send({ type: 'notify_ack', notificationId });
             }
           }

@@ -137,7 +137,7 @@ export async function ensureLocalLLM(options = {}) {
   const executable = existsSync(paths.llama) ? paths.llama : env.LLAMA_SERVER_BIN || 'llama-server';
   const checkOnly = Boolean(options.checkOnly);
 
-  if (!existsSync(modelPath)) throw new Error(`Ling model not found: ${modelPath}`);
+  if (!existsSync(modelPath)) throw new Error(`Local model not found: ${modelPath}`);
   if (serverUrl.protocol !== 'http:' || serverUrl.username || serverUrl.password || !['127.0.0.1', 'localhost'].includes(serverUrl.hostname)) throw new Error('LOCAL_LLM_URL must use HTTP loopback without credentials');
 
   async function healthy() {
@@ -200,9 +200,9 @@ export async function ensureLocalLLM(options = {}) {
       const choice = result.choices?.[0];
       if (choice?.message?.role !== 'assistant' || !['stop', 'length', 'tool_calls'].includes(choice.finish_reason) ||
           !(typeof choice.message.content === 'string' || choice.message.content === null || Array.isArray(choice.message.tool_calls))) {
-        throw new Error('Ling warm-up returned an invalid completion');
+        throw new Error('Local model warm-up returned an invalid completion');
       }
-      if (!await healthy()) throw new Error('Ling became unhealthy after warm-up');
+      if (!await healthy()) throw new Error('Local model became unhealthy after warm-up');
       console.log('Local voice LLM prefix is warm.');
       return String(choice.message.content || '').trim();
     } catch (error) {
@@ -214,7 +214,7 @@ export async function ensureLocalLLM(options = {}) {
   if (checkOnly) {
     try {
       const text = await warmVoiceLane();
-      console.log('Local Ling check: healthy with a valid completion.');
+      console.log('Local LLM check: healthy with a valid completion.');
       return { llama, text, checked: true, url: serverUrl.href };
     } finally {
       llama?.kill();

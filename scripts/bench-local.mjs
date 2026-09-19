@@ -12,7 +12,7 @@ import { stackPaths } from './models.mjs';
 import { localLlmArguments } from './start.mjs';
 import { createPcmWriter, createSttWriter, localConfiguration, localSttArguments } from '../src/local-voice.mjs';
 import { streamReply, voiceInstructions } from '../src/llm.mjs';
-import { tools } from '../src/supervisor/contract.mjs';
+import { modelTools as tools } from '../src/supervisor/contract.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const output = value => console.log(JSON.stringify(value));
@@ -79,7 +79,7 @@ async function json(url, body) {
 async function voiceTurn(env, name, messages, outcome) {
   const originalFetch = globalThis.fetch;
   const document = name.startsWith('document-');
-  const expectedAction = { delegate: 'start_work', delete: 'delete_work', followup: 'send_work_message' }[outcome];
+  const expectedAction = { delegate: 'start_work', coding: 'start_work', note: 'invoke_vscode', delete: 'delete_work', deleteAll: 'delete_work', followup: 'send_work_message', cancel: 'cancel_work', open: 'open_work', theme: 'control_app', quiet: 'control_app', inbox: 'control_app', end: 'end_call' }[outcome];
   const status = {
     taskId: 'synthetic-task', title: document ? 'Onboarding document' : 'Synthetic login fix', state: 'result_ready',
     result: document ? 'The document draft is ready for review.' : 'The synthetic login fix is complete and its tests passed.',
@@ -88,6 +88,8 @@ async function voiceTurn(env, name, messages, outcome) {
   const rounds = [];
   const pending = [];
   const calls = [];
+  const receipts = [];
+  const matchesTask = args => args.taskId === status.taskId || args.query === status.taskId || (typeof args.query === 'string' && /login|document/i.test(args.query));
   const started = performance.now();
   let firstTextMs;
   let text = '';
@@ -122,16 +124,30 @@ async function voiceTurn(env, name, messages, outcome) {
           if (outcome === 'empty') return args.query === undefined ? { tasks: [] } : { tasks: [], hasMore: false };
           if (outcome === 'error') return { error: 'Synthetic status service unavailable.' };
           if (outcome === 'ambiguous') return { tasks: [status, { ...status, taskId: 'synthetic-other', title: 'Policy document', result: 'The policy draft is ready for review.' }], hasMore: false };
-          return args.query === undefined ? { tasks: [{ id: status.taskId, title: status.title, state: status.state }] } : { tasks: [status], hasMore: false };
+          return args.query === undefined ? { tasks: [{ ...status, id: status.taskId }] } : { tasks: [status], hasMore: false };
         }
-        if (tool === 'get_work_status') return args.taskId === status.taskId ? status : { error: 'Unknown synthetic task.' };
+        if (tool === 'get_work_status') {
+          if (outcome === 'ambiguous') return { clarificationRequired: true, tasks: [status, { ...status, taskId: 'synthetic-other', title: 'Policy document' }], hasMore: false };
+          if (outcome === 'empty') return { clarificationRequired: true, tasks: [], hasMore: false };
+          return matchesTask(args) ? status : { error: 'Unknown synthetic task.' };
+        }
         if (tool === expectedAction) {
-          if (outcome !== 'delegate' && args.taskId !== status.taskId) return { error: 'Unknown synthetic task.' };
+          if (outcome === 'deleteAll') return args.all === true ? { deleted: 'tasks', deletedCount: 30, failedCount: 0, failed: [], remaining: 0 } : { error: 'Expected bulk deletion.' };
+          if (outcome === 'theme') return args.action === 'set_theme' && args.value === 'baymax' ? { saved: true, ...args } : { error: 'Wrong preference.' };
+          if (outcome === 'quiet') return args.action === 'set_spoken_updates' && args.value === 'off' ? { saved: true, ...args } : { error: 'Wrong preference.' };
+          if (outcome === 'inbox') return args.action === 'clear_notifications' && args.value === undefined ? { saved: true, ...args } : { error: 'Wrong inbox action.' };
+          if (outcome === 'end') return { ended: true };
+          if (outcome === 'coding') return args.readOnly !== true ? { taskId: status.taskId, state: 'dispatching' } : { error: 'Coding task cannot be read-only.' };
+          if (outcome === 'note') return { invoked: true };
+          if (outcome !== 'delegate' && !matchesTask(args)) return { error: 'Unknown synthetic task.' };
+          if (outcome === 'cancel') return { taskId: status.taskId, title: status.title, state: 'cancelling' };
+          if (outcome === 'open') return { opened: true };
           return outcome === 'delete' ? { taskId: args.taskId, title: status.title, deleted: true } : { taskId: status.taskId, title: outcome === 'delegate' ? 'JavaScript Map research' : status.title, state: 'dispatching' };
         }
         return { error: 'Benchmark refuses all work mutations.' };
       },
     })) {
+      if (event.type === 'tool') receipts.push(event.result);
       if (event.type === 'text') {
         firstTextMs ??= rounded(performance.now() - started);
         text += event.text;
@@ -144,15 +160,15 @@ async function voiceTurn(env, name, messages, outcome) {
   }
   const listIndex = calls.findIndex(call => call.tool === 'list_work');
   const statusIndex = calls.findIndex(call => call.tool === 'get_work_status' && call.args.taskId === 'synthetic-task');
-  const queried = calls.some(call => call.tool === 'list_work' && typeof call.args.query === 'string' && call.args.query.trim());
+  const queried = calls.some(call => ['list_work', 'get_work_status'].includes(call.tool) && typeof call.args.query === 'string' && call.args.query.trim());
   const passiveReadContract = outcome === 'conversation' ? calls.length === 0 : expectedAction
-    ? calls.filter(call => call.tool === expectedAction).length === 1 && calls.every(call => ['list_work', expectedAction].includes(call.tool)) && (outcome === 'delegate' ? calls.find(call => call.tool === expectedAction)?.args.readOnly === true : calls.find(call => call.tool === expectedAction)?.args.taskId === status.taskId)
-    : listIndex >= 0 && calls.every(call => ['list_work', 'get_work_status'].includes(call.tool)) &&
-      (outcome === 'status' ? queried || statusIndex > listIndex : calls.every(call => call.tool === 'list_work'));
+    ? calls.filter(call => call.tool === expectedAction).length === 1 && calls.every(call => ['list_work', expectedAction].includes(call.tool)) && !receipts.some(receipt => receipt.error) && (outcome !== 'delegate' || calls.find(call => call.tool === expectedAction)?.args.readOnly === true)
+    : (listIndex >= 0 || queried) && calls.every(call => ['list_work', 'get_work_status'].includes(call.tool)) &&
+      (outcome === 'status' ? queried || statusIndex > listIndex || receipts.some(receipt => receipt.tasks?.some(task => task.result === status.result)) : true);
   const spokenContract = !/synthetic-(task|other)|list_work|get_work_status|start_work|send_work_message|result_ready|<think>|```/i.test(text);
   const searchContract = !document || (queried && (outcome === 'status' ? calls.length === 1 : /\?/.test(text)));
   const completed = !error && Boolean(text.trim()) && rounds.every(round => round.finishReason === 'stop' || round.finishReason === 'tool_calls');
-  const result = { kind: 'llm-turn', case: env.BENCH_CASE, name, wallMs: rounded(performance.now() - started), firstTextMs, completed, passiveReadContract, spokenContract, searchContract, text, calls, rounds, ...(error ? { error } : {}) };
+  const result = { kind: 'llm-turn', case: env.BENCH_CASE, name, wallMs: rounded(performance.now() - started), firstTextMs, completed, passiveReadContract, spokenContract, searchContract, text, calls, receipts, rounds, ...(error ? { error } : {}) };
   if (!completed || !passiveReadContract || !spokenContract || !searchContract) process.exitCode = 1;
   output(result);
   return result;
@@ -219,6 +235,16 @@ async function benchLlm(baseEnv, selected) {
       await voiceTurn(env, 'read-delegation', [{ role: 'user', content: 'Ask Agency to look up the JavaScript Map API in Microsoft Learn. Read-only; do not change anything.' }], 'delegate');
       await voiceTurn(env, 'delete-by-subject', [{ role: 'user', content: 'Delete the task about the login fix, keeping its files.' }], 'delete');
       await voiceTurn(env, 'worker-followup', [{ role: 'user', content: 'Send the worker for task synthetic-task this new instruction: run the tests again and report the result.' }], 'followup');
+      await voiceTurn(env, 'delete-all', [{ role: 'user', content: 'Delete all my task chats. Keep the files.' }], 'deleteAll');
+      await voiceTurn(env, 'theme', [{ role: 'user', content: 'Switch to the Baymax theme.' }], 'theme');
+      await voiceTurn(env, 'spoken-updates-off', [{ role: 'user', content: 'Turn off spoken task updates.' }], 'quiet');
+      await voiceTurn(env, 'clear-inbox', [{ role: 'user', content: 'Clear all notifications from my inbox.' }], 'inbox');
+      await voiceTurn(env, 'end-call', [{ role: 'user', content: 'End this call.' }], 'end');
+      await voiceTurn(env, 'stop-task', [{ role: 'user', content: 'Stop the task about the login fix.' }], 'cancel');
+      await voiceTurn(env, 'open-task', [{ role: 'user', content: 'Open the task about the login fix in VS Code.' }], 'open');
+      await voiceTurn(env, 'coding-task', [{ role: 'user', content: 'Start a new task to add unit tests for the login parser.' }], 'coding');
+      await voiceTurn(env, 'vscode-note', [{ role: 'user', content: 'Open a request note in VS Code: review the parser. Do not start an agent.' }], 'note');
+      await voiceTurn(env, 'conversation-no-delete', [{ role: 'user', content: 'Do not delete any tasks. Just say hello.' }], 'conversation');
     } catch (error) {
       output({ kind: 'llm-error', case: candidate.name, error: error.message });
       process.exitCode = 1;

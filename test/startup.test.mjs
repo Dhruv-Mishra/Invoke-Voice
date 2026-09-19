@@ -50,12 +50,12 @@ test('Agency connection checks respect consent, reject remote origins and never 
   assert.equal((await (await check()).json()).workDataAccess, 'disabled');
 });
 
-test('voice notifications persist acceptance and never replay across sessions', async context => {
+test('voice notifications only speak the latest update in the current session and persist acceptance', async context => {
   const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-notification-ack-'));
   const supervisor = new Supervisor({ dataDir, bridge: {} });
   supervisor.updateSettings({ greetOnConnect: false });
   supervisor.publishNotification({ id: 'failed-task', title: 'Failed task', state: 'agent_failed' }, 'Task failed.');
-  const notificationId = supervisor.snapshot().notifications[0].id;
+  let notificationId = supervisor.snapshot().notifications[0].id;
   const delivered = [];
   let accept = false;
   let attempted;
@@ -82,6 +82,19 @@ test('voice notifications persist acceptance and never replay across sessions', 
   };
   const notify = socket => socket.send(JSON.stringify({ type: 'notify', notificationId, text: 'Failed task: failed' }));
   const socket = await connect();
+  const stale = once(socket, 'message');
+  notify(socket);
+  assert.equal(JSON.parse((await stale)[0]).type, 'notify_ack');
+  assert.deepEqual(delivered, []);
+  assert.equal(supervisor.snapshot().notifications[0].read, false);
+  supervisor.publishNotification({ id: 'older-task', title: 'Older task', state: 'result_ready' }, 'Done.');
+  notificationId = supervisor.snapshot().notifications.at(-1).id;
+  supervisor.publishNotification({ id: 'new-task', title: 'New task', state: 'result_ready' }, 'Done.');
+  const superseded = once(socket, 'message');
+  notify(socket);
+  assert.equal(JSON.parse((await superseded)[0]).type, 'notify_ack');
+  assert.deepEqual(delivered, []);
+  notificationId = supervisor.snapshot().notifications.at(-1).id;
   const rejected = new Promise(resolve => { attempted = resolve; });
   notify(socket);
   await rejected;
@@ -90,8 +103,8 @@ test('voice notifications persist acceptance and never replay across sessions', 
   const acknowledged = once(socket, 'message');
   notify(socket);
   assert.deepEqual(JSON.parse((await acknowledged)[0]), { type: 'notify_ack', notificationId });
-  assert.equal(supervisor.snapshot().notifications[0].read, true);
-  assert.equal(new Supervisor({ dataDir, bridge: {} }).snapshot().notifications[0].read, true);
+  assert.equal(supervisor.snapshot().notifications.at(-1).read, true);
+  assert.equal(new Supervisor({ dataDir, bridge: {} }).snapshot().notifications.at(-1).read, true);
   const closed = once(socket, 'close');
   socket.close();
   await closed;
@@ -115,6 +128,7 @@ test('voice tool bridge ends calls locally and delegates supervisor tools', asyn
   assert.deepEqual(await callTool('end_call', {}, { requestId: 'voice-end' }), { ended: true });
   assert.deepEqual(events, [{ type: 'end_call' }]);
   assert.deepEqual(await callTool('list_work', { query: 'docs' }, { requestId: 'voice-list' }), { delegated: true });
+  assert.match((await callTool('start_work', { objective: 'Read the calendar', readOnly: true, model: 'gpt-4' })).error, /Unknown argument: model/);
   assert.deepEqual(calls, [{ name: 'list_work', args: { query: 'docs' }, context: { requestId: 'voice-list' } }]);
 });
 

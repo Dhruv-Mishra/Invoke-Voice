@@ -9,8 +9,10 @@ import { pipeline } from 'node:stream/promises';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const hf = (id, label, repo, revision, name) => ({ id, label, repo, revision, name, sourceUrl: `https://huggingface.co/${repo}/resolve/${revision}/${name}` });
+export const GEMMA_ASSET = Object.freeze(hf('ling', 'Gemma 4 E2B IT QAT Q4_0', 'google/gemma-4-E2B-it-qat-q4_0-gguf', '675cff42a74c774d6cb76f76d8eacb49b48c9b93', 'gemma-4-E2B_q4_0-it.gguf'));
+export const LEGACY_LING_ASSETS = Object.freeze(['Compact', 'Quality'].map(variant => hf('ling', `Ling ${variant}`, 'SC117/Ling-3.0-tiny-abliterated-APEX-GGUF', 'b923d16fcf28261f12be9ece2b520ed442403f70', `Ling-3.0-tiny-abliterated-APEX-I-${variant}.gguf`)));
 export const ASSETS = Object.freeze([
-  hf('ling', 'Ling Quality GGUF', 'SC117/Ling-3.0-tiny-abliterated-APEX-GGUF', 'b923d16fcf28261f12be9ece2b520ed442403f70', 'Ling-3.0-tiny-abliterated-APEX-I-Quality.gguf'),
+  GEMMA_ASSET,
   hf('moonshine', 'Moonshine Tiny Q4_K', 'cstr/moonshine-streaming-tiny-GGUF', '34ac435a44ab618d426a72346987b68ce07bbf44', 'moonshine-streaming-tiny-q4_k.gguf'),
   hf('tokenizer', 'Moonshine tokenizer', 'cstr/moonshine-streaming-tiny-GGUF', '34ac435a44ab618d426a72346987b68ce07bbf44', 'tokenizer.bin'),
   hf('vad', 'Silero VAD 6.2.0', 'ggml-org/whisper-vad', '9ffd54a1e1ee413ddf265af9913beaf518d1639b', 'ggml-silero-v6.2.0.bin'),
@@ -43,7 +45,7 @@ export function setupError(message) {
 }
 
 export function localSttProvider(env = process.env) {
-  const provider = env.LOCAL_STT_PROVIDER || 'moonshine';
+  const provider = env.LOCAL_STT_PROVIDER || 'whisper';
   if (!['whisper', 'moonshine'].includes(provider)) throw setupError('LOCAL_STT_PROVIDER must be whisper or moonshine.');
   return provider;
 }
@@ -216,7 +218,7 @@ async function verify(file, meta, signal) {
 }
 
 export async function ensureAsset(paths, asset, { report = () => {}, signal, fetchImpl = fetch } = {}) {
-  if (!ASSETS.includes(asset) && !TASK_SEARCH_ASSETS.includes(asset)) throw setupError('Unknown setup component.');
+  if (!ASSETS.includes(asset) && !TASK_SEARCH_ASSETS.includes(asset) && asset !== GEMMA_ASSET) throw setupError('Unknown setup component.');
   if (asset.id === 'crispasr' && paths.crispasrCpu === 'avx2') asset = CRISPASR_AVX2_ASSET;
   const destination = paths[asset.id];
   if (assetReady(paths, asset, destination)) return destination;
@@ -327,12 +329,18 @@ export async function ensureAsset(paths, asset, { report = () => {}, signal, fet
 
 async function main() {
   const target = process.argv[2];
-  if (!['all', 'ling', 'whisper', 'moonshine', 'runtimes', 'task-search'].includes(target)) {
-    console.log('Usage: npm run models -- all|ling|whisper|moonshine|runtimes|task-search\nAll installs the selected local recognizer (Whisper by default). Full voice setup remains in Settings.');
+  if (!['all', 'ling', 'gemma', 'whisper', 'moonshine', 'runtimes', 'task-search'].includes(target)) {
+    console.log('Usage: npm run models -- all|ling|gemma|whisper|moonshine|runtimes|task-search\nAll installs the selected local recognizer (Whisper by default). Full voice setup remains in Settings.');
     return;
   }
   if (target === 'runtimes' && (process.platform !== 'win32' || process.arch !== 'x64')) throw setupError('Prebuilt runtimes support Windows x64 only.');
   const paths = stackPaths();
+  if (target === 'gemma') {
+    paths.ling = path.join(paths.modelDir, GEMMA_ASSET.name);
+    await withSetupLock(paths, () => ensureAsset(paths, GEMMA_ASSET, { report: event => { if (!event.progress) console.log(event.message); } }));
+    console.log('Gemma installed; selected model unchanged.');
+    return;
+  }
   const candidates = ['all', 'runtimes'].includes(target) ? localSetupAssets() : ASSETS;
   const selected = target === 'task-search' ? TASK_SEARCH_ASSETS : candidates.filter(asset => target === 'runtimes' ? Boolean(asset.executable) && !(asset.id === 'uv' && paths.pythonBase) : target === 'all' ? ['ling', 'moonshine', 'tokenizer', 'vad'].includes(asset.id) || asset.id.startsWith('whisper') : target === 'ling' ? asset.id === 'ling' : target === 'whisper' ? asset.id.startsWith('whisper') : ['moonshine', 'tokenizer', 'vad', 'crispasr'].includes(asset.id));
   await withSetupLock(paths, async () => {

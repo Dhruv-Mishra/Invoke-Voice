@@ -6,7 +6,7 @@ import path from 'node:path';
 import { Supervisor, tools, supervisorTools, supervisorInstructions } from '../src/supervisor.mjs';
 import { createLocalTaskSearch, SemanticTaskIndex } from '../src/supervisor/semantic-search.mjs';
 import { assetReady, stackPaths, TASK_SEARCH_ASSETS } from '../scripts/models.mjs';
-import { tools as contractTools, supervisorTools as contractSupervisorTools, supervisorInstructions as contractSupervisorInstructions } from '../src/supervisor/contract.mjs';
+import { tools as contractTools, modelTools, supervisorTools as contractSupervisorTools, supervisorInstructions as contractSupervisorInstructions } from '../src/supervisor/contract.mjs';
 
 test('exports the canonical LLM tool schemas', () => {
   assert.equal(tools, supervisorTools);
@@ -17,7 +17,8 @@ test('exports the canonical LLM tool schemas', () => {
   assert.equal(Object.hasOwn(tools[0].function.parameters, 'required'), false);
   assert.equal(tools[0].function.parameters.properties.query.type, 'string');
   assert.ok(supervisorInstructions.length < 1350);
-  assert.ok(JSON.stringify(tools).length + supervisorInstructions.length < 4200);
+  assert.ok(JSON.stringify(modelTools).length + supervisorInstructions.length < 4200);
+  assert.deepEqual(Object.keys(modelTools.find(tool => tool.function.name === 'start_work').function.parameters.properties), ['areaId', 'objective', 'readOnly']);
   assert.deepEqual(tools.find(tool => tool.function.name === 'start_work').function.parameters.properties.backend.enum, ['copilot', 'agency']);
   assert.equal(tools.find(tool => tool.function.name === 'start_work').function.parameters.properties.context.enum.includes('long_context'), true);
   assert.deepEqual(tools.find(tool => tool.function.name === 'start_work').function.parameters.required, ['objective']);
@@ -388,7 +389,8 @@ test('Copilot dispatch is idempotent, records progress, and exposes passive stat
     assert.equal(continuations, 1);
     assert.equal((await supervisor.callTool('get_work_status', { taskId: receipt.taskId })).result, 'Follow-up passed');
     const listedTask = (await supervisor.callTool('list_work')).tasks[0];
-    assert.equal(Object.hasOwn(listedTask, 'result'), false);
+    assert.equal(listedTask.result, 'Follow-up passed');
+    assert.equal(Object.hasOwn(listedTask, 'worktree'), false);
     assert.deepEqual(await supervisor.callTool('open_work', { taskId: receipt.taskId }), { opened: true });
     assert.deepEqual(await supervisor.callTool('invoke_vscode', { prompt: 'Draft a fix', model: 'gpt-5.4', context: 'default' }, { requestId: 'vscode-1' }), { invoked: true });
     assert.equal(vscodeRequest.directory, dataDir);
@@ -802,4 +804,28 @@ test('app controls persist allowlisted preferences and inbox changes without mod
   assert.equal(JSON.stringify(restored.state), before);
   assert.deepEqual(await restored.callTool('control_app', { action: 'clear_notifications' }), { saved: true, action: 'clear_notifications' });
   assert.deepEqual(restored.snapshot().notifications, []);
+});
+
+test('task subjects resolve once, ambiguous deletion does nothing, and bulk deletion covers more than the recent list', async context => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-minimal-tools-'));
+  context.after(() => rmSync(dataDir, { recursive: true, force: true }));
+  const supervisor = new Supervisor({ dataDir, bridge: {}, semanticSearch: async (query, documents, lexical) => lexical });
+  const areaId = supervisor.resolveArea().id;
+  for (let index = 0; index < 30; index++) supervisor.state.tasks.push({ id: `task-${index}`, title: `Parser document ${index}`, objective: `Parser document ${index}`, areaId, state: 'result_ready', observations: [], turns: [] });
+  supervisor.state.tasks.push({ id: 'unique', title: 'Calendar summary', areaId, state: 'result_ready', observations: [], turns: [] });
+  assert.equal((await supervisor.callTool('get_work_status', { query: 'Calendar' })).taskId, 'unique');
+  assert.equal((await supervisor.callTool('get_work_status', { query: 'unique' })).taskId, 'unique');
+  assert.equal((await supervisor.callTool('delete_work', { query: 'document' })).clarificationRequired, true);
+  assert.equal(supervisor.state.tasks.length, 31);
+  await assert.rejects(supervisor.callTool('delete_work', { taskId: 'unique', all: true }), /exactly one/);
+  assert.equal((await supervisor.callTool('delete_work', { query: 'Calendar' })).deleted, 'task');
+  const receipt = await supervisor.callTool('delete_work', { all: true });
+  assert.deepEqual(receipt, { deleted: 'tasks', deletedCount: 30, failedCount: 0, failed: [], remaining: 0 });
+  assert.equal(supervisor.state.areas.length, 1);
+  supervisor.state.tasks.push({ id: 'unowned', title: 'External work', areaId, state: 'running', lastObservedAt: Date.now(), observations: [], turns: [] });
+  const partial = await supervisor.callTool('delete_work', { all: true });
+  assert.equal(partial.deletedCount, 0);
+  assert.equal(partial.failedCount, 1);
+  assert.equal(partial.remaining, 1);
+  assert.match(partial.failed[0].error, /Only finished or stale/);
 });

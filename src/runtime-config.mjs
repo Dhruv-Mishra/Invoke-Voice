@@ -14,6 +14,7 @@ const fields = Object.freeze([
   { key: 'MOONSHINE_MODEL', label: 'Moonshine model path (blank uses managed Tiny)', group: 'Local speech', type: 'text', restartRequired: true },
   { key: 'WHISPER_LANGUAGE', label: 'Whisper spoken language', group: 'Local speech', type: 'select', defaultValue: 'auto', options: [['auto', 'Automatic'], ['en', 'English'], ['hi', 'Hindi'], ['es', 'Spanish'], ['fr', 'French'], ['de', 'German'], ['ja', 'Japanese'], ['zh', 'Chinese']], restartRequired: true },
   { key: 'WHISPER_END_SILENCE_MS', label: 'Whisper pause before reply (ms)', group: 'Local speech', type: 'number', defaultValue: '1400', min: 200, max: 3000, restartRequired: true },
+  { key: 'WHISPER_PREDECODE_MS', label: 'Whisper early decoding', group: 'Local speech', type: 'select', defaultValue: '480', options: [['480', 'On'], ['0', 'Off']], restartRequired: true },
   { key: 'END_SILENCE_MS', label: 'Moonshine pause before reply (ms)', group: 'Local speech', type: 'number', defaultValue: '1400', min: 600, max: 3000, restartRequired: true },
   { key: 'GEMINI_API_KEY', label: 'Google API key', group: 'Provider keys', type: 'password', secret: true },
   { key: 'OPENAI_API_KEY', label: 'OpenAI API key', group: 'Provider keys', type: 'password', secret: true },

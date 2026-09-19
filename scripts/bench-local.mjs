@@ -28,6 +28,7 @@ const llmCases = [
 ];
 const sttCases = [
   { name: 'whisper' },
+  { name: 'whisper-scheduling' },
   { name: 'configured' },
   { name: 'baseline', threads: '12', partial: '1000', step: '500' },
   { name: 'candidate', threads: '4', partial: '2000', step: '500' },
@@ -245,17 +246,26 @@ async function speech(env, text) {
   } finally { clearTimeout(timer); await stop(child); }
 }
 
-async function benchWhisper(env, selectedSample) {
+async function benchWhisper(env, selectedSample, preparedSamples = new Map()) {
   const config = localConfiguration({ ...env, LOCAL_STT_PROVIDER: 'whisper' });
   if (!existsSync(path.join(config.whisperModelDir, 'model.bin'))) throw new Error('Whisper model is missing. Install it in Settings before benchmarking.');
-  const args = ['-I', '-u', fileURLToPath(new URL('./whisper_worker.py', import.meta.url)), '--model', config.whisperModelDir, '--language', env.WHISPER_LANGUAGE || 'auto', '--threads', env.WHISPER_THREADS || '8', '--silence-ms', env.WHISPER_END_SILENCE_MS || '1400'];
+  const predecodeMs = env.WHISPER_PREDECODE_MS || '480';
+  const repeats = Number(env.BENCH_STT_REPEATS || '1');
+  if (!Number.isInteger(repeats) || repeats < 1 || repeats > 5) throw new Error('BENCH_STT_REPEATS must be an integer from 1 to 5.');
+  const args = ['-I', '-u', fileURLToPath(new URL('./whisper_worker.py', import.meta.url)), '--model', config.whisperModelDir, '--language', env.WHISPER_LANGUAGE || 'auto', '--threads', env.WHISPER_THREADS || '8', '--silence-ms', env.WHISPER_END_SILENCE_MS || '1400', '--predecode-ms', predecodeMs];
   const child = childProcess(config.pythonBin, args, { ...env, HF_HUB_OFFLINE: '1', HF_HUB_DISABLE_TELEMETRY: '1' });
   const reader = createInterface({ input: child.stdout });
+  const results = [];
+  const finals = [];
   let diagnostic = '';
   let workerError;
   child.stderr.on('data', chunk => { diagnostic = (diagnostic + chunk).slice(-1500); });
   reader.on('line', line => {
-    try { const event = JSON.parse(line); if (event.type === 'error') workerError = event.message; } catch {}
+    try {
+      const event = JSON.parse(line);
+      if (event.type === 'error') workerError = event.message;
+      if (event.type === 'final') finals.push({ ...event, wallMs: performance.now() });
+    } catch {}
   });
   function waitEvent(type) {
     return new Promise((resolve, reject) => {
@@ -282,6 +292,8 @@ async function benchWhisper(env, selectedSample) {
     { name: 'brief', text: 'Please check my work.' },
     { name: 'short', text: 'Please check the current work and tell me whether the tests have passed.' },
     { name: 'long', text: 'Please check the current work and tell me whether the tests have passed before you summarize the latest result without starting any new work because I need to review the changes and decide what to do next.' },
+    { name: 'paused', text: 'Please check the current work and tell me whether the tests have passed.', parts: ['Please check the current work', 'and tell me whether the tests have passed.'], pauseMs: 800 },
+    { name: 'hesitation', text: 'Please check the current work but do not start any new work.', parts: ['Please check the current work', 'but do not start any new work.'], pauseMs: 1056 },
   ];
   try {
     const loading = performance.now();
@@ -289,33 +301,59 @@ async function benchWhisper(env, selectedSample) {
     if (!['int8', 'int8_float32'].includes(ready.compute_type)) throw new Error('Whisper did not initialize INT8 inference.');
     output({ kind: 'stt-runtime', provider: 'whisper', loadMs: rounded(ready.wallMs - loading), computeType: ready.compute_type, args });
     for (const sample of samples.filter(item => !selectedSample || item.name === selectedSample)) {
-      const pcm = await speech(env, sample.text);
-      for (const mode of ['commit', 'hands-free']) {
+      let pcm = preparedSamples.get(sample.name);
+      if (!pcm) {
+        pcm = sample.parts
+          ? Buffer.concat([await speech(env, sample.parts[0]), Buffer.alloc(sample.pauseMs * 32), await speech(env, sample.parts[1])])
+          : await speech(env, sample.text);
+        preparedSamples.set(sample.name, pcm);
+      }
+      for (let repeat = 1; repeat <= repeats; repeat++) for (const mode of ['commit', 'hands-free']) {
+        const finalStart = finals.length;
         const final = waitEvent('final');
         final.catch(() => {});
         if (mode === 'commit') writer.begin();
         const started = performance.now();
+        let maxInputLagMs = 0;
         const audio = mode === 'commit' ? pcm : Buffer.concat([pcm, Buffer.alloc(32000 * 4)]);
         for (let offset = 0; offset < audio.length; offset += 640) {
           deadline.throwIfAborted();
           if (workerError) throw new Error(workerError);
           writer.write(audio.subarray(offset, offset + 640));
           const remaining = started + Math.min(offset + 640, audio.length) / 32 - performance.now();
+          maxInputLagMs = Math.max(maxInputLagMs, -remaining);
           if (remaining > 0) await delay(remaining, undefined, { signal: deadline });
         }
         if (mode === 'commit') writer.commit();
         const event = await final;
         const normalize = text => text.toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
         const transcriptMatches = normalize(event.text) === normalize(sample.text);
-        output({ kind: 'stt', case: 'whisper', mode, sample: sample.name, expected: sample.text, transcript: event.text, transcriptMatches, audioMs: rounded(pcm.length / 32), endSilenceMs: rounded(event.wallMs - started - pcm.length / 32) });
-        if (!transcriptMatches) process.exitCode = 1;
+        const prematureFinal = event.wallMs < started + pcm.length / 32;
+        const finalCount = finals.length - finalStart;
+        const result = { kind: 'stt', case: 'whisper', predecodeMs: Number(predecodeMs), repeat, mode, sample: sample.name, expected: sample.text, transcript: event.text, transcriptMatches, prematureFinal, finalCount, pcmSha256: createHash('sha256').update(pcm).digest('hex'), maxInputLagMs: rounded(maxInputLagMs), audioMs: rounded(pcm.length / 32), endSilenceMs: rounded(event.wallMs - started - pcm.length / 32) };
+        results.push(result);
+        output(result);
+        if (!transcriptMatches || prematureFinal || finalCount !== 1) process.exitCode = 1;
       }
     }
   } finally { writer.dispose(); await stop(child); reader.close(); }
+  return results;
 }
 
 async function benchStt(env, selected, selectedSample) {
   if (selected === 'whisper') return benchWhisper(env, selectedSample);
+  if (selected === 'whisper-scheduling') {
+    const preparedSamples = new Map();
+    const baseline = await benchWhisper({ ...env, WHISPER_PREDECODE_MS: '0' }, selectedSample, preparedSamples);
+    const candidate = await benchWhisper({ ...env, WHISPER_PREDECODE_MS: '480' }, selectedSample, preparedSamples);
+    for (const previous of baseline) {
+      const current = candidate.find(result => result.sample === previous.sample && result.mode === previous.mode && result.repeat === previous.repeat);
+      const identical = current?.pcmSha256 === previous.pcmSha256 && current?.transcript === previous.transcript;
+      output({ kind: 'stt-comparison', sample: previous.sample, mode: previous.mode, repeat: previous.repeat, identical, baselineMs: previous.endSilenceMs, candidateMs: current?.endSilenceMs, savedMs: current ? rounded(previous.endSilenceMs - current.endSilenceMs) : null });
+      if (!identical) process.exitCode = 1;
+    }
+    return;
+  }
   const config = localConfiguration({ ...env, LOCAL_STT_PROVIDER: 'moonshine' });
   const idleMs = Number(env.BENCH_STT_IDLE_MS || 0);
   if (!Number.isInteger(idleMs) || idleMs < 0 || idleMs > 60000) throw new Error('BENCH_STT_IDLE_MS must be an integer from 0 to 60000.');
@@ -425,11 +463,12 @@ async function benchStt(env, selected, selectedSample) {
 async function main() {
   const [mode = 'all', selected, sample] = process.argv.slice(2);
   if (mode === '--help') {
-    console.log('STT case whisper tests the installed INT8 worker with push-to-talk and hands-free synthetic audio. Other STT cases explicitly use Moonshine/CrispASR.');
+    console.log('STT case whisper tests the installed INT8 worker with push-to-talk and hands-free synthetic audio. Non-Whisper STT cases explicitly use Moonshine/CrispASR.');
+    console.log('STT case whisper-scheduling compares predecode off versus 480 ms using identical PCM, including paused/hesitation samples; BENCH_STT_REPEATS=1..5 repeats each sample. No provisional result may end a turn early. WHISPER_PREDECODE_MS=0 disables predecode for the whisper case.');
     console.log('node scripts/bench-local.mjs [all|llm|stt] [case] [brief|short|long]\nLLM cases: baseline, compact-f16, compact-q8-k, compact-q8-kv\nSTT cases: configured (actual app arguments), baseline, candidate, step1000, redecode, bounded, bounded2 (rejected: loses brief-command words), sparse\nBENCH_STT_IDLE_MS=0..60000 adds paced silence before and after each STT clip (at least 2000 ms after). BENCH_STT_WRITER=app exercises the production bounded PCM writer without slowing input for drain. CRISPASR_BIN selects an already-installed runtime for comparison.\nSynthetic inputs only; JSON lines on stdout. Uses installed assets, private ports and owned processes; no downloads or configuration writes. Baselines and experimental cases are comparison values, not recommended laptop settings.');
     return;
   }
-  if (!['all', 'llm', 'stt'].includes(mode) || (selected && !(mode === 'stt' ? sttCases : llmCases).some(candidate => candidate.name === selected)) || (sample && !['brief', 'short', 'long'].includes(sample))) throw new Error('Use --help for benchmark arguments.');
+  if (!['all', 'llm', 'stt'].includes(mode) || (selected && !(mode === 'stt' ? sttCases : llmCases).some(candidate => candidate.name === selected)) || (sample && !(selected?.startsWith('whisper') ? ['brief', 'short', 'long', 'paused', 'hesitation'] : ['brief', 'short', 'long']).includes(sample))) throw new Error('Use --help for benchmark arguments.');
   const env = { ...process.env };
   output({ kind: 'hardware', cpu: cpus()[0]?.model, logical: cpus().length, available: availableParallelism(), ramGiB: rounded(totalmem() / 1024 ** 3), note: 'Synthetic measurements on this machine, not a laptop performance guarantee.' });
   if (mode !== 'stt') await benchLlm(env, selected);

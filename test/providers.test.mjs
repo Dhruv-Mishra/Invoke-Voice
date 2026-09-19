@@ -740,6 +740,7 @@ test('local and hybrid voice execute tools before playback and retain real answe
       CRISPASR_BIN: process.execPath, PYTHON_BIN: process.execPath,
       MOONSHINE_MODEL: process.execPath, MOONSHINE_TOKENIZER: process.execPath, VAD_MODEL: process.execPath,
       VOICE_TEST_ENV: 'passed-to-crisp',
+      ...(provider === 'openai' ? { WHISPER_PREDECODE_MS: '0' } : {}),
     };
     session = await createLocalVoice({
       provider, allowCloud: provider !== 'local', env,
@@ -755,6 +756,9 @@ test('local and hybrid voice execute tools before playback and retain real answe
       },
     });
     assert.equal(processes.find(runtime => runtime.child === stt).options.env.VOICE_TEST_ENV, 'passed-to-crisp');
+    const sttArgs = processes.find(runtime => runtime.child === stt).args;
+    if (whisper) assert.equal(sttArgs[sttArgs.indexOf('--predecode-ms') + 1], provider === 'openai' ? '0' : '480');
+    else assert.equal(sttArgs.includes('--predecode-ms'), false);
     const firstAudio = Buffer.from([1, 2, 3, 4]);
     const secondAudio = Buffer.from([5, 6, 7, 8]);
     session.audio(firstAudio.toString('base64'));

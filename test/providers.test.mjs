@@ -9,7 +9,7 @@ import path from 'node:path';
 import { syncBuiltinESMExports } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { PassThrough, Writable } from 'node:stream';
-import { compactToolResult, streamReply, voiceInstructions } from '../src/llm.mjs';
+import { compactToolResult, localInstructions, streamReply, voiceInstructions } from '../src/llm.mjs';
 import { supervisorInstructions } from '../src/supervisor.mjs';
 import { voiceTools } from '../src/supervisor/contract.mjs';
 import { closeLocalVoice, createLocalVoice, createPcmWriter, createSttWriter, drainVoiceText, isVoiceResponsePlayable, localSttArguments, onLocalVoiceRuntimeExit } from '../src/local-voice.mjs';
@@ -17,6 +17,15 @@ import { createRealtimeAnnouncementGate, createRealtimeVoice, createTranscriptSt
 import { sessionThemeOptions, themedInstructions, themeVoicePreset } from '../src/theme-session.mjs';
 import { providerProfiles, resolveEndpoint } from '../src/llm/provider-config.mjs';
 import { createRuntimeConfig } from '../src/runtime-config.mjs';
+
+function localSSE(delta, local = true) {
+  const value = delta.tool_calls
+    ? { calls: delta.tool_calls.map(call => ({ name: call.function.name, arguments: JSON.parse(call.function.arguments) })) }
+    : { answer: delta.content };
+  return `data: ${JSON.stringify({ choices: [{ delta: local ? { content: JSON.stringify(value) } : delta, finish_reason: !local && delta.tool_calls ? 'tool_calls' : 'stop' }] })}\n\ndata: [DONE]\n\n`;
+}
+
+const localCalls = request => request.messages.filter(message => message.role === 'assistant').flatMap(message => JSON.parse(message.content).calls || []);
 
 test('dedicated model defaults match Settings and configured models reach endpoints', () => {
   const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-model-defaults-'));
@@ -437,7 +446,7 @@ test('local context slides history on every round without splitting tool exchang
     const round = requests.length;
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
     const delta = round < 4 ? { tool_calls: [{ index: 0, id: `call-${round}`, function: { name: round === 1 ? 'list_work' : 'get_work_status', arguments: round === 1 ? '{}' : '{"taskId":"task-24"}' } }] } : { content: 'The latest task is running.' };
-    res.end(`data: ${JSON.stringify({ choices: [{ delta, finish_reason: round < 4 ? 'tool_calls' : 'stop' }] })}\n\ndata: [DONE]\n\n`);
+    res.end(localSSE(delta));
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   try {
@@ -454,24 +463,24 @@ test('local context slides history on every round without splitting tool exchang
         : { taskId: 'task-24', state: 'running', actions: [], update: 'Progress '.repeat(2000) },
       env: { LOCAL_LLM_URL: `http://127.0.0.1:${server.address().port}/v1`, LLAMA_CONTEXT: '8192', LLAMA_PARALLEL: '2' },
     })) events.push(event);
-    assert.equal(requests.length, 4);
-    for (const request of requests) {
+    assert.equal(requests.length, 5);
+    for (const request of requests.slice(0, -1)) {
+      assert.deepEqual(request.messages.filter(message => message.role === 'system'), [{ role: 'system', content: localInstructions(themedInstructions(voiceInstructions, ''), voiceTools) }]);
       const estimated = Math.ceil(Buffer.byteLength(JSON.stringify({ tools: request.tools, messages: request.messages })) / 3) + request.messages.length * 16;
       assert.ok(estimated + request.max_tokens + 256 <= 4096);
       assert.deepEqual(request.messages.filter(message => message.role === 'user'), [{ role: 'user', content: latest }]);
+      const calls = localCalls(request);
+      assert.equal(calls.length, request.messages.filter(message => message.role === 'tool').length);
       for (const message of request.messages) {
-        for (const call of message.tool_calls || []) {
-          assert.equal(request.messages.filter(result => result.role === 'tool' && result.tool_call_id === call.id).length, 1);
-        }
         if (message.role === 'tool') {
-          assert.ok(request.messages.some(assistant => assistant.tool_calls?.some(call => call.id === message.tool_call_id)));
+          assert.ok(calls.some(call => call.name === message.name));
           const result = JSON.parse(message.content);
           if (message.name === 'list_work') assert.equal(result.tasks.at(-1).id, 'task-24');
           else assert.equal(result.taskId, 'task-24');
         }
       }
     }
-    assert.deepEqual(requests.at(-1).messages.filter(message => message.role === 'tool').map(message => message.tool_call_id), ['call-1', 'call-2', 'call-3']);
+    assert.deepEqual(requests.at(-2).messages.filter(message => message.role === 'tool').map(message => message.tool_call_id), ['call_0_0', 'call_1_0', 'call_2_0']);
     assert.equal(events.at(-1).type, 'done');
   } finally { await new Promise(resolve => server.close(resolve)); }
 });
@@ -509,7 +518,7 @@ test('local final requests retain mutation receipts and multiple task statuses u
         ? { tool_calls: [{ index: 0, id: `call-${requests.length}`, function: { name: step.name, arguments: JSON.stringify(step.args) } }] }
         : { content: 'Status received.' };
       res.writeHead(200, { 'Content-Type': 'text/event-stream' });
-      res.end(`data: ${JSON.stringify({ choices: [{ delta, finish_reason: step ? 'tool_calls' : 'stop' }] })}\n\ndata: [DONE]\n\n`);
+      res.end(localSSE(delta));
     });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     try {
@@ -526,25 +535,23 @@ test('local final requests retain mutation receipts and multiple task statuses u
         },
         env: { LOCAL_LLM_URL: `http://127.0.0.1:${server.address().port}/v1` },
       })) events.push(event);
-      assert.equal(requests.length, 3);
+      assert.equal(requests.length, 4);
       assert.equal(calls.length, 2);
       assert.equal(events.at(-1).type, 'done');
-      for (const [round, request] of requests.entries()) {
+      for (const [round, request] of requests.slice(0, -1).entries()) {
         const estimated = Math.ceil(Buffer.byteLength(JSON.stringify({ tools: request.tools, messages: request.messages })) / 3) + request.messages.length * 16;
         assert.ok(estimated + request.max_tokens + 256 <= 4096);
-        assert.equal(request.messages[0].content, voiceInstructions);
+        assert.ok(request.messages[0].content.startsWith(voiceInstructions));
         assert.deepEqual(request.messages.filter(message => message.role === 'user'), [{ role: 'user', content: scenario.latest }]);
-        const toolCalls = request.messages.flatMap(message => message.tool_calls || []);
+        const toolCalls = localCalls(request);
         const results = request.messages.filter(message => message.role === 'tool');
         assert.equal(toolCalls.length, round);
         assert.equal(results.length, round);
-        assert.deepEqual(results.map(message => message.tool_call_id), toolCalls.map(call => call.id));
+        assert.deepEqual(results.map(message => message.name), toolCalls.map(call => call.name));
         for (const [index, message] of results.entries()) {
           const step = scenario.steps[index];
-          const paired = toolCalls.filter(call => call.id === message.tool_call_id);
-          assert.equal(paired.length, 1);
-          assert.equal(paired[0].function.name, step.name);
-          assert.deepEqual(JSON.parse(paired[0].function.arguments), step.args);
+          assert.equal(toolCalls[index].name, step.name);
+          assert.deepEqual(toolCalls[index].arguments, step.args);
           const result = JSON.parse(message.content);
           if (step.name === 'list_work') {
             assert.equal(result.tasks.at(-1).id, step.result.tasks.at(-1).id);
@@ -572,7 +579,7 @@ test('local fails explicitly before another request when tool error truth cannot
     requests.push(JSON.parse(text));
     const delta = { tool_calls: [{ index: 0, id: 'call-1', function: { name: 'start_work', arguments: '{"objective":"Repair the parser"}' } }] };
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
-    res.end(`data: ${JSON.stringify({ choices: [{ delta, finish_reason: 'tool_calls' }] })}\n\ndata: [DONE]\n\n`);
+    res.end(localSSE(delta));
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   try {
@@ -623,7 +630,7 @@ test('voice requests include spoken instructions and preserve final response tex
     for await (const chunk of req) bodyText += chunk;
     requestBody = JSON.parse(bodyText);
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
-    for (const content of chunks) res.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`);
+    for (const content of [JSON.stringify({ answer: chunks.join('') })]) res.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`);
     res.end('data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -631,14 +638,14 @@ test('voice requests include spoken instructions and preserve final response tex
     const env = { LOCAL_LLM_URL: `http://127.0.0.1:${server.address().port}/v1`, LOCAL_LLM_MODEL: 'test-local' };
     const events = [];
     for await (const event of streamReply({ provider: 'local', profile: 'voice', messages: [{ role: 'user', content: 'Read the identifier and status exactly.' }], env })) events.push(event);
-    assert.deepEqual(requestBody.tools, voiceTools);
-    assert.equal(requestBody.tools.at(-1).function.name, 'end_call');
+    assert.equal(requestBody.tools, undefined);
+    assert.deepEqual(requestBody.response_format.json_schema.schema.oneOf[1].properties.calls.items.oneOf.map(tool => tool.properties.name.const), voiceTools.map(tool => tool.function.name));
     assert.equal(requestBody.max_tokens, 512);
     assert.equal(requestBody.temperature, 0.2);
     assert.equal(requestBody.cache_prompt, true);
-    assert.equal(requestBody.messages[0].content, voiceInstructions);
+    assert.ok(requestBody.messages[0].content.startsWith(voiceInstructions));
     assert.ok(voiceInstructions.startsWith(supervisorInstructions));
-    assert.deepEqual(events.filter(event => event.type === 'text').map(event => event.text), chunks);
+    assert.deepEqual(events.filter(event => event.type === 'text').map(event => event.text), [chunks.join('')]);
   } finally {
     await new Promise(resolve => server.close(resolve));
   }
@@ -675,11 +682,11 @@ test('local and hybrid voice execute tools before playback and retain real answe
       for await (const chunk of req) text += chunk;
       requests.push(JSON.parse(text));
       const round = requests.length;
-      const name = [2, 5, 8].includes(round) ? 'list_work' : [3, 6].includes(round) ? 'get_work_status' : null;
+      const name = (provider === 'local' ? [2, 6, 10] : [2, 5, 8]).includes(round) ? 'list_work' : (provider === 'local' ? [3, 7] : [3, 6]).includes(round) ? 'get_work_status' : null;
       const delta = name ? { tool_calls: [{ index: 0, id: `call-${round}`, function: { name, arguments: name === 'list_work' ? '{}' : '{"taskId":"task-new"}' } }] }
-        : { content: round === 1 ? 'I cannot access tasks.' : round === 4 ? 'The newest task passed its tests.' : 'The newest task is still complete.' };
+        : { content: round === 1 ? 'I cannot access tasks.' : round === 4 || (provider === 'local' && round === 5) ? 'The newest task passed its tests.' : 'The newest task is still complete.' };
       res.writeHead(200, { 'Content-Type': 'text/event-stream' });
-      res.end(`data: ${JSON.stringify({ choices: [{ delta, finish_reason: name ? 'tool_calls' : 'stop' }] })}\n\ndata: [DONE]\n\n`);
+      res.end(localSSE(delta, provider === 'local'));
     });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const spawn = context.mock.method(childProcess, 'spawn', (binary, args, options) => {
@@ -737,7 +744,7 @@ test('local and hybrid voice execute tools before playback and retain real answe
       send(event) { events.push(event); bus.emit('event', event); },
       callTool: async (name, args) => {
         calls.push({ name, args });
-        if (requests.length === 8) {
+        if (requests.length === (provider === 'local' ? 10 : 8)) {
           markToolStarted();
           return new Promise(resolve => { releaseTool = resolve; });
         }
@@ -794,15 +801,17 @@ test('local and hybrid voice execute tools before playback and retain real answe
       session.playbackDone('unrelated-response', 'played');
       session.playbackDone(ended.responseId, index === 1 ? 'failed' : 'played');
     }
-    assert.equal(requests.length, 7);
+    assert.equal(requests.length, provider === 'local' ? 9 : 7);
     for (const request of requests) {
-      assert.deepEqual(request.tools, voiceTools);
-      assert.equal(request.messages[0].content, voiceInstructions);
+      if (request.response_format?.json_schema.schema.properties?.answer) continue;
+      if (provider === 'local') assert.ok(request.response_format.json_schema.schema.oneOf);
+      else assert.deepEqual(request.tools, voiceTools);
+      assert.ok(request.messages[0].content.startsWith(voiceInstructions));
     }
     assert.match(requests[1].messages[0].content, /Read fresh status, not chat history/);
     assert.match(requests[1].messages[0].content, /list_work\(query\).*get_work_status/);
     assert.ok(requests[1].messages.some(message => message.role === 'assistant' && message.content === answers[0]));
-    assert.ok(requests[4].messages.some(message => message.role === 'assistant' && message.content === answers[1]));
+    assert.ok(requests[provider === 'local' ? 5 : 4].messages.some(message => message.role === 'assistant' && message.content === answers[1]));
     assert.deepEqual(calls.map(call => call.name), ['list_work', 'get_work_status', 'list_work', 'get_work_status']);
     assert.equal(events.filter(event => event.type === 'tool').length, 4);
     const toolEventCount = events.filter(event => event.type === 'tool').length;
@@ -812,7 +821,7 @@ test('local and hybrid voice execute tools before playback and retain real answe
     session.interrupt();
     releaseTool({ tasks: [] });
     await new Promise(setImmediate);
-    assert.equal(requests.length, 8);
+    assert.equal(requests.length, provider === 'local' ? 10 : 8);
     assert.equal(events.filter(event => event.type === 'tool').length, toolEventCount);
     assert.ok(events.some(event => event.type === 'interrupted'));
     const announcement = waitFor(event => event.type === 'response_end');
@@ -842,7 +851,7 @@ test('local and hybrid voice execute tools before playback and retain real answe
       assert.match(events.at(-1).message, /superseded/);
       session.interrupt();
       utterance('Cancelled command.', 6);
-      assert.equal(requests.length, 8, 'superseded or explicitly interrupted transcripts must not execute');
+      assert.equal(requests.length, provider === 'local' ? 10 : 8, 'superseded or explicitly interrupted transcripts must not execute');
       context.mock.timers.enable({ apis: ['Date'], now: Date.now() });
       context.mock.timers.tick(1000);
       const ending = waitFor(event => event.type === 'response_end');
@@ -881,7 +890,7 @@ test('task reads preserve empty and failed status evidence without mutations', a
       const name = round === 1 ? 'list_work' : round === 2 && statusRead ? 'get_work_status' : null;
       const delta = name ? { tool_calls: [{ index: 0, id: `call-${round}`, function: { name, arguments: name === 'list_work' ? '{}' : '{"taskId":"task-new"}' } }] } : { content: answer };
       res.writeHead(200, { 'Content-Type': 'text/event-stream' });
-      res.end(`data: ${JSON.stringify({ choices: [{ delta, finish_reason: name ? 'tool_calls' : 'stop' }] })}\n\ndata: [DONE]\n\n`);
+      res.end(localSSE(delta));
     });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     try {
@@ -895,7 +904,7 @@ test('task reads preserve empty and failed status evidence without mutations', a
         env: { LOCAL_LLM_URL: `http://127.0.0.1:${server.address().port}/v1` },
       })) events.push(event);
       assert.deepEqual(calls, statusRead ? ['list_work', 'get_work_status'] : ['list_work']);
-      const result = JSON.parse(requests.at(-1).messages.at(-1).content);
+      const result = JSON.parse(requests.at(-2).messages.at(-1).content);
       assert.deepEqual(result, scenario.startsWith('failed') ? { error: 'State unavailable' } : statusRead ? {} : { tasks: [] });
       assert.equal(events.filter(event => event.type === 'text').map(event => event.text).join(''), answer);
       assert.equal(events.at(-1).type, 'done');
@@ -911,10 +920,9 @@ test('multiple action rounds publish only the final receipt-backed response with
     requests.push(JSON.parse(options.body));
     const round = requests.length;
     const delta = round <= 3 ? {
-      content: 'All tasks are deleted.',
       tool_calls: [{ index: 0, id: `delete-${round}`, function: { name: 'delete_work', arguments: JSON.stringify({ taskId: `task-${round}` }) } }],
     } : { content: answer };
-    return new Response(`data: ${JSON.stringify({ choices: [{ delta, finish_reason: round <= 3 ? 'tool_calls' : 'stop' }] })}\n\ndata: [DONE]\n\n`, { headers: { 'Content-Type': 'text/event-stream' } });
+    return new Response(localSSE(delta), { headers: { 'Content-Type': 'text/event-stream' } });
   });
   const events = [];
   for await (const event of streamReply({ provider: 'local', profile: 'voice', messages: [{ role: 'user', content: 'Delete the three tasks.' }], env: { LOCAL_LLM_URL: 'http://127.0.0.1:1/v1' }, callTool: async (_name, args) => {
@@ -925,7 +933,7 @@ test('multiple action rounds publish only the final receipt-backed response with
   assert.deepEqual(executed, ['task-1', 'task-2', 'task-3']);
   assert.deepEqual(events.filter(event => event.type === 'text'), [{ type: 'text', text: answer }]);
   assert.deepEqual(events.filter(event => event.type === 'tool').map(event => event.result), [{ deleted: true, taskId: 'task-1' }, { deleted: true, taskId: 'task-2' }, { error: 'Task is running' }]);
-  assert.equal(requests.at(-1).messages.filter(message => message.role === 'tool').length, 3);
+  assert.equal(requests.at(-2).messages.filter(message => message.role === 'tool').length, 3);
   assert.equal(events.at(-1).type, 'done');
 });
 
@@ -938,7 +946,7 @@ test('tool budget permits longer chains and reserves a tool-disabled answer', as
       requests.push(body);
       const round = requests.length;
       const delta = round <= toolRounds ? { tool_calls: [{ index: 0, id: `status-${round}`, function: { name: 'get_work_status', arguments: JSON.stringify({ taskId: `task-${round}` }) } }] } : { content: 'The checked tasks are running; other tasks remain unchecked.' };
-      return new Response(`data: ${JSON.stringify({ choices: [{ delta, finish_reason: round <= toolRounds ? 'tool_calls' : 'stop' }] })}\n\ndata: [DONE]\n\n`);
+      return new Response(localSSE(delta));
     });
     const events = [];
     for await (const event of streamReply({
@@ -947,10 +955,10 @@ test('tool budget permits longer chains and reserves a tool-disabled answer', as
       callTool: async (_name, args) => { executed.push(args.taskId); return { taskId: args.taskId, state: 'running' }; },
     })) events.push(event);
     assert.equal(executed.length, toolRounds);
-    assert.equal(requests.length, toolRounds + 1);
-    assert.equal(requests.at(-1).tool_choice, toolRounds === 8 ? 'none' : undefined);
-    assert.equal(requests.at(-1).messages.filter(message => message.role === 'tool').length, toolRounds);
-    if (toolRounds === 8) assert.match(requests.at(-1).messages[0].content, /what remains unfinished/);
+    assert.equal(requests.length, toolRounds + 2);
+    assert.equal(Boolean(requests.at(-2).response_format.json_schema.schema.properties?.answer), toolRounds === 8);
+    assert.equal(requests.at(-2).messages.filter(message => message.role === 'tool').length, toolRounds);
+    if (toolRounds === 8) assert.match(requests.at(-2).messages[0].content, /what remains unfinished/);
     assert.equal(events.at(-1).type, 'done');
     context.mock.restoreAll();
   }
@@ -958,7 +966,7 @@ test('tool budget permits longer chains and reserves a tool-disabled answer', as
 
 test('tool budget never executes calls from the final answer turn', async context => {
   let executed = 0;
-  context.mock.method(globalThis, 'fetch', async () => new Response(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'read', function: { name: 'list_work', arguments: '{}' } }] }, finish_reason: 'tool_calls' }] })}\n\ndata: [DONE]\n\n`));
+  context.mock.method(globalThis, 'fetch', async () => new Response(localSSE({ tool_calls: [{ function: { name: 'list_work', arguments: '{}' } }] })));
   await assert.rejects(async () => {
     for await (const event of streamReply({
       provider: 'local', messages: [{ role: 'user', content: 'Check work.' }],
@@ -982,14 +990,71 @@ test('tool arguments fail closed and the model can correct them on the next roun
   });
   const events = [];
   for await (const event of streamReply({
-    provider: 'local', messages: [{ role: 'user', content: 'Check the task.' }],
-    env: { LOCAL_LLM_URL: 'http://127.0.0.1:1/v1', LLAMA_CONTEXT: '8192' },
+    provider: 'custom', messages: [{ role: 'user', content: 'Check the task.' }],
+    env: { CUSTOM_BASE_URL: 'http://127.0.0.1:1/v1' },
     callTool: async (_name, args) => { executed.push(args); return { state: 'running' }; },
   })) events.push(event);
   assert.deepEqual(executed, [{ taskId: 'task' }]);
   assert.equal(events.filter(event => event.type === 'tool' && event.result.error).length, invalid.length);
   assert.equal(requests[1].messages.filter(message => message.role === 'tool').length, invalid.length);
   assert.equal(events.at(-1).type, 'done');
+});
+
+test('local structured turns execute validated batches and never speak wire syntax', async context => {
+  const requests = [];
+  const calls = [];
+  context.mock.method(globalThis, 'fetch', async (_url, options) => {
+    requests.push(JSON.parse(options.body));
+    const turn = requests.length === 1 ? { calls: [{ name: 'list_work', arguments: {} }] } : { answer: requests.length === 2 ? 'ID private-id, list_work, running.' : 'The parser task is running.' };
+    const text = JSON.stringify(turn);
+    return new Response([...text].map(content => `data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`).join('') + 'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
+  });
+  const events = [];
+  for await (const event of streamReply({ provider: 'local', env: { LOCAL_LLM_URL: 'http://127.0.0.1:1/v1' }, messages: [{ role: 'user', content: 'Latest task?' }],
+    callTool: async (name, args) => { calls.push({ name, args }); return { tasks: [{ taskId: 'private-id', title: 'Parser', state: 'running' }] }; },
+  })) events.push(event);
+  assert.deepEqual(calls, [{ name: 'list_work', args: {} }]);
+  assert.deepEqual(events.filter(event => event.type === 'text'), [{ type: 'text', text: 'The parser task is running.' }]);
+  assert.equal(requests[0].tools, undefined);
+  assert.equal(requests[0].response_format.type, 'json_schema');
+  assert.equal(requests[0].chat_template_kwargs.enable_thinking, false);
+  assert.deepEqual(JSON.parse(requests[1].messages.find(message => message.role === 'assistant').content), { calls: [{ name: 'list_work', arguments: {} }] });
+  assert.equal(requests.length, 3);
+  assert.doesNotMatch(JSON.stringify(requests[2].messages), /private-id|list_work|taskId|actions/);
+  assert.match(JSON.stringify(requests[2].messages), /Parser|running/);
+});
+
+test('invalid local envelopes fail closed before any batch action or speech', async context => {
+  for (const text of [
+    '<tool_call>list_work<arg_key>query</arg_key><arg_value>latest tasks</arg_value></tool_call>',
+    '{"answer":"Deleted","calls":[{"name":"delete_work","arguments":{"taskId":"task"}}]}',
+    '{"calls":[{"name":"delete_work","arguments":{"taskId":"task"}},{"name":"unknown","arguments":{}}]}',
+    '{"calls":[{"name":"delete_work","arguments":{"taskId":42}}]}',
+  ]) {
+    context.mock.method(globalThis, 'fetch', async () => new Response(`data: ${JSON.stringify({ choices: [{ delta: { content: text }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`));
+    await assert.rejects(async () => {
+      for await (const event of streamReply({ provider: 'local', env: { LOCAL_LLM_URL: 'http://127.0.0.1:1/v1' }, callTool: async () => assert.fail('Must not execute') })) assert.fail(JSON.stringify(event));
+    });
+    context.mock.restoreAll();
+  }
+});
+
+test('failed mutations can be retried after a state change without replaying success', async context => {
+  let round = 0;
+  let executed = 0;
+  context.mock.method(globalThis, 'fetch', async () => {
+    round++;
+    const delta = round <= 3 ? { tool_calls: [{ index: 0, id: `delete-${round}`, function: { name: 'delete_work', arguments: '{"taskId":"task"}' } }] } : { content: 'Deleted.' };
+    return new Response(localSSE(delta));
+  });
+  const results = [];
+  for await (const event of streamReply({
+    provider: 'local', messages: [{ role: 'user', content: 'Delete the task.' }],
+    env: { LOCAL_LLM_URL: 'http://127.0.0.1:1/v1' },
+    callTool: async () => ++executed === 1 ? { error: 'Task is settling' } : { deleted: 'task' },
+  })) if (event.type === 'tool') results.push(event.result);
+  assert.equal(executed, 2);
+  assert.deepEqual(results, [{ error: 'Task is settling' }, { deleted: 'task' }, { deleted: 'task' }]);
 });
 
 test('identical mutations share receipts across batches and rounds while status reads stay fresh', async context => {
@@ -1005,7 +1070,7 @@ test('identical mutations share receipts across batches and rounds while status 
     context.mock.method(globalThis, 'fetch', async () => {
       round++;
       const delta = round < 3 ? { tool_calls: [0, 1].map(index => ({ index, id: `call-${round}-${index}`, function: { name, arguments: JSON.stringify(args) } })) } : { content: 'Confirmed.' };
-      return new Response(`data: ${JSON.stringify({ choices: [{ delta, finish_reason: round < 3 ? 'tool_calls' : 'stop' }] })}\n\ndata: [DONE]\n\n`);
+      return new Response(localSSE(delta));
     });
     const events = [];
     for await (const event of streamReply({
@@ -1041,22 +1106,16 @@ test('normal local tool/result roundtrip verifies thinking false, tools roundtri
         Connection: 'keep-alive',
       });
       res.write('data: {"choices":[{"delta":{"content":"<think>Internal thought process split across </th"}}]}\n\n');
-      res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'ink>Checking existing work registered.\n' } }] })}\n\n`);
-      res.write('data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_test_1","type":"function","function":{"name":"list_work","arguments":"{}"}}]}}]}\n\n');
-      res.write('data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n');
-      res.write('data: [DONE]\n\n');
-      res.end();
-    } else if (requestCount === 2) {
-      round2Messages = body.messages;
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'ink>' } }] })}\n\n`);
+      res.end(localSSE({ tool_calls: [{ function: { name: 'list_work', arguments: '{}' } }] }));
+    } else {
+      if (requestCount === 2) round2Messages = body.messages;
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
         Connection: 'keep-alive',
       });
-      res.write('data: {"choices":[{"delta":{"content":"Here are the work areas."}}]}\n\n');
-      res.write('data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n');
-      res.write('data: [DONE]\n\n');
-      res.end();
+      res.end(localSSE({ content: 'Here are the work areas.' }));
     }
   });
 
@@ -1096,7 +1155,7 @@ test('normal local tool/result roundtrip verifies thinking false, tools roundtri
     const fullText = textEvents.map(e => e.text).join('');
     assert.ok(!fullText.includes('Internal thought process'), 'Reasoning content must not be output');
     assert.ok(!fullText.includes('think'), 'Thinking tags must not be output');
-    assert.ok(fullText.includes('Checking existing work registered.'), 'Local text streams unchanged; silent tool use is instructed at the source');
+    assert.ok(!fullText.includes('Checking existing work registered.'), 'Only final answers are spoken');
     assert.ok(fullText.includes('Here are the work areas.'), 'Followup text must be output');
 
     const toolEvents = events.filter(e => e.type === 'tool');
@@ -1123,13 +1182,12 @@ test('executes complete local tool-call batches concurrently and preserves resul
     requestCount++;
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
     if (requestCount === 1) {
-      res.write(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [
+      res.end(localSSE({ tool_calls: [
         { index: 0, id: 'call_list', type: 'function', function: { name: 'list_work', arguments: '{}' } },
         { index: 1, id: 'call_status', type: 'function', function: { name: 'get_work_status', arguments: '{"taskId":"task-1"}' } },
-      ] } }] })}\n\n`);
-      res.end('data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\ndata: [DONE]\n\n');
+      ] }));
     } else {
-      res.end('data: {"choices":[{"delta":{"content":"Both checks finished."},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
+      res.end(localSSE({ content: 'Both checks finished.' }));
     }
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -1213,7 +1271,7 @@ test('truncated tool call stream does NOT invoke callback', async () => {
   }
 });
 
-test('incomplete local text streams retain partial text but never report success', async () => {
+test('incomplete local text streams never publish partial text or success', async () => {
   const server = http.createServer(async (req, res) => {
     for await (const _ of req) {}
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
@@ -1229,20 +1287,23 @@ test('incomplete local text streams retain partial text but never report success
         env: { LOCAL_LLM_URL: `http://127.0.0.1:${server.address().port}/v1` },
       })) events.push(event);
     }, /before completion/i);
-    assert.equal(events.map(event => event.text || '').join(''), 'Partial answer');
+    assert.deepEqual(events, []);
     assert.equal(events.some(event => event.type === 'done'), false);
   } finally {
     await new Promise(resolve => server.close(resolve));
   }
 });
 
-test('local text reaches the consumer before generation completes', { timeout: 5000 }, async () => {
+test('local text waits for generation to complete before publication', { timeout: 5000 }, async () => {
   let finish;
+  let started;
+  const partial = new Promise(resolve => { started = resolve; });
   const gate = new Promise(resolve => { finish = resolve; });
   const server = http.createServer(async (req, res) => {
     for await (const chunk of req) {}
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
-    res.write('data: {"choices":[{"delta":{"content":"Ready now."}}]}\n\n');
+    res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: JSON.stringify({ answer: 'Ready now.' }) } }] })}\n\n`);
+    started();
     await gate;
     res.end('data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
   });
@@ -1250,14 +1311,15 @@ test('local text reaches the consumer before generation completes', { timeout: 5
   const controller = new AbortController();
   try {
     const events = [];
-    for await (const event of streamReply({
+    const consuming = (async () => { for await (const event of streamReply({
       provider: 'local', profile: 'voice', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(2000)]),
       messages: [{ role: 'user', content: 'Hello' }],
       env: { LOCAL_LLM_URL: `http://127.0.0.1:${server.address().port}/v1` },
-    })) {
-      events.push(event);
-      if (event.type === 'text') finish();
-    }
+    })) events.push(event); })();
+    await partial;
+    assert.deepEqual(events, []);
+    finish();
+    await consuming;
     assert.deepEqual(events, [{ type: 'text', text: 'Ready now.' }, { type: 'done' }]);
   } finally {
     finish();
@@ -1274,9 +1336,9 @@ test('client tool events use the bounded provider representation', async () => {
     requestCount++;
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
     if (requestCount === 1) {
-      res.end('data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"list_work","arguments":"{}"}}]}}]}\n\ndata: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\ndata: [DONE]\n\n');
+      res.end(localSSE({ tool_calls: [{ function: { name: 'list_work', arguments: '{}' } }] }));
     } else {
-      res.end('data: {"choices":[{"delta":{"content":"Done"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
+      res.end(localSSE({ content: 'Done' }));
     }
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));

@@ -127,6 +127,7 @@ test('local runtime defaults match displayed settings and honor explicit overrid
     const args = localLlmArguments(paths, url, {});
     const value = flag => args[args.indexOf(flag) + 1];
     assert.equal(value('--ctx-size'), '4096');
+    assert.ok(args.includes('--no-context-shift'));
     assert.equal(value('--parallel'), '1');
     assert.equal(value('--threads'), localThreadDefault(8));
     assert.equal(value('--threads-batch'), value('--threads'));
@@ -143,7 +144,8 @@ test('local runtime defaults match displayed settings and honor explicit overrid
     assert.equal(localThreadDefault(8, 4), '3');
     assert.equal(localThreadDefault(8, 32), '8');
     assert.equal(localThreadDefault(4, 32), '4');
-    const explicit = localLlmArguments(paths, url, { LLAMA_THREADS: '12', LLAMA_CONTEXT: '8192', LLAMA_PARALLEL: '2', LLAMA_GPU_LAYERS: '0', LLAMA_FLASH_ATTN: 'off', LLAMA_CACHE_TYPE_K: 'q8_0', LLAMA_CACHE_TYPE_V: 'q8_0' });
+    const explicit = localLlmArguments(paths, url, { LLAMA_THREADS: '12', LLAMA_CONTEXT: '8192', LLAMA_PARALLEL: '2', LLAMA_ARG_CONTEXT_SHIFT: '1', LLAMA_GPU_LAYERS: '0', LLAMA_FLASH_ATTN: 'off', LLAMA_CACHE_TYPE_K: 'q8_0', LLAMA_CACHE_TYPE_V: 'q8_0' });
+    assert.ok(explicit.includes('--no-context-shift'));
     assert.equal(explicit[explicit.indexOf('--threads') + 1], '12');
     assert.equal(explicit[explicit.indexOf('--ctx-size') + 1], '8192');
     assert.equal(explicit[explicit.indexOf('--parallel') + 1], '2');
@@ -196,10 +198,12 @@ test('local warmup caches the real tool prefix and accepts bounded completions w
     assert.equal(runtime.owned, false);
     assert.equal(runtime.llama, null);
     assert.equal(healthChecks, 2);
-    assert.deepEqual(requests[0].messages[0], { role: 'system', content: voiceInstructions });
-    assert.deepEqual(requests[0].tools, voiceTools);
+    assert.equal(requests[0].messages[0].role, 'system');
+    assert.ok(requests[0].messages[0].content.startsWith(voiceInstructions));
+    assert.equal(requests[0].tools, undefined);
+    assert.deepEqual(requests[0].response_format.json_schema.schema.oneOf[1].properties.calls.items.oneOf.map(tool => tool.properties.name.const), voiceTools.map(tool => tool.function.name));
     assert.equal(requests[0].chat_template_kwargs.enable_thinking, false);
-    assert.equal(requests[0].tool_choice, 'auto');
+    assert.equal(requests[0].tool_choice, undefined);
     assert.equal(requests[0].cache_prompt, true);
     assert.equal(requests[0].max_tokens, 1);
     const checked = await ensureLocalLLM({ env, checkOnly: true });

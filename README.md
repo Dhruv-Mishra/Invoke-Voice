@@ -93,15 +93,17 @@ Downloads are pinned and hash-verified. Working chat remains available if speech
 
 The Quality model is 5.77 GB. Previously consented, verified managed Compact installations download it automatically on startup; custom model paths and fresh-install consent are preserved. The previous model stays on disk. Quality follows the publisher's accuracy recommendation but costs more memory than Compact and may be slower on constrained machines; this is not an independently measured accuracy or speed gain.
 
-Local replies stream as they are generated so speech can start before the whole answer finishes. Thinking is disabled; warm-up uses the live voice tool schema, and default synthesis threads scale to the CPU. Saved overrides remain respected. The compact tool set is retained.
+Local turns use llama.cpp JSON-schema generation: either a validated tool batch or an answer, never executable XML embedded in prose. Only completed answers are published. After tools, a separate tool-free summary receives bounded outcomes and titles without routing IDs or action names. This adds a local generation pass but prevents routing output from becoming speech. Thinking stays disabled; warm-up uses the same contract.
 
-The text/local voice loop allows eight tool rounds plus a tool-disabled final answer. This bounds runaway calls while giving the model a chance to summarize confirmed progress. Independent calls run concurrently, invalid arguments return schema errors for correction, and identical mutations reuse their receipts within a turn. Fresh status reads are not cached. Context and request timeouts still apply.
+The text/local voice loop allows eight tool rounds plus a tool-disabled final answer. Independent calls run concurrently; invalid local batches fail before dispatch. Successful mutations reuse receipts within a turn, failed calls can be retried, and status reads stay fresh. Explicit task deletion stops app-owned work and waits for shutdown before removing history; files remain. Context and request timeouts still apply.
+
+Setup shows download percentage, bytes and an approximate time remaining for the current component. Verification, unpacking and startup use an indeterminate bar rather than a guessed installation time.
 
 ## Calls And Notifications
 
 Calls open with an optional short greeting. The red hang-up control ends an active call. Idle calls check in after 40 seconds and end after 60 seconds by default; both values are configurable.
 
-The inbox shows concise task-outcome headings; full answers stay in task details. Announcements are queued and deduplicated. Local-model output streams without prose rewriting; instructions require silent tools, verified outcomes, and task titles instead of internal IDs. Non-local text-model routes still buffer the final answer; native hosted realtime speech remains provider-controlled. The inbox retains the latest 100 updates; quiet mode suppresses speech without removing history.
+The inbox shows concise task-outcome headings; full answers stay in task details. Announcements are queued and deduplicated. Text-model routes publish completed final answers without prose rewriting; native hosted realtime speech remains provider-controlled. The inbox retains the latest 100 updates; quiet mode suppresses speech without removing history.
 
 Ask Invoke to switch themes, clear notifications, mark them read, or turn spoken updates on or off. These controls use the same persisted state as the UI and cannot change credentials or Agency access consent.
 

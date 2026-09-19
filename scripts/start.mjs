@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { voiceInstructions } from '../src/llm.mjs';
+import { localInstructions, localRequestBody, voiceInstructions } from '../src/llm.mjs';
 import { localThreadDefault } from '../src/runtime-config.mjs';
 import { voiceTools } from '../src/supervisor/contract.mjs';
 import net from 'node:net';
@@ -100,6 +100,7 @@ export function localLlmArguments(paths, serverUrl, env = process.env) {
     '--port', serverUrl.port || '8081',
     '--alias', env.LOCAL_LLM_MODEL || 'ling-local',
     '--ctx-size', env.LLAMA_CONTEXT || '4096',
+    '--no-context-shift',
     '--batch-size', '256',
     '--ubatch-size', '256',
     '--threads', threads,
@@ -187,16 +188,11 @@ export async function ensureLocalLLM(options = {}) {
       const response = await fetch(`${serverUrl.origin}/v1/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        body: JSON.stringify(localRequestBody({
           model: env.LOCAL_LLM_MODEL || 'ling-local',
-          messages: [{ role: 'system', content: voiceInstructions }, { role: 'user', content: 'Say hello.' }],
-          tools: voiceTools,
-          tool_choice: 'auto',
-          chat_template_kwargs: { enable_thinking: false },
-          cache_prompt: true,
+          messages: [{ role: 'system', content: localInstructions(voiceInstructions, voiceTools) }, { role: 'user', content: 'Say hello.' }],
           max_tokens: 1,
-          temperature: 0,
-        }),
+        }, voiceTools)),
         signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(30000)]) : AbortSignal.timeout(30000),
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);

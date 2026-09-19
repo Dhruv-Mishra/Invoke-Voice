@@ -129,6 +129,11 @@ test('delegated questions retain original intent, date context and a bounded spo
   for (const readOnly of [false, true]) {
     const summaryPrompt = copilotPrompt({ ...task, readOnly, id: 'internal-task', sessionId: 'internal-session' }, area, {});
     assert.match(summaryPrompt, /Omit internal task and session IDs from the summary/);
+    assert.match(summaryPrompt, /at most three short bullets only for essential source links, dates or validation/);
+    assert.match(summaryPrompt, /No preamble, progress recap or repeated summary/);
+    assert.match(summaryPrompt, /Expand only when explicitly requested/);
+    const detailedRequest = 'Explain the evidence in detail, including all limitations.';
+    assert.ok(copilotPrompt({ ...task, readOnly, objective: detailedRequest }, area, {}).includes(detailedRequest));
     assert.doesNotMatch(summaryPrompt, /internal-task|internal-session/);
   }
   assert.match(copilotPrompt({ ...task, turns: [{ createdAt: Date.parse('2026-09-19T12:00:00Z') }] }, area), /2026-09-19T12:00:00.000Z/);
@@ -235,6 +240,7 @@ test('read-only Agency launch exposes only curated MCP reads and rejects changed
       const launch = sessionLaunch(task, area, env, { resume });
       assert.equal(launch.directory, prepared.directory);
       assert.equal(launch.env.COPILOT_ALLOW_ALL, '0');
+      assert.equal(launch.args[launch.args.indexOf('--reasoning-effort') + 1], 'low');
       for (const flag of ['--allow-all-tools', '--hub', '--agent', '--add-dir']) assert.equal(launch.args.includes(flag), false, flag);
       assert.ok(launch.args.includes('--profile-only'));
       assert.ok(launch.args.includes('--no-config-plugins'));
@@ -261,4 +267,43 @@ test('read-only Agency launch exposes only curated MCP reads and rejects changed
     assert.throws(() => agencyReadPolicy({ AGENCY_WORK_DATA_ACCESS: 'all' }), /Invalid Agency/);
     await assert.rejects(prepareAgencyRead({ ...task, id: '../escape' }, dataDir, env), /Invalid read-only task/);
   } finally { rmSync(dataDir, { recursive: true, force: true }); }
+});
+
+test('Agency read deadlines distinguish active reads, inactivity and the hard limit without exposing content', async context => {
+  for (const scenario of ['active', 'idle', 'hard', 'cancel']) await context.test(scenario, async context => {
+    const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-read-deadline-'));
+    context.after(() => rmSync(dataDir, { recursive: true, force: true }));
+    context.mock.timers.enable({ apis: ['setTimeout'] });
+    const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough() });
+    const reports = [];
+    const controller = new AbortController();
+    const task = { id: 'task', readOnly: true, backend: 'agency', directory: dataDir, agencyProfile: 'read', agencyReadPolicy: 'disabled-v1', sessionId: 'session', objective: 'Read docs', model: 'test', context: 'default' };
+    const bridge = createVSCodeBridge(dataDir, {}, { spawnImpl: () => child });
+    const pending = bridge.dispatch(task, {}, event => reports.push(event), { signal: controller.signal });
+    await Promise.resolve();
+    const emit = (type, data) => child.stdout.write(`${JSON.stringify({ type, data })}\n`);
+    if (scenario === 'active') {
+      context.mock.timers.tick(120000);
+      emit('tool.execution_start', { toolName: 'voice-msft-learn-microsoft_docs_search', arguments: 'PRIVATE QUESTION' });
+      context.mock.timers.tick(120000);
+      emit('tool.execution_complete', { success: false, output: 'PRIVATE CONTENT' });
+      context.mock.timers.tick(120000);
+      emit('session.task_complete', { summary: 'Public answer.' });
+      child.stdout.write(`${JSON.stringify({ type: 'result', sessionId: 'session', exitCode: 0 })}\n`);
+      child.emit('close', 0, null);
+      assert.equal((await pending).result, 'Public answer.');
+      assert.match(JSON.stringify(reports), /Microsoft Learn.*read 1/);
+      assert.match(JSON.stringify(reports), /Source read failed/);
+      assert.doesNotMatch(JSON.stringify(reports), /PRIVATE/);
+    } else {
+      if (scenario === 'idle') context.mock.timers.tick(180000);
+      if (scenario === 'hard') for (let step = 0; step < 6; step++) {
+        emit('tool.execution_complete', { success: true });
+        context.mock.timers.tick(100000);
+      }
+      if (scenario === 'cancel') controller.abort();
+      child.emit('close', null, 'SIGTERM');
+      await assert.rejects(pending, scenario === 'idle' ? /No Agency progress for 3 minutes/ : scenario === 'hard' ? /10-minute read limit/ : { name: 'AbortError' });
+    }
+  });
 });

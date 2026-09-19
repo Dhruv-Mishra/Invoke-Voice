@@ -142,7 +142,12 @@ export function createLocalSetupController({
     }
 
     if (setupElements['progress-label']) {
-      setupElements['progress-label'].textContent = total > 0 ? `${formatSetupBytes(received)} of ${formatSetupBytes(total)}` : received > 0 ? `${formatSetupBytes(received)} downloaded` : 'Preparing local components';
+      const remaining = snapshot?.progress?.etaSeconds;
+      const estimate = running && !setupHttpError && received < total && Number.isFinite(remaining) && remaining > 0
+        ? remaining < 60 ? 'About a minute remaining' : remaining < 3600 ? `About ${Math.ceil(remaining / 60)} minutes remaining` : `About ${Math.ceil(remaining / 3600)} hours remaining`
+        : '';
+      const downloaded = total > 0 ? `${Math.min(100, Math.floor(received * 100 / total))}% - ${formatSetupBytes(received)} of ${formatSetupBytes(total)}` : received > 0 ? `${formatSetupBytes(received)} downloaded` : 'Preparing local components';
+      setupElements['progress-label'].textContent = [downloaded, estimate && `${estimate} for this download`].filter(Boolean).join('. ');
     }
 
     if (setupElements.consent) setupElements.consent.disabled = busy || running || ready || !supported;

@@ -248,13 +248,14 @@ export class Supervisor extends EventEmitter {
     if (task.canMessage) actions.push('send_work_message');
     if (task.canCancel) actions.push('cancel_work');
     if (task.worktree) actions.push('open_work');
-    if (task.deletable) actions.push('delete_work');
+    if (task.deletable || task.canCancel) actions.push('delete_work');
     const result = task.result && String(task.result);
     const error = task.error && String(task.error);
     const queued = task.queued;
     const update = latest?.summary && latest.summary !== result && latest.summary !== error ? String(latest.summary).slice(0, 600) : null;
     return {
       taskId: task.id,
+      title: task.title,
       state: task.state,
       actions,
       ...(queued ? { queued, ...(!this.activeTasks.has(id) ? { queuePaused: true } : {}) } : {}),
@@ -369,6 +370,11 @@ export class Supervisor extends EventEmitter {
       const taskId = typeof args.taskId === 'string' && args.taskId.trim();
       const areaId = typeof args.areaId === 'string' && args.areaId.trim();
       if (Boolean(taskId) === Boolean(areaId)) throw new Error('Provide exactly one taskId or areaId');
+      const controller = taskId && this.activeTasks.get(taskId);
+      if (controller?.completion) {
+        await this.callTool('cancel_work', { taskId });
+        await controller.completion;
+      }
       return taskId ? this.deleteTask(taskId) : this.deleteArea(areaId);
     }
     if (name === 'open_work') {
@@ -409,7 +415,7 @@ export class Supervisor extends EventEmitter {
     this.state.tasks.push(task);
     this.activeTasks.set(task.id, new AbortController());
     this.save();
-    this.dispatch(task, { ...area });
+    this.activeTasks.get(task.id).completion = this.dispatch(task, { ...area });
     return { taskId: task.id, state: 'dispatching' };
   }
 
@@ -423,7 +429,7 @@ export class Supervisor extends EventEmitter {
     delete task.result;
     delete task.error;
     this.save();
-    this.continueTask(task, area, turn);
+    this.activeTasks.get(task.id).completion = this.continueTask(task, area, turn);
   }
 
   drainQueue(task, area) {

@@ -104,6 +104,40 @@ function controller(options = {}) {
   return createSetup({ platform: 'win32', arch: 'x64', cacheDir: 'cache', runtimeDir: 'runtime', inspect: () => [{ id: 'fixture', label: 'Fixture', ready: false, sourceUrl: 'https://huggingface.co' }], install: async () => {}, activate: async () => {}, ...options });
 }
 
+test('setup estimates remaining download time and resets across stalls, retries and install stages', async () => {
+  let timestamp = 0;
+  let report;
+  let finish;
+  const setup = controller({ now: () => timestamp, install: options => {
+    report = options.report;
+    return new Promise(resolve => { finish = resolve; });
+  } });
+  setup.start({ consent: true });
+  await new Promise(setImmediate);
+  const downloading = (received, total = 1000, stage = 'ling') => report({ stage, message: 'Downloading', progress: { received, total } });
+  downloading(100);
+  assert.equal(setup.snapshot().progress.etaSeconds, null);
+  timestamp = 2000;
+  downloading(300);
+  assert.equal(setup.snapshot().progress.etaSeconds, 7);
+  timestamp = 13001;
+  assert.equal(setup.snapshot().progress.etaSeconds, null);
+  downloading(10);
+  assert.equal(setup.snapshot().progress.etaSeconds, null);
+  timestamp += 2000;
+  downloading(210);
+  assert.equal(setup.snapshot().progress.etaSeconds, 8);
+  downloading(210, 2000, 'speech');
+  assert.equal(setup.snapshot().progress.etaSeconds, null);
+  downloading(2000, 2000, 'speech');
+  assert.equal(setup.snapshot().progress.etaSeconds, null);
+  report({ stage: 'speech', message: 'Verifying' });
+  assert.equal(setup.snapshot().progress, undefined);
+  finish();
+  await setup.settled();
+  assert.equal(setup.snapshot().progress, undefined);
+});
+
 function offlinePackFixture(directory, extraWheels = []) {
   const packDir = path.join(directory, 'kokoro-offline-pack');
   const wheelhouse = path.join(packDir, 'wheelhouse');

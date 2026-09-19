@@ -36,6 +36,10 @@ Older configurations can still select the larger Moonshine Small model. In **Set
 
 Local generation disables thinking both in the request (`enable_thinking: false`) and managed llama.cpp startup (`--reasoning off`). Warm-up uses the same voice tool schema as live calls. Prompt caching, a 4096-token context and one slot remain the defaults. Kokoro now defaults to at most eight threads, leaving one logical CPU available; explicit `KOKORO_THREADS`/`LOCAL_THREADS` overrides win. Existing saved settings are never silently retuned. Streaming chat rendering is coalesced to one update per animation frame.
 
+The system prompt and tool definitions are rebuilt in full on every local routing request, including tool continuations; the isolated final summary uses its own answer-only system prompt. There is no timed context reset. Before each request, the app estimates the prompt against `LLAMA_CONTEXT / LLAMA_PARALLEL`, reserving 512 tokens for the answer and 256 for overhead. It drops oldest complete conversation turns first, then compacts tool payloads while retaining current-turn exchanges. If the latest instruction and required evidence still cannot fit, it reports an error instead of truncating them or the system prompt. Managed llama.cpp explicitly disables context shifting; externally managed servers must use `--no-context-shift` too. Token estimates are not exact, so the server can still reject an oversized request. Prompt caching reuses computation, not additional conversational memory.
+
+Local voice retains at most 12 user/assistant messages, roughly six exchanges, within a voice session; a new session starts fresh. Typed chat has no fixed turn-count reset, but each local request is fitted as above; Clear Chat resets its conversation. Discarded history is not automatically summarized. Saved tasks remain available through fresh tool lookups independently of conversational history.
+
 Ling supports hybrid thinking, but producing reasoning tokens delays the first answer and consumes the same local compute budget. Invoke keeps it off for the short voice coordinator; complex work remains delegated to the existing agents. Hiding reasoning text alone would not eliminate that generation cost.
 
 Windows releases share a pinned, hash-verified Python dependency pack:
@@ -65,6 +69,8 @@ Pins and checksums live in [scripts/models.mjs](../scripts/models.mjs). Python i
 
 Fresh installations default to Agency; existing saved choices remain unchanged. Coding sessions run in isolated worktrees and may use the Agency MCPs available to the signed-in client.
 
+Coding and research prompts, including follow-ups, share a concise-reply default: answer first in at most two short sentences and 320 characters, followed only when needed by at most three short evidence or validation bullets. Preambles, progress recaps and repeated summaries are discouraged; explicit requests for detail can expand the answer. This is source-generation guidance, not truncation or rewriting of agent output.
+
 Invoke launches Agency with a task-local `--profile-only` profile. This excludes ambient global Copilot MCP sources, whose server names may be incompatible with the installed CLI, without editing the user's MCP configuration. Coding sessions retain explicitly configured Invoke MCPs and repository `.github/mcp.json` or `.mcp.json`; research retains its restricted read profile. Personal/global MCPs and implicit profile plugins are not automatically inherited.
 
 Read-only questions always use Agency. Public Microsoft Learn access is available by default. To enable Teams and calendar:
@@ -86,13 +92,13 @@ Important boundaries:
 - Disabling work-data access affects subsequent launches, not an in-flight read.
 - Questions and answers remain in app task history; Agency may retain its own session data.
 - Answers may be spoken aloud, so local voice does not make delegated research local-only.
-- Read sessions have a three-minute deadline.
+- Read sessions stop after three minutes without tool/answer progress or ten minutes total. Active source reads can continue past three minutes; timeouts report the last phase and retain the session for retry. Read-only reasoning uses low effort; coding reasoning settings are unchanged.
 
 `send_work_message` queues up to ten messages for an active task and resumes the same session in FIFO order. Failure, shutdown, or restart pauses the queue. A corrective follow-up can resume it; deleting an inactive task discards its pending queue.
 
 `cancel_work(taskId)` and the task Stop controls abort that task's preparation or owned worker process, cancel all queued follow-ups, and retain worktrees and history. State stays `cancelling` until execution settles, then becomes `cancelled`; late output cannot mark it successful. Stopping is not rollback: completed file edits and external actions remain. A prepared task can be continued explicitly afterward; its discarded queue does not replay.
 
-One Agency process can use many model turns and source calls before producing its answer. Repeated source-check entries are normal, not automatic redispatch. The activity log reports `Agency started working` once per process and `Checking sources` for each research tool call.
+One Agency process can use many model turns and source calls before producing its answer. Progress identifies the enabled source, read count, completion or failure, and answer preparation without recording private arguments or source contents. The worker is instructed to stop when evidence suffices, avoid identical failed reads, and use at most eight source calls; this instruction is not an enforced authorization boundary.
 
 Checks:
 
@@ -114,7 +120,7 @@ Idle calls end after 60 seconds by default, without a presence check. Choose Off
 
 Task announcements are queued and deduplicated. Accepting an announcement marks its existing inbox entry read before acknowledging delivery, so reconnects and restarts cannot replay it. Busy sessions leave it unread. Acceptance is not proof that playback finished: interrupted announcements remain in the inbox but do not automatically replay. The inbox keeps the latest 100 heading-only updates across restarts; full answers stay in task details. Clear/read actions remove pending announcements for those entries. Quiet mode suppresses spoken announcements without deleting inbox history.
 
-Calls greet once after connection unless **Settings > Calls > Greet when a call connects** is off. Local greetings use speech synthesis without an LLM request. Local-model chat and voice stream text immediately rather than waiting for generation to finish. The prompt requires silent tool use, receipt-backed outcomes, brief answers, and task titles rather than internal IDs; it is guidance, not a guarantee that a model will comply. Reasoning tags remain suppressed; model prose is not rewritten. Truncated tools never execute, and incomplete streams still report failure, although already-streamed text may have been displayed or spoken. Non-local text-model routes retain completed-final-answer buffering. Native hosted realtime speech remains provider-controlled.
+Calls greet once after connection unless **Settings > Calls > Greet when a call connects** is off. Local greetings use speech synthesis without an LLM request. Local chat and voice use schema-constrained JSON turns and publish only completed answers. Tool batches are validated before execution. After tools, an isolated answer-only request receives bounded results without task/session IDs or action lists; routing prose is not published. This costs an additional local generation pass. Model prose is not rewritten, and source-authored result text still relies on summary instructions to omit internal details. Incomplete streams publish no answer. Hosted text routes also buffer final answers; native hosted realtime speech remains provider-controlled.
 
 The compact `control_app` tool allows theme changes, clearing/reading notifications, and enabling/disabling spoken updates. It cannot change credentials, Agency consent, or download consent.
 

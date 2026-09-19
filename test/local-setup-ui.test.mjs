@@ -196,7 +196,7 @@ test('createLocalSetupController manages rendering, installation requests, and p
           nextSetupResponse = {
             ...nextSetupResponse,
             status: 'running',
-            progress: { received: 1024 ** 3, total: 5 * 1024 ** 3 },
+            progress: { received: 1024 ** 3, total: 5 * 1024 ** 3, etaSeconds: 120 },
           };
         }
         return {
@@ -260,6 +260,13 @@ test('createLocalSetupController manages rendering, installation requests, and p
   assert.equal(elements.status.textContent, 'running');
   assert.equal(elements['progress-region'].hidden, false);
   assert.ok(elements['progress-label'].textContent.includes('1.0 GB'));
+  assert.equal(elements.progress.value, 1024 ** 3);
+  assert.match(elements['progress-label'].textContent, /^20%.*About 2 minutes remaining for this download/);
+
+  nextSetupResponse = { ...nextSetupResponse, stage: 'verify', progress: undefined };
+  await elements['refresh-btn'].dispatch('click');
+  assert.equal(elements['progress-label'].textContent, 'Preparing local components');
+  assert.equal(elements.progress.hasAttribute('value'), false);
 
   // 4. Successful completion resets consent and triggers refreshConfig
   nextSetupResponse = {

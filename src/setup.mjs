@@ -1,10 +1,11 @@
 import os from 'node:os';
 
-export function createSetup({ platform = process.platform, arch = process.arch, cacheDir, runtimeDir, inspect, install, activate, getCapabilities, inspectHardware = () => ({ logicalCpus: os.availableParallelism(), memoryGiB: Number((os.totalmem() / 1024 ** 3).toFixed(1)) }) }) {
+export function createSetup({ platform = process.platform, arch = process.arch, cacheDir, runtimeDir, inspect, install, activate, getCapabilities, now = Date.now, inspectHardware = () => ({ logicalCpus: os.availableParallelism(), memoryGiB: Number((os.totalmem() / 1024 ** 3).toFixed(1)) }) }) {
   const supported = platform === 'win32' && arch === 'x64';
   let state = { status: 'idle', stage: 'consent', message: 'Local setup requires your permission. No downloads have started.' };
   let job;
   let controller;
+  let transfer;
   const log = [];
 
   const getHardwareSnapshot = () => {
@@ -48,12 +49,25 @@ export function createSetup({ platform = process.platform, arch = process.arch, 
     cacheDir,
     runtimeDir,
     ...state,
+    ...(state.progress ? { progress: { ...state.progress, ...(now() - transfer?.updatedAt > 10000 ? { etaSeconds: null } : {}) } } : {}),
     capabilities: getCapabilities ? getCapabilities({ state, supported }) : defaultCapabilities(),
     components: inspect(),
     hardware: getHardwareSnapshot(),
     log: [...log],
   });
   const report = ({ stage, message, progress }) => {
+    if (progress) {
+      const timestamp = now();
+      if (!transfer || stage !== state.stage || progress.total !== state.progress?.total || progress.received < state.progress?.received) {
+        transfer = { startedAt: timestamp, initialBytes: progress.received, updatedAt: timestamp };
+      }
+      if (progress.received !== state.progress?.received) transfer.updatedAt = timestamp;
+      const elapsed = (timestamp - transfer.startedAt) / 1000;
+      const bytes = progress.received - transfer.initialBytes;
+      const etaSeconds = elapsed >= 1 && bytes > 0 && progress.total > progress.received
+        ? Math.ceil((progress.total - progress.received) * elapsed / bytes) : null;
+      progress = { ...progress, etaSeconds };
+    } else transfer = null;
     state = { status: 'running', stage, message, ...(progress ? { progress } : {}) };
     if (message !== log.at(-1)) log.push(message);
     if (log.length > 40) log.shift();

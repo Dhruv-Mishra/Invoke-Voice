@@ -366,6 +366,7 @@ test('Copilot dispatch is idempotent, records progress, and exposes passive stat
     const status = await supervisor.callTool('get_work_status', { taskId: receipt.taskId });
     assert.deepEqual(status, {
       taskId: receipt.taskId,
+      title: 'Add encryption tests',
       state: 'result_ready',
       actions: ['send_work_message', 'open_work', 'delete_work'],
       result: 'Checks passed',
@@ -469,6 +470,32 @@ test('cancellation stops the selected task, drops its queue and ignores late com
   assert.equal(supervisor.snapshot().notifications.length, 1);
   assert.equal((await supervisor.callTool('cancel_work', { taskId: first.taskId })).state, 'cancelled');
   assert.equal(new Supervisor({ dataDir, bridge: {} }).status(first.taskId).state, 'cancelled');
+});
+
+test('explicit deletion stops owned work and waits for settlement before removing history', async context => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-delete-active-'));
+  context.after(() => rmSync(dataDir, { recursive: true, force: true }));
+  let settle;
+  let signal;
+  const supervisor = new Supervisor({ dataDir, bridge: {
+    prepare: async () => ({ directory: dataDir }),
+    dispatch: (_task, _area, _report, options) => {
+      signal = options.signal;
+      return new Promise(resolve => { settle = resolve; });
+    },
+    continue: async () => assert.fail('Deleted queue must not run'),
+  } });
+  const { taskId } = await supervisor.callTool('start_work', { objective: 'Read', readOnly: true }, { requestId: 'delete-active' });
+  await supervisor.callTool('send_work_message', { taskId, message: 'Queued' }, { requestId: 'queued' });
+  const deletion = supervisor.callTool('delete_work', { taskId });
+  assert.equal(signal.aborted, true);
+  assert.equal(supervisor.task(taskId).state, 'cancelling');
+  assert.equal(supervisor.task(taskId).turns[0].state, 'cancelled');
+  settle({ result: 'Late success' });
+  assert.deepEqual(await deletion, { deleted: 'task' });
+  assert.throws(() => supervisor.task(taskId), /Unknown task/);
+  assert.equal(existsSync(dataDir), true);
+  assert.equal(supervisor.snapshot().notifications.length, 0);
 });
 
 test('cancellation during preparation never launches an agent', async context => {
@@ -644,6 +671,7 @@ test('announces completed and failed work', async () => {
     assert.deepEqual(notifications.map(event => event.state), ['result_ready', 'agent_failed']);
     assert.deepEqual(await supervisor.callTool('get_work_status', { taskId: failed.taskId }), {
       taskId: failed.taskId,
+      title: 'Fail',
       state: 'agent_failed',
       actions: ['send_work_message', 'open_work', 'delete_work'],
       error: 'Agent unavailable',

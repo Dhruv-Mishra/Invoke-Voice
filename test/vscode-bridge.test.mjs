@@ -67,6 +67,7 @@ test('managed workspace bootstraps real isolated worktrees without publishing or
     const bridge = createVSCodeBridge(dataDir);
     const supervisor = new Supervisor({ dataDir, bridge });
     const area = supervisor.resolveArea();
+    mkdirSync(path.join(area.repoPath, '.git'));
     writeFileSync(path.join(area.repoPath, 'untouched.txt'), 'Leave this file alone.');
     const prepared = await Promise.all([
       bridge.prepare({ id: '11111111-first' }, area),

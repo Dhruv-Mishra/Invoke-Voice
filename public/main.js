@@ -10,6 +10,7 @@ import {
 } from 'lucide';
 import VoiceSprite from './VoiceSprite.js';
 import { applyTheme, motionPreference, resolveTheme, themes } from './themes.js';
+import { readPreference, savePreference } from './preferences.js';
 import './theme.css';
 
 window.DOMPurify = DOMPurify;
@@ -48,14 +49,6 @@ const suggestions = [
 function icon(name) {
   const key = name.split('-').map(part => part[0].toUpperCase() + part.slice(1)).join('');
   return h('svg', { viewBox: '0 0 24 24', width: 24, height: 24, fill: 'none', stroke: 'currentColor', 'stroke-width': 1.75, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true' }, appIcons[key].map(([tag, attributes]) => h(tag, attributes)));
-}
-
-function readPreference(key) {
-  try { return localStorage.getItem(key); } catch { return null; }
-}
-
-function savePreference(key, value) {
-  try { localStorage.setItem(key, value); } catch {}
 }
 
 const themeKey = 'voice-supervisor-theme-v2';

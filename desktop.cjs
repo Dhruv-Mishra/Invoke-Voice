@@ -2,7 +2,7 @@ const { spawn } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
 const { app, BrowserWindow, session, dialog, shell, ipcMain, net } = require('electron');
-const { serverLaunch, allowedExternal, requestDataReset, completeDataReset } = require('./scripts/desktop-launch.cjs');
+const { serverLaunch, allowedExternal, requestDataReset, completeDataReset, createPreferenceStore } = require('./scripts/desktop-launch.cjs');
 const { checkForUpdate, downloadUpdate, publicUpdate } = require('./desktop-update.cjs');
 
 if (process.env.VOICE_SUPERVISOR_DISABLE_GPU === '1') app.disableHardwareAcceleration();
@@ -26,6 +26,7 @@ try {
   fs.mkdirSync(path.join(dataDir, 'desktop'), { recursive: true });
   app.setPath('userData', path.join(dataDir, 'desktop'));
 } catch { dataPathError = true; }
+const preferences = createPreferenceStore(dataDir);
 
 function fail(message) {
   if (failed || closing) return;
@@ -48,6 +49,19 @@ function trustedRenderer(event) {
 function logDesktopError(label, error) {
   try { fs.writeSync(logDescriptor, `${label}: ${error?.stack || error}\n`); } catch {}
 }
+
+ipcMain.on('preferences:get', (event, key) => {
+  event.returnValue = trustedRenderer(event) ? preferences.getItem(key) : null;
+});
+
+ipcMain.on('preferences:set', (event, key, value) => {
+  event.returnValue = false;
+  if (!trustedRenderer(event)) return;
+  try {
+    preferences.setItem(key, value);
+    event.returnValue = true;
+  } catch (error) { logDesktopError('Preference save failed', error); }
+});
 
 ipcMain.on('window:theme', (event, colors) => {
   if (!trustedRenderer(event) || !colors || !/^#[\da-f]{6}$/i.test(colors.background) || !/^#[\da-f]{6}$/i.test(colors.foreground)) return;

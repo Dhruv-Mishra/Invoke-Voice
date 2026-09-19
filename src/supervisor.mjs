@@ -85,7 +85,6 @@ export class Supervisor extends EventEmitter {
       browserNotifications: false,
       greetOnConnect: true,
       autoEndCall: true,
-      idleWarningSeconds: 40,
       idleEndSeconds: 60,
       localSetupPrompted: false,
       ...this.state.settings,
@@ -172,12 +171,10 @@ export class Supervisor extends EventEmitter {
     for (const key of ['notifyCompleted', 'notifyNeedsInput', 'notifyFailed', 'voiceNotifications', 'browserNotifications', 'localSetupPrompted', 'agencySetupPrompted', 'greetOnConnect', 'autoEndCall']) {
       if (Object.hasOwn(input, key)) next[key] = input[key] === true;
     }
-    for (const key of ['idleWarningSeconds', 'idleEndSeconds']) {
-      if (!Object.hasOwn(input, key)) continue;
-      if (!Number.isInteger(input[key]) || input[key] < 5 || input[key] > 3600) throw new Error('Idle times must be whole seconds between 5 and 3600');
-      next[key] = input[key];
+    if (Object.hasOwn(input, 'idleEndSeconds')) {
+      if (!Number.isInteger(input.idleEndSeconds) || input.idleEndSeconds < 5 || input.idleEndSeconds > 3600) throw new Error('Idle timeout must be whole seconds between 5 and 3600');
+      next.idleEndSeconds = input.idleEndSeconds;
     }
-    if (next.idleWarningSeconds >= next.idleEndSeconds) throw new Error('Idle check-in must be before call end');
     this.state.settings = next;
     this.save();
     return { ...next };

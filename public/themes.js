@@ -164,7 +164,7 @@ export const themes = Object.freeze([
     animations: { idle: 'companion-breathe', connecting: 'companion-listen', listening: 'companion-listen', thinking: 'companion-think', speaking: 'companion-speak' },
     icons: { home: 'heart', tasks: 'clipboard-check', settings: 'sliders-horizontal', action: 'sparkles', progress: 'activity', continue: 'messages-square', microphone: 'mic' },
     sounds: { bootup: new URL('./immersive/baymax-bootup.ogg', import.meta.url).href, action: copilotSounds.action, endCall: new URL('./immersive/baymax-end-call.ogg', import.meta.url).href },
-    preferences: { soundsEnabled: true, soundVolume: 0.16 },
+    preferences: { soundsEnabled: true, soundVolume: 0.2 },
     tokens: {
       '--cp-bg': '#eef2f1', '--cp-bg-elevated': '#fafcfb', '--cp-surface-soft': '#e8efec', '--cp-text': '#263b36', '--cp-text-muted': '#566d65', '--cp-text-soft': '#61776e',
       '--cp-call-hue': '#ffffff',

@@ -41,14 +41,14 @@ test('frontend browser preserves conversation contracts and responsive preferenc
   });
 });
 
-test('idle calls warn once, reset on speech, respect busy and disabled states, and stop cleanly', () => {
+test('idle calls end once, reset on speech, respect busy and disabled states, and stop cleanly', () => {
   let clock = 0;
   const timer = createIdleCallTimer({ now: () => clock });
   timer.start();
   clock = 39999;
   assert.equal(timer.tick(), null);
   clock = 40000;
-  assert.equal(timer.tick(), 'warn');
+  assert.equal(timer.tick(), null);
   assert.equal(timer.tick(), null);
   clock = 59999;
   assert.equal(timer.tick(), null);
@@ -57,7 +57,7 @@ test('idle calls warn once, reset on speech, respect busy and disabled states, a
   assert.equal(timer.tick(), null);
   timer.start();
   clock += 40000;
-  assert.equal(timer.tick(), 'warn');
+  assert.equal(timer.tick(), null);
   timer.activity();
   clock += 20000;
   assert.equal(timer.tick(), null);
@@ -74,11 +74,13 @@ test('idle calls warn once, reset on speech, respect busy and disabled states, a
   clock += 1000;
   assert.equal(timer.tick(), null);
   clock += 120000;
-  assert.equal(timer.tick(), 'warn');
-  assert.equal(timer.tick(), null, 'resume must allow time to answer the warning');
-  clock += 20000;
-  assert.equal(timer.tick({ busy: true }), null);
   assert.equal(timer.tick(), 'end');
+  timer.start();
+  clock += 30000;
+  assert.equal(timer.tick({ busy: true }), null);
+  assert.equal(timer.tick(), null);
+  clock += 30000;
+  assert.equal(timer.tick({ endSeconds: 30 }), 'end');
 });
 
 test('captions replace partials, ignore tools, expire and cannot be cleared by stale timers', () => {

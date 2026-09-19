@@ -51,11 +51,13 @@ test('idle call settings default on and validate atomically', context => {
   context.after(() => rmSync(dataDir, { recursive: true, force: true }));
   const supervisor = new Supervisor({ dataDir, bridge: {} });
   assert.equal(supervisor.state.settings.autoEndCall, true);
-  assert.equal(supervisor.state.settings.idleWarningSeconds, 40);
+  assert.equal(supervisor.state.settings.idleWarningSeconds, undefined);
   assert.equal(supervisor.state.settings.idleEndSeconds, 60);
-  for (const input of [{ idleEndSeconds: 30 }, { idleWarningSeconds: 0 }, { idleEndSeconds: '90' }, { idleEndSeconds: 9000 }]) assert.throws(() => supervisor.updateSettings(input), /Idle/);
+  for (const input of [{ idleEndSeconds: 0 }, { idleEndSeconds: '90' }, { idleEndSeconds: 9000 }]) assert.throws(() => supervisor.updateSettings(input), /Idle/);
   assert.equal(supervisor.state.settings.idleEndSeconds, 60);
-  supervisor.updateSettings({ autoEndCall: false, idleWarningSeconds: 50, idleEndSeconds: 90 });
+  supervisor.updateSettings({ idleEndSeconds: 30 });
+  assert.equal(supervisor.state.settings.idleEndSeconds, 30);
+  supervisor.updateSettings({ autoEndCall: false, idleEndSeconds: 90 });
   const restored = new Supervisor({ dataDir, bridge: {} });
   assert.equal(restored.state.settings.autoEndCall, false);
   assert.equal(restored.state.settings.idleEndSeconds, 90);

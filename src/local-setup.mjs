@@ -273,6 +273,11 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
     cacheDir: paths.home, runtimeDir: paths.runtimeDir, inspect, getCapabilities,
     install: ({ report, signal }) => withSetupLock(paths, async () => {
       const commandEnv = isolatedEnvironment(env, paths);
+      const command = (executable, args, stage, message) => run(executable, args, { env: commandEnv, redactEnv: env, cwd: paths.home, signal, report, stage, message });
+      const installOffline = async (pack, stage, message) => {
+        if (!paths.pythonBase) await command(paths.python, ['-I', '-m', 'ensurepip', '--upgrade'], stage, 'Preparing the bundled Python package installer without network access.');
+        await command(paths.python, ['-I', '-m', 'pip', '--isolated', '--disable-pip-version-check', '--no-input', '--no-cache-dir', 'install', '--no-index', '--find-links', pack.wheelhouse, '--only-binary', ':all:', '--require-hashes', '-r', pack.lockFile], stage, message);
+      };
       let preparedPack;
       const compressedPack = async () => preparedPack ??= await resolveVoicePack({ sourceDir: compressedPackDir, paths, env, report, signal, run: (executable, args, options) => run(executable, args, { ...options, env: commandEnv, redactEnv: env, cwd: paths.home }) });
       mkdirSync(paths.home, { recursive: true });
@@ -288,7 +293,6 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
       }
       if (!pythonReady(paths)) {
         try {
-          const command = (executable, args, stage, message) => run(executable, args, { env: commandEnv, redactEnv: env, cwd: paths.home, signal, report, stage, message });
           const torchIndex = packageIndex(env.LOCAL_TORCH_INDEX_URL, 'https://download.pytorch.org/whl/cpu', 'PyTorch package index');
           const pythonIndex = packageIndex(env.LOCAL_PYPI_INDEX_URL, 'https://pypi.org/simple', 'Python package index');
           const modelUrl = packageIndex(env.LOCAL_SPACY_MODEL_URL, englishModel, 'spaCy model URL');
@@ -324,9 +328,7 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
             ? ['-I', '-m', 'pip', '--isolated', '--disable-pip-version-check', '--no-input', '--cache-dir', commandEnv.PIP_CACHE_DIR, '--use-feature=truststore', 'install']
             : ['--no-config', 'pip', 'install', '--python', paths.python];
           if (offlinePack) {
-            const offlineArgs = ['--no-index', '--find-links', offlinePack.wheelhouse, '--only-binary', ':all:', '--require-hashes', '-r', offlinePack.lockFile];
-            const args = paths.pythonBase ? [...installArgs, ...offlineArgs] : [installArgs[0], '--offline', ...installArgs.slice(1), ...offlineArgs];
-            await command(installer, args, 'kokoro', bundledWhisperPack ? 'Installing verified bundled local voice dependencies without network access.' : 'Installing verified bundled Kokoro dependencies without network access.');
+            await installOffline(offlinePack, 'kokoro', bundledWhisperPack ? 'Installing verified bundled local voice dependencies without network access.' : 'Installing verified bundled Kokoro dependencies without network access.');
           } else {
             const install = async (args, message) => {
               try {
@@ -364,9 +366,7 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
         const command = (executable, commandArgs, message) => run(executable, commandArgs, { env: commandEnv, redactEnv: env, cwd: paths.home, signal, report, stage: 'whisper', message });
         const offlinePack = await verifyWhisperPack(offlinePackDir) || await compressedPack();
         if (offlinePack) {
-          const offlineArgs = ['--no-index', '--find-links', offlinePack.wheelhouse, '--only-binary', ':all:', '--require-hashes', '-r', offlinePack.lockFile];
-          const installArgs = paths.pythonBase ? [...args, ...offlineArgs] : [args[0], '--offline', ...args.slice(1), ...offlineArgs];
-          await command(installer, installArgs, 'Installing verified bundled Whisper dependencies without network access.');
+          await installOffline(offlinePack, 'whisper', 'Installing verified bundled Whisper dependencies without network access.');
         } else {
           const pythonIndex = packageIndex(env.LOCAL_PYPI_INDEX_URL, 'https://pypi.org/simple', 'Python package index');
           const installArgs = [...args, '--index-url', pythonIndex, '--only-binary', ':all:', '-r', whisperRequirements];

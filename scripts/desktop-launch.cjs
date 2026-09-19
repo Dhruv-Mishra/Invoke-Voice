@@ -1,6 +1,36 @@
 const path = require('node:path');
 const fs = require('node:fs');
 
+const preferenceKeys = new Set([
+  'voice-supervisor-theme-v2', 'voice-supervisor-sounds-v1', 'voice-supervisor-motion-v1',
+  'voice-supervisor-transparency-v1', 'voice-supervisor-theme-variants-v1', 'voice-supervisor-sound-volume-v1',
+  'voice-supervisor-wallpaper-strength-v1', 'voice-supervisor-theme-persona-v1', 'voice-supervisor-theme-voice-v1',
+  'voice-supervisor-sidebar-v1', 'voice-supervisor-pipeline-v1',
+]);
+
+function createPreferenceStore(dataDir) {
+  const file = path.join(dataDir, 'preferences.json');
+  let values = {};
+  try {
+    const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+    values = Object.fromEntries(Object.entries(saved).filter(([key, value]) => preferenceKeys.has(key) && typeof value === 'string' && value.length <= 8192));
+  } catch (error) {
+    if (error.code !== 'ENOENT') console.warn('Saved appearance preferences could not be read.');
+  }
+  return {
+    getItem(key) { return preferenceKeys.has(key) ? values[key] ?? null : null; },
+    setItem(key, value) {
+      if (!preferenceKeys.has(key) || typeof value !== 'string' || value.length > 8192) throw new Error('Unsupported application preference.');
+      const next = { ...values, [key]: value };
+      fs.mkdirSync(dataDir, { recursive: true });
+      const temporary = `${file}.${process.pid}.tmp`;
+      fs.writeFileSync(temporary, JSON.stringify(next), { mode: 0o600 });
+      fs.renameSync(temporary, file);
+      values = next;
+    },
+  };
+}
+
 function resetMarker(dataDir) {
   if (!path.isAbsolute(dataDir) || path.basename(dataDir) !== 'VoiceSupervisor' || fs.lstatSync(dataDir).isSymbolicLink()) throw new Error('Invalid application data directory.');
   return path.join(dataDir, '.reset-request.json');
@@ -89,4 +119,4 @@ function stopChild(child) {
   });
 }
 
-module.exports = { serverLaunch, allowedExternal, trackChild, stopChild, requestDataReset, completeDataReset };
+module.exports = { serverLaunch, allowedExternal, trackChild, stopChild, requestDataReset, completeDataReset, createPreferenceStore };

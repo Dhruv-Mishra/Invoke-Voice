@@ -7,8 +7,40 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import desktopLaunch from '../scripts/desktop-launch.cjs';
 import { createLocalSetup } from '../src/local-setup.mjs';
+import { createRuntimeConfig } from '../src/runtime-config.mjs';
+import { Supervisor } from '../src/supervisor.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
+
+test('desktop restart restores appearance, route, backend, model and config without relying on the server port', context => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'invoke-preferences-'));
+  context.after(() => rmSync(dataDir, { recursive: true, force: true }));
+  const store = desktopLaunch.createPreferenceStore(dataDir);
+  const values = { 'voice-supervisor-theme-v2': 'baymax', 'voice-supervisor-sound-volume-v1': '45', 'voice-supervisor-pipeline-v1': JSON.stringify({ provider: 'gemini', voiceMode: 'hybrid', sttProvider: 'local', ttsProvider: 'gemini' }) };
+  for (const [key, value] of Object.entries(values)) store.setItem(key, value);
+  const supervisor = new Supervisor({ dataDir, bridge: {}, env: {} });
+  assert.equal(supervisor.state.settings.defaultBackend, 'agency');
+  supervisor.updateSettings({ defaultBackend: 'copilot', copilotModel: 'saved-model', appearanceTheme: 'baymax' });
+  createRuntimeConfig({ dataDir, env: {} }).update({ values: { DEFAULT_PROVIDER: 'gemini', OPENAI_API_KEY: 'synthetic-fixture-key', OPENAI_MODEL: 'saved-provider-model' } });
+  const restored = desktopLaunch.createPreferenceStore(dataDir);
+  for (const [key, value] of Object.entries(values)) assert.equal(restored.getItem(key), value);
+  const settings = new Supervisor({ dataDir, bridge: {}, env: {} }).state.settings;
+  assert.equal(settings.defaultBackend, 'copilot');
+  assert.equal(settings.copilotModel, 'saved-model');
+  assert.equal(settings.appearanceTheme, 'baymax');
+  const env = {};
+  const config = createRuntimeConfig({ dataDir, env });
+  assert.equal(env.DEFAULT_PROVIDER, 'gemini');
+  assert.equal(env.OPENAI_MODEL, 'saved-provider-model');
+  assert.equal(env.OPENAI_API_KEY, 'synthetic-fixture-key');
+  assert.equal(config.snapshot().fields.find(field => field.key === 'OPENAI_API_KEY').value, undefined);
+  assert.throws(() => store.setItem('OPENAI_API_KEY', 'never in preferences'), /Unsupported/);
+  assert.throws(() => store.setItem('../outside', 'value'), /Unsupported/);
+  assert.throws(() => store.setItem('voice-supervisor-theme-v2', 'x'.repeat(8193)), /Unsupported/);
+  assert.doesNotMatch(readFileSync(path.join(dataDir, 'preferences.json'), 'utf8'), /synthetic-fixture-key/);
+  rmSync(dataDir, { recursive: true, force: true });
+  assert.equal(desktopLaunch.createPreferenceStore(dataDir).getItem('voice-supervisor-theme-v2'), null);
+});
 
 test('packaged child uses bundled Electron Node mode, physical unpacked sources and writable config', () => {
   const resourcesPath = path.join(root, 'release', 'win-unpacked', 'resources');

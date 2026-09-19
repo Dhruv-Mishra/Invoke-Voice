@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { mkdtempSync, rmSync } from 'node:fs';
+import os from 'node:os';
 import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { app, BrowserWindow, ipcMain } from 'electron';
 import { WebSocketServer } from 'ws';
+import desktopLaunch from '../scripts/desktop-launch.cjs';
 
 if (process.env.VOICE_SUPERVISOR_DISABLE_GPU === '1') app.disableHardwareAcceleration();
 app.commandLine.appendSwitch('use-fake-ui-for-media-stream');
@@ -12,6 +15,14 @@ app.commandLine.appendSwitch('use-fake-device-for-media-stream');
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 app.commandLine.appendSwitch('disable-features', 'HardwareMediaKeyHandling,CalculateNativeWinOcclusion');
 let server;
+let restartedServer;
+const preferenceDir = mkdtempSync(path.join(os.tmpdir(), 'invoke-browser-preferences-'));
+let preferences = desktopLaunch.createPreferenceStore(preferenceDir);
+ipcMain.on('preferences:get', (event, key) => { event.returnValue = preferences.getItem(key); });
+ipcMain.on('preferences:set', (event, key, value) => {
+  event.returnValue = false;
+  try { preferences.setItem(key, value); event.returnValue = true; } catch {}
+});
 let browser;
 let chatResponse;
 let chatRequest;
@@ -32,6 +43,8 @@ ipcMain.handle('data-reset:clear', (_event, confirmation) => { resetRequests.pus
 const calendarRequests = [];
 const cancelRequests = [];
 let configReads = 0;
+let configHttpStatus = 200;
+const configWrites = [];
 let setupHttpStatus = 200;
 const setupRequests = [];
 const fixtureNotifications = [];
@@ -60,7 +73,7 @@ const config = {
   defaults: { provider: 'local', voiceMode: 'local' },
   configuration: { fields: [
     { key: 'OPENAI_BASE_URL', label: 'OpenAI URL', group: 'Fixture', type: 'url', secret: false, value: 'https://example.test' },
-    { key: 'LLAMA_THREADS', label: 'Threads', group: 'Fixture', type: 'number', secret: false, value: '8', min: 1, max: 128 },
+    { key: 'LLAMA_THREADS', label: 'Threads', group: 'Fixture', type: 'number', secret: false, value: '8', min: 1, max: 128, restartRequired: true },
     { key: 'OPENAI_API_KEY', label: 'OpenAI key', group: 'Fixture', type: 'password', secret: true, configured: true },
     { key: 'LOCAL_STT_PROVIDER', label: 'Local speech recognition', group: 'Local speech', type: 'select', value: 'whisper', options: [{ value: 'whisper', label: 'Whisper Small (INT8)' }, { value: 'moonshine', label: 'Moonshine Tiny (streaming)' }] },
     { key: 'AGENCY_WORK_DATA_ACCESS', label: 'Private work sources', description: 'Uses cloud services; questions and answers are saved and may be spoken.', group: 'Coding tools', type: 'select', value: 'disabled', options: [{ value: 'disabled', label: 'Off' }, { value: 'read-only', label: 'Read-only' }] },
@@ -284,8 +297,15 @@ try {
             let body = '';
             for await (const chunk of request) body += chunk;
             const values = JSON.parse(body).values;
+            configWrites.push(values);
+            if (configHttpStatus !== 200) {
+              response.writeHead(configHttpStatus, { 'Content-Type': 'application/json' });
+              response.end(JSON.stringify({ error: 'Could not save configuration.' }));
+              return;
+            }
             for (const field of config.configuration.fields) {
               if (field.key in values) field.value = values[field.key];
+              if (field.key === 'LLAMA_THREADS') field.pendingRestart = field.value !== '8';
             }
             if (values.LOCAL_STT_PROVIDER) {
               config.local.sttProvider = values.LOCAL_STT_PROVIDER;
@@ -374,6 +394,7 @@ try {
   await click('#local-setup-start');
   await waitFor(() => document.body.dataset.view === 'settings' && document.activeElement.id === 'setup-consent');
   console.log('Browser fixture: settings ready');
+  assert.equal(await evaluate(() => document.querySelector('[data-for="settings-default-backend"] [aria-checked="true"]').value), 'agency');
   assert.equal(settingsWrites, 1);
   await waitFor(() => document.getElementById('setup-status').textContent === 'idle');
   assert.deepEqual(await evaluate(() => [...document.querySelectorAll('#config-fields input')].map(control => [control.type, getComputedStyle(control).borderRadius, control.value])), [
@@ -422,7 +443,8 @@ try {
   await click('#setup-consent');
   await pointerClick('[data-for="config-local-stt-provider"] button[value="moonshine"]');
   await click('#config-save-btn');
-  await waitFor(() => document.getElementById('config-feedback').textContent.includes('Config saved'));
+  await waitFor(() => document.getElementById('config-feedback').textContent.includes('Saved.'));
+  assert.deepEqual(configWrites.at(-1), { LOCAL_STT_PROVIDER: 'moonshine' });
   assert.equal(config.local.sttProvider, 'moonshine');
   assert.equal(await evaluate(() => document.getElementById('setup-consent').checked), false);
   assert.equal(await evaluate(() => document.getElementById('setup-message').textContent.includes('moonshine selected')), true);
@@ -430,6 +452,48 @@ try {
   await evaluate(() => document.querySelector('[data-for="config-local-stt-provider"]').scrollIntoView({ block: 'center' }));
   await assertPainted('[data-for="config-local-stt-provider"]');
   await screenshot('speech-selector-desktop');
+  assert.equal(await evaluate(() => document.querySelectorAll('.config-restart').length), 0);
+  assert.equal(await evaluate(() => document.getElementById('settings-idle-warning')), null);
+  await typeText('#config-llama-threads', '9');
+  await choose('#settings-idle-end', '30');
+  await choose('#settings-default-backend', 'copilot');
+  await click('#close-view-btn');
+  await waitFor(() => document.getElementById('app-dialog').open);
+  await click('[data-app-dialog-cancel]');
+  await settle();
+  assert.equal(await evaluate(() => document.body.dataset.view), 'settings');
+  assert.equal(await evaluate(() => document.getElementById('config-llama-threads').value), '9');
+  configHttpStatus = 503;
+  await click('#close-view-btn');
+  await waitFor(() => document.getElementById('app-dialog').open);
+  await click('[data-app-dialog-accept]');
+  await waitFor(() => document.getElementById('config-feedback').textContent.includes('Error:'));
+  assert.equal(await evaluate(() => document.body.dataset.view), 'settings');
+  configHttpStatus = 200;
+  await click('#close-view-btn');
+  await waitFor(() => document.getElementById('app-dialog').open);
+  await click('[data-app-dialog-accept]');
+  await waitFor(() => document.body.dataset.view === 'home');
+  assert.deepEqual(configWrites.at(-1), { LLAMA_THREADS: '9' });
+  assert.equal(settings.idleEndSeconds, 30);
+  await visit('settings');
+  assert.equal(await evaluate(() => document.querySelectorAll('.config-restart').length), 1);
+  await typeText('#config-llama-threads', '8');
+  await choose('#settings-idle-end', '60');
+  await click('#close-view-btn');
+  await waitFor(() => document.getElementById('app-dialog').open);
+  await click('[data-app-dialog-accept]');
+  await waitFor(() => document.body.dataset.view === 'home');
+  await visit('settings');
+  assert.equal(await evaluate(() => document.querySelectorAll('.config-restart').length), 0);
+  const writesBeforeUnchangedExit = configWrites.length;
+  await choose('#settings-idle-end', '0');
+  await choose('#settings-idle-end', '60');
+  await click('#close-view-btn');
+  await waitFor(() => document.body.dataset.view === 'home');
+  assert.equal(configWrites.length, writesBeforeUnchangedExit);
+  assert.equal(await evaluate(() => document.getElementById('app-dialog').open), false);
+  await visit('settings');
   await pointerClick('#config-section > summary');
   assert.equal(await evaluate(() => document.getElementById('setup-install-btn').disabled), true);
   assert.equal(await evaluate(() => document.getElementById('setup-cache').textContent), setup.cacheDir);
@@ -689,6 +753,7 @@ try {
   await waitFor(() => document.querySelector('.sprite-image') && document.getElementById('route-status-badge').textContent.includes('Ready'));
   assert.equal(await evaluate(() => document.getElementById('local-setup-prompt').open), false);
   assert.equal(await evaluate(() => document.documentElement.dataset.motion), 'reduce');
+  assert.equal(await evaluate(() => document.querySelector('[data-for="settings-default-backend"] [aria-checked="true"]').value), 'copilot');
   assert.equal(await evaluate(() => document.documentElement.dataset.appearance), 'jarvis');
   assert.equal(await evaluate(() => document.querySelector('#settings-view [data-theme-card="jarvis"]').dataset.sprite), 'palladium');
   assert.equal(await evaluate(() => document.querySelector('#settings-view [data-theme-card="jarvis"]').dataset.wallpaper), 'skyline');
@@ -839,7 +904,7 @@ try {
   await pointerClick('[data-for="tts-provider"] button[value="openai"]');
   assert.equal(await evaluate(() => document.getElementById('provider-select').value), 'local');
   assert.deepEqual(await evaluate(() => {
-    const saved = JSON.parse(localStorage.getItem('voice-supervisor-pipeline-v1'));
+    const saved = JSON.parse(window.voiceSupervisorPreferences.getItem('voice-supervisor-pipeline-v1'));
     return [saved.sttProvider, saved.provider, saved.ttsProvider];
   }), ['gemini', 'local', 'openai']);
   await screenshot('dedicated-pipeline-desktop');
@@ -877,7 +942,7 @@ try {
   await evaluate(() => {
     window.fixtureCues = [];
     const play = HTMLMediaElement.prototype.play;
-    HTMLMediaElement.prototype.play = function () { window.fixtureCues.push({ source: this.src, activity: document.body.dataset.voiceActivity }); return play.call(this); };
+    HTMLMediaElement.prototype.play = function () { window.fixtureCues.push({ source: this.src, volume: this.volume, activity: document.body.dataset.voiceActivity }); return play.call(this); };
   });
   await click('#assistant-toggle-btn');
   console.log('Browser fixture: checking voice');
@@ -974,6 +1039,7 @@ try {
   await click('#settings-view button[data-appearance="baymax"]');
   assert.equal(voiceConnections, 1, 'changing sprite structure must not reconnect an active call');
   assert.equal(await evaluate(() => /baymax-bootup/.test(window.fixtureCues.at(-1)?.source)), true);
+  assert.ok(await evaluate(() => Math.abs(window.fixtureCues.at(-1).volume - Number(document.getElementById('theme-volume').value) / 100) < 0.000001));
   await click('#settings-view button[data-appearance="alpine"]');
   assert.equal(await evaluate(() => document.querySelector('#settings-view [data-theme-card="alpine"]').dataset.sprite), 'opal');
   assert.equal(await evaluate(() => document.documentElement.dataset.transparency), 'off');
@@ -1154,14 +1220,11 @@ try {
   await waitFor(() => document.getElementById('agent-sprite').dataset.state === 'listening');
   await click('#dock-mute-btn');
   await evaluate(() => { window.fixtureClock += 40000; });
-  await waitFor(() => !document.getElementById('idle-call-notice').hidden);
-  assert.equal(voiceNotifications.filter(item => item.text.startsWith('Are you still there?')).length, 1);
+  assert.equal(await evaluate(() => document.getElementById('idle-call-notice')), null);
+  assert.equal(voiceNotifications.filter(item => item.text.startsWith('Are you still there?')).length, 0);
   await voice({ type: 'transcript', role: 'user', text: 'Yes, I am here.', partial: false });
-  assert.equal(await evaluate(() => document.getElementById('idle-call-notice').hidden), true);
   await voice({ type: 'state', state: 'listening' });
-  await evaluate(() => { window.fixtureClock += 40000; });
-  await waitFor(() => !document.getElementById('idle-call-notice').hidden);
-  await evaluate(() => { window.fixtureClock += 20000; });
+  await evaluate(() => { window.fixtureClock += 60000; });
   await waitFor(() => document.getElementById('agent-sprite').dataset.state === 'idle');
   assert.equal(await evaluate(() => window.fixtureCues.filter(cue => cue.source.includes('end-call')).length), 3, 'idle hang-up uses the same end cue');
   assert.equal(await evaluate(edgesAreOff), true, 'idle hang-up clears both glows');
@@ -1282,6 +1345,43 @@ try {
   await click('[data-app-dialog-accept]');
   await waitFor(() => document.getElementById('application-data-feedback').textContent.includes('Closing Invoke'));
   assert.deepEqual(resetRequests, ['DELETE_ALL_APP_DATA']);
+  await visit('settings');
+  await pointerClick('#settings-view button[data-appearance="baymax"]');
+  await pointerClick('#settings-view [data-theme-card="baymax"] [data-theme-control="next"]');
+  await evaluate(() => {
+    const volume = document.getElementById('theme-volume');
+    volume.value = '45';
+    volume.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await choose('#settings-default-backend', 'agency');
+  await click('#settings-save-btn');
+  await waitFor(() => document.getElementById('settings-feedback').textContent.includes('Settings saved'));
+  const restoredPreferences = await evaluate(() => ({
+    theme: window.getThemeSessionOptions().theme,
+    wallpaper: document.querySelector('#settings-view [data-theme-card="baymax"]').dataset.wallpaper,
+    volume: document.getElementById('theme-volume').value,
+    route: ['provider-select', 'voice-mode-select', 'stt-provider', 'tts-provider', 'native-provider'].map(id => document.getElementById(id).value),
+    config: [...document.querySelectorAll('[data-config-key]')].map(control => [control.dataset.configKey, control.value]),
+  }));
+  preferences = desktopLaunch.createPreferenceStore(preferenceDir);
+  restartedServer = createServer(server.listeners('request')[0]);
+  await new Promise(resolve => restartedServer.listen(0, '127.0.0.1', resolve));
+  const restartedUrl = `http://127.0.0.1:${restartedServer.address().port}`;
+  assert.notEqual(restartedUrl, url);
+  await browser.loadURL(restartedUrl);
+  await waitFor(() => document.getElementById('route-status-badge').textContent.includes('Ready'));
+  await waitFor(() => document.getElementById('app-dialog').open);
+  await click('[data-app-dialog-cancel]');
+  await visit('settings');
+  assert.equal(await evaluate(() => localStorage.length), 0);
+  assert.deepEqual(await evaluate(() => ({
+    theme: window.getThemeSessionOptions().theme,
+    wallpaper: document.querySelector('#settings-view [data-theme-card="baymax"]').dataset.wallpaper,
+    volume: document.getElementById('theme-volume').value,
+    route: ['provider-select', 'voice-mode-select', 'stt-provider', 'tts-provider', 'native-provider'].map(id => document.getElementById(id).value),
+    config: [...document.querySelectorAll('[data-config-key]')].map(control => [control.dataset.configKey, control.value]),
+  })), restoredPreferences);
+  assert.equal(await evaluate(() => document.querySelector('[data-for="settings-default-backend"] [aria-checked="true"]').value), 'agency');
   assert.deepEqual(errors, []);
   console.log('Frontend browser checks passed: real toggle/input events and painted surfaces, two overlay captions, persisted transparency, setup lifecycle, unchanged voice/SSE ownership, themes and five viewports.');
 } catch (error) {
@@ -1305,6 +1405,9 @@ try {
   voiceServer?.close();
   server?.closeAllConnections();
   server?.close();
+  restartedServer?.closeAllConnections();
+  restartedServer?.close();
+  rmSync(preferenceDir, { recursive: true, force: true });
   app.exit(process.exitCode || 0);
 }
 }

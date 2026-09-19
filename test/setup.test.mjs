@@ -41,6 +41,15 @@ test('local STT defaults to Moonshine Tiny streaming and Whisper remains optiona
   assert.equal(args[args.indexOf('--stream-final-on-silence-ms') + 1], '800');
 });
 
+test('saving unchanged defaults never requires restart and reverting a change clears it', context => {
+  const { directory } = fixture(context);
+  const config = createRuntimeConfig({ dataDir: directory, env: {} });
+  const values = Object.fromEntries(config.snapshot().fields.filter(field => !field.secret).map(field => [field.key, field.value]));
+  assert.equal(config.update({ values }).fields.some(field => field.pendingRestart), false);
+  assert.equal(config.update({ values: { LLAMA_CONTEXT: '8192' } }).fields.find(field => field.key === 'LLAMA_CONTEXT').pendingRestart, true);
+  assert.equal(config.update({ values }).fields.some(field => field.pendingRestart), false);
+});
+
 test('saved managed Tiny selection overrides older model environment after restart without rewriting it', context => {
   const { directory, paths } = fixture(context);
   const oldModel = path.join(directory, 'moonshine-streaming-small-q4_k.gguf');
@@ -272,7 +281,9 @@ test('compressed bundled setup retains the hash-locked install and removes only 
   assert.equal((await setup.settled()).status, 'ready');
   const installs = commands.filter(command => command.args.includes('pip') && command.args.includes('install'));
   assert.equal(installs.length, 1);
-  assert.ok(installs[0].args.includes('--offline') && installs[0].args.includes('--require-hashes') && installs[0].args.includes('--no-index'));
+  assert.equal(installs[0].executable, paths.python);
+  assert.ok(commands.some(command => command.args.includes('ensurepip')));
+  assert.ok(installs[0].args.includes('--require-hashes') && installs[0].args.includes('--no-index'));
   assert.ok(expanded);
   assert.equal(existsSync(expanded), false);
   assert.equal(existsSync(path.join(compressedPackDir, filename)), true);
@@ -338,7 +349,8 @@ test('local setup installs a verified bundled pack without contacting package in
   assert.equal((await setup.settled()).status, 'ready');
   const installs = commands.filter(command => command.args.includes('pip') && command.args.includes('install'));
   assert.equal(installs.length, 1);
-  assert.deepEqual(installs[0].args, ['--no-config', '--offline', 'pip', 'install', '--python', paths.python, '--no-index', '--find-links', wheelhouse, '--only-binary', ':all:', '--require-hashes', '-r', path.join(packDir, 'requirements.lock')]);
+  assert.equal(installs[0].executable, paths.python);
+  assert.deepEqual(installs[0].args, ['-I', '-m', 'pip', '--isolated', '--disable-pip-version-check', '--no-input', '--no-cache-dir', 'install', '--no-index', '--find-links', wheelhouse, '--only-binary', ':all:', '--require-hashes', '-r', path.join(packDir, 'requirements.lock')]);
   assert.equal(installs[0].options.message, 'Installing verified bundled Kokoro dependencies without network access.');
 });
 

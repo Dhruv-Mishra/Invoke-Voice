@@ -114,7 +114,7 @@ export function createVSCodeBridge(dataDir, env = process.env, { agencyMcp, spaw
         return pending;
       };
       workspaceReady = (async () => {
-        if (!existsSync(gitDirectory)) await managedGit(['init', '--initial-branch=main', '--template=']);
+        await managedGit(['init', '--initial-branch=main', '--template=']);
         const { stdout: root } = await managedGit(['rev-parse', '--absolute-git-dir']);
         if (path.relative(realpathSync.native(gitDirectory), realpathSync.native(root.trim()))) throw new Error('Default workspace must use its own Git repository');
         const head = await managedGit(['rev-parse', '--verify', '--quiet', 'HEAD']).catch(error => {

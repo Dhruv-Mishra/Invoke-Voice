@@ -160,7 +160,7 @@ test('local runtime defaults match displayed settings and honor explicit overrid
     const changed = config.update({ values });
     for (const key of Object.keys(values)) {
       assert.equal(env[key], undefined);
-      assert.equal(changed.fields.find(field => field.key === key).pendingRestart, true);
+      assert.equal(changed.fields.find(field => field.key === key).pendingRestart, values[key] !== defaults[key]);
     }
     createRuntimeConfig({ dataDir, env });
     for (const [key, value] of Object.entries(values)) assert.equal(env[key], value);

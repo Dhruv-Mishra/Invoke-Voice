@@ -13,7 +13,7 @@
         param || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
       document.documentElement.setAttribute("data-theme", theme);
       try {
-        const motion = localStorage.getItem("voice-supervisor-motion-v1");
+        const motion = window.voiceSupervisorPreferences?.getItem("voice-supervisor-motion-v1") ?? localStorage.getItem("voice-supervisor-motion-v1");
         document.documentElement.dataset.motion = ['system', 'reduce', 'full'].includes(motion) ? motion : 'full';
         const personality = localStorage.getItem("voice-supervisor-personality-v1") || "copilot";
         document.documentElement.setAttribute("data-personality", personality);
@@ -664,11 +664,11 @@
         <summary class="settings-section-title"><i data-lucide="key-round" aria-hidden="true"></i>Providers &amp; keys</summary>
         <p class="field-hint">Keys and provider options are stored only on this device. Blank key fields keep the saved value.</p>
         <form id="config-form">
-          <div id="config-fields" class="config-fields"></div>
           <div class="settings-actions">
             <span id="config-feedback" class="settings-feedback" role="status" aria-live="polite"></span>
-            <button type="submit" class="btn btn-accent" id="config-save-btn"><i data-lucide="save"></i><span>Save config</span></button>
+            <button type="submit" class="btn btn-accent" id="config-save-btn"><i data-lucide="save"></i><span>Save</span></button>
           </div>
+          <div id="config-fields" class="config-fields"></div>
         </form>
       </details>
 
@@ -760,17 +760,13 @@
             <input type="checkbox" id="settings-greet-on-connect" checked>
             <span class="toggle-track" aria-hidden="true"></span><span>Greet when a call connects</span>
           </label>
-          <label class="form-row-checkbox toggle-control" for="settings-auto-end-call">
-            <input type="checkbox" id="settings-auto-end-call" checked>
-            <span class="toggle-track" aria-hidden="true"></span><span>End inactive calls automatically</span>
-          </label>
           <div class="form-group">
-            <label for="settings-idle-warning">Check in after (seconds)</label>
-            <input type="number" id="settings-idle-warning" min="5" max="3600" step="1" value="40" required>
-          </div>
-          <div class="form-group">
-            <label for="settings-idle-end">End call after (seconds)</label>
-            <input type="number" id="settings-idle-end" min="5" max="3600" step="1" value="60" required>
+            <label for="settings-idle-end">Inactive call timeout</label>
+            <select id="settings-idle-end" data-pillbar>
+              <option value="0">Off</option>
+              <option value="30">30s</option>
+              <option value="60" selected>1 minute</option>
+            </select>
           </div>
         </section>
 
@@ -785,7 +781,6 @@
 
       <details class="settings-section config-section" id="integrations-section">
         <summary class="settings-section-title"><i data-lucide="plus-circle" aria-hidden="true"></i>Integrations</summary>
-        <p class="field-hint">Install Agency and sign in with your work account. Invoke launches the Teams MCP proxy on app startup; installing Agency alone does not start it. Check connections starts or retries the proxies.</p>
         <div class="utility-toolbar"><a class="btn" href="https://aka.ms/agency" target="_blank" rel="noopener noreferrer"><i data-lucide="external-link" aria-hidden="true"></i>Install / sign in to Agency</a></div>
         <form id="private-work-form">
           <div id="private-work-fields" class="config-fields"></div>
@@ -804,11 +799,10 @@
               <tr>
                 <th>Integration</th>
                 <th>Status</th>
-                <th>Mode</th>
               </tr>
             </thead>
             <tbody id="integrations-table-body">
-              <tr><td colspan="3" class="loading-spinner">Loading integrations...</td></tr>
+              <tr><td colspan="2" class="loading-spinner">Loading integrations...</td></tr>
             </tbody>
           </table>
         </div>
@@ -1061,7 +1055,6 @@
     <header><h2>Notifications</h2><button type="button" class="btn btn-icon" id="notifications-read" title="Mark all read" aria-label="Mark all notifications read"><i data-lucide="check-check" aria-hidden="true"></i></button><button type="button" class="btn btn-icon" id="notifications-clear" title="Clear notifications" aria-label="Clear notifications"><i data-lucide="trash-2" aria-hidden="true"></i></button></header>
     <div id="notifications-list"></div>
   </section>
-  <div id="idle-call-notice" class="idle-call-notice" role="status" hidden><span id="idle-call-text"></span><button class="btn" type="button" id="idle-call-stay">Stay connected</button></div>
 
   <div class="voice-strip" role="region" aria-label="Voice controls">
     <button type="button" class="dock-utility" id="voice-options-btn" aria-label="Voice options" title="Voice options" aria-expanded="false" aria-controls="voice-options"><i data-lucide="sliders-horizontal"></i></button>

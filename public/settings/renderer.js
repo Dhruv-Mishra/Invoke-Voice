@@ -14,8 +14,6 @@ export function createSettingsRenderer({
   voiceNotifications,
   browserNotifications,
   greetOnConnect,
-  autoEndCall,
-  idleWarning,
   idleEnd,
   integrationsTableBody,
   configFields,
@@ -64,7 +62,7 @@ export function createSettingsRenderer({
     if (integrations.length === 0) {
       const row = document.createElement('tr');
       const cell = document.createElement('td');
-      cell.colSpan = 3;
+      cell.colSpan = 2;
       cell.className = 'empty-detail';
       cell.textContent = 'No integrations reported.';
       row.appendChild(cell);
@@ -89,13 +87,7 @@ export function createSettingsRenderer({
         status.appendChild(message);
       }
 
-      const mode = document.createElement('td');
-      const modeBadge = document.createElement('span');
-      modeBadge.className = 'badge';
-      modeBadge.textContent = item.mode || 'read_only';
-      mode.appendChild(modeBadge);
-
-      row.append(name, status, mode);
+      row.append(name, status);
       integrationsTableBody.appendChild(row);
     });
   }
@@ -104,6 +96,7 @@ export function createSettingsRenderer({
     if (!defaultArea) return;
     const state = getState();
     const config = getConfig();
+    if (!defaultBackend?.options.length || !copilotModel?.options.length) populateOptions();
     defaultArea.replaceChildren();
     const emptyOption = document.createElement('option');
     emptyOption.value = '';
@@ -119,12 +112,10 @@ export function createSettingsRenderer({
     defaultArea.value = state.settings?.defaultAreaId || '';
 
     if (defaultBackend) {
-      if (defaultBackend.options.length === 0) populateOptions();
-      defaultBackend.value = state.settings?.defaultBackend || config?.defaults?.codingBackend || 'copilot';
+      defaultBackend.value = state.settings?.defaultBackend || config?.defaults?.codingBackend || 'agency';
     }
 
     if (config) {
-      if (copilotModel.options.length === 0) populateOptions();
       if (state.settings?.copilotModel) copilotModel.value = state.settings.copilotModel;
       else if (config.defaults?.copilotModel) copilotModel.value = config.defaults.copilotModel;
       if (state.settings?.copilotContext) copilotContext.value = state.settings.copilotContext;
@@ -138,15 +129,25 @@ export function createSettingsRenderer({
     if (voiceNotifications) voiceNotifications.checked = settings.voiceNotifications !== false;
     if (browserNotifications) browserNotifications.checked = settings.browserNotifications !== false;
     if (greetOnConnect) greetOnConnect.checked = settings.greetOnConnect !== false;
-    if (autoEndCall) autoEndCall.checked = settings.autoEndCall !== false;
-    if (idleWarning) idleWarning.value = settings.idleWarningSeconds ?? 40;
-    if (idleEnd) idleEnd.value = settings.idleEndSeconds ?? 60;
+    if (idleEnd) {
+      const seconds = String(settings.idleEndSeconds ?? 60);
+      idleEnd.querySelector('[data-custom]')?.remove();
+      if (!['30', '60'].includes(seconds)) {
+        const option = new Option(`${seconds}s`, seconds);
+        option.dataset.custom = '';
+        idleEnd.appendChild(option);
+      }
+      idleEnd.value = settings.autoEndCall === false ? '0' : seconds;
+    }
     populateIntegrations();
+    refreshPillbars();
   }
 
   function renderApplicationConfig() {
     if (!configFields) return;
     const config = getConfig();
+    const drafts = new Map([configFields, privateWorkFields].filter(Boolean).flatMap(container => [...container.querySelectorAll('[data-config-key]')])
+      .filter(control => control.value !== control.dataset.savedValue).map(control => [control.dataset.configKey, control.value]));
     const focusedField = configFields.contains(document.activeElement) || privateWorkFields?.contains(document.activeElement)
       ? document.activeElement.closest('.config-field')?.querySelector('[data-config-key]')?.id : null;
     configFields.replaceChildren();
@@ -186,10 +187,10 @@ export function createSettingsRenderer({
         label.htmlFor = id;
         label.textContent = field.label;
         wrapper.appendChild(label);
-        if (field.restartRequired) {
+        if (field.pendingRestart) {
           const restart = document.createElement('span');
           restart.className = 'config-restart';
-          restart.textContent = field.pendingRestart ? 'Restart required - change pending' : 'Restart required';
+          restart.textContent = 'Restart to apply';
           wrapper.appendChild(restart);
         }
 
@@ -219,6 +220,8 @@ export function createSettingsRenderer({
         control.dataset.configKey = field.key;
         control.dataset.configSecret = String(secret);
         if (!secret) control.value = field.value || '';
+        control.dataset.savedValue = control.value;
+        if (drafts.has(field.key)) control.value = drafts.get(field.key);
         wrapper.appendChild(control);
         if (field.description) {
           const hint = document.createElement('p');

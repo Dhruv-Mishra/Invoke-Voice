@@ -7,6 +7,7 @@ import { createToolCatalog } from './tools/tool-catalog.js';
 import { createLocalSetupController } from './setup/local-setup.js';
 import { createSettingsRenderer } from './settings/renderer.js';
 import { createAppDialog } from './app-dialog.js';
+import { readPreference, savePreference } from './preferences.js';
 
 let appConfig = null;
 let appState = { areas: [], tasks: [] };
@@ -36,7 +37,6 @@ const pendingNotifications = [];
 const seenNotifications = new Set();
 let notificationsSignature = null;
 const idleCall = createIdleCallTimer();
-let idleNotificationId = null;
 const pendingPlaybackResponses = new Map();
 const responsePlaybackGenerations = new Map();
 const cancelledPlaybackResponses = new Set();
@@ -63,6 +63,7 @@ let currentChatAbortController = null;
 let currentChatToken = 0;
 let stateLoadRevision = 0;
 let settingsDirty = false;
+let savedPreferences = '';
 
 // DOM Elements
 const providerSelect = document.getElementById('provider-select');
@@ -73,7 +74,7 @@ const ttsProvider = document.getElementById('tts-provider');
 const pipelinePreferenceKey = 'voice-supervisor-pipeline-v1';
 
 function readPipelinePreference() {
-  try { return JSON.parse(localStorage.getItem(pipelinePreferenceKey)) || null; } catch { return null; }
+  try { return JSON.parse(readPreference(pipelinePreferenceKey)) || null; } catch { return null; }
 }
 const modelName = document.getElementById('model-input');
 const voiceModeSelect = document.getElementById('voice-mode-select');
@@ -164,8 +165,6 @@ const settingsNotifyFailed = document.getElementById('settings-notify-failed');
 const settingsVoiceNotifications = document.getElementById('settings-voice-notifications');
 const settingsBrowserNotifications = document.getElementById('settings-browser-notifications');
 const settingsGreetOnConnect = document.getElementById('settings-greet-on-connect');
-const settingsAutoEndCall = document.getElementById('settings-auto-end-call');
-const settingsIdleWarning = document.getElementById('settings-idle-warning');
 const settingsIdleEnd = document.getElementById('settings-idle-end');
 const settingsSaveBtn = document.getElementById('settings-save-btn');
 const settingsFeedback = document.getElementById('settings-feedback');
@@ -194,8 +193,6 @@ const settingsRenderer = createSettingsRenderer({
   voiceNotifications: settingsVoiceNotifications,
   browserNotifications: settingsBrowserNotifications,
   greetOnConnect: settingsGreetOnConnect,
-  autoEndCall: settingsAutoEndCall,
-  idleWarning: settingsIdleWarning,
   idleEnd: settingsIdleEnd,
   integrationsTableBody,
   configFields,
@@ -309,7 +306,7 @@ function applyState(state) {
   }
   const unread = new Set((appState.notifications || []).filter(item => !item.read).map(item => item.id));
   for (let index = pendingNotifications.length - 1; index >= 0; index--) {
-    if (pendingNotifications[index].id !== idleNotificationId && !unread.has(pendingNotifications[index].id)) pendingNotifications.splice(index, 1);
+    if (!unread.has(pendingNotifications[index].id)) pendingNotifications.splice(index, 1);
   }
   renderNotifications();
   for (const notification of appState.notifications || []) if (!notification.read) handleNotification(notification);
@@ -341,6 +338,7 @@ const desktopViews = window.matchMedia('(min-width: 761px)');
 const homeView = document.getElementById('voice-personality-app');
 const viewTitles = { workspace: 'Tasks', calendar: 'Calendar', files: 'Files', settings: 'Settings', 'tool-lab': 'Tool Lab' };
 let viewOpener = null;
+let leavingSettings = false;
 
 function syncViewPresentation() {
   const viewName = document.body.dataset.view;
@@ -364,9 +362,19 @@ function syncViewPresentation() {
   }
 }
 
-function activateView(viewName) {
+async function activateView(viewName) {
   if (viewName !== 'home' && !Object.hasOwn(viewTitles, viewName)) return;
   const previous = document.body.dataset.view;
+  if (previous === 'settings' && viewName !== 'settings' && (settingsDirty || Object.keys(changedConfigValues(settingsView)).length)) {
+    if (leavingSettings) return;
+    leavingSettings = true;
+    try {
+      if (!await showAppConfirm('Save your settings before leaving?', { heading: 'Unsaved changes', acceptLabel: 'Save and continue', cancelLabel: 'Keep editing' })) return;
+      if (!await saveApplicationConfig(settingsView, configFeedback, configSaveBtn)) return;
+      if (settingsDirty && !await savePreferences()) return;
+      if (settingsDirty || Object.keys(changedConfigValues(settingsView)).length) return;
+    } finally { leavingSettings = false; }
+  }
   if (previous === 'home' && viewName !== 'home') viewOpener = document.activeElement;
   document.body.dataset.view = viewName;
   workspaceView.hidden = viewName !== 'workspace';
@@ -380,7 +388,7 @@ function activateView(viewName) {
     tab.tabIndex = selected ? 0 : -1;
   }
   if (viewName === 'settings') {
-    populateSettingsView();
+    if (!settingsDirty) populateSettingsView();
   }
   if (viewName === 'calendar') {
     document.getElementById('calendar-date').textContent = new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric' }).format(new Date());
@@ -682,7 +690,7 @@ function notifyReset(reason) {
 
 // Provider / Mode Switch Reset Handler
 function handleRouteSwitch(reason) {
-  try { localStorage.setItem(pipelinePreferenceKey, JSON.stringify({ provider: providerSelect.value, voiceMode: voiceModeSelect.value, sttProvider: sttProvider.value, ttsProvider: ttsProvider.value, nativeProvider: nativeProvider.value })); } catch {}
+  savePreference(pipelinePreferenceKey, JSON.stringify({ provider: providerSelect.value, voiceMode: voiceModeSelect.value, sttProvider: sttProvider.value, ttsProvider: ttsProvider.value, nativeProvider: nativeProvider.value }));
   if (currentChatAbortController) {
     currentChatAbortController.abort();
     currentChatAbortController = null;
@@ -1103,7 +1111,6 @@ async function startVoiceSession() {
 function stopVoiceSession() {
   const wasConnected = isServerReady;
   idleCall.stop();
-  clearIdleWarning();
   voiceCaptions.clear();
   currentSessionToken++;
   isVoiceStarting = false;
@@ -1158,22 +1165,9 @@ function stopVoiceSession() {
   if (wasConnected) window.dispatchEvent(new Event('voice-supervisor:call-ended'));
 }
 
-function clearIdleWarning() {
-  if (idleNotificationId) {
-    const index = pendingNotifications.findIndex(item => item.id === idleNotificationId);
-    if (index !== -1) pendingNotifications.splice(index, 1);
-    if (notificationInFlight?.id === idleNotificationId) notificationInFlight = null;
-    idleNotificationId = null;
-  }
-  document.getElementById('idle-call-notice').hidden = true;
-}
-
 function noteUserActivity() {
   idleCall.activity();
-  if (idleNotificationId) clearIdleWarning();
 }
-
-document.getElementById('idle-call-stay').addEventListener('click', noteUserActivity);
 
 // Push to Talk, Mute & End Call
 function setMicrophoneMuted(muted) {
@@ -1422,23 +1416,14 @@ document.getElementById('notifications-clear').addEventListener('click', async (
 
 setInterval(() => {
   const settings = appState.settings || {};
-  const idleAction = idleCall.tick({ enabled: settings.autoEndCall !== false, warningSeconds: settings.idleWarningSeconds ?? 40, endSeconds: settings.idleEndSeconds ?? 60, busy: isVoiceThinking || isUserSpeaking() || isAssistantSpeaking() });
-  if (settings.autoEndCall === false) clearIdleWarning();
+  const idleAction = idleCall.tick({ enabled: settings.autoEndCall !== false, endSeconds: settings.idleEndSeconds ?? 60, busy: isVoiceThinking || isUserSpeaking() || isAssistantSpeaking() });
   if (idleAction === 'end') {
     appendMessage('system', 'Call ended after inactivity.');
     stopVoiceSession();
     return;
   }
-  if (idleAction === 'warn') {
-    const seconds = (settings.idleEndSeconds ?? 60) - (settings.idleWarningSeconds ?? 40);
-    const text = `Are you still there? I'll end the call in ${seconds} seconds without a reply.`;
-    document.getElementById('idle-call-text').textContent = text;
-    document.getElementById('idle-call-notice').hidden = false;
-    idleNotificationId = crypto.randomUUID();
-    pendingNotifications.unshift({ id: idleNotificationId, text });
-  }
   if (settings.voiceNotifications === false) {
-    for (let index = pendingNotifications.length - 1; index >= 0; index--) if (pendingNotifications[index].id !== idleNotificationId) pendingNotifications.splice(index, 1);
+    pendingNotifications.length = 0;
   }
   if (!pendingNotifications.length || isQuietMode || !isServerReady || isVoiceThinking || isUserSpeaking() || isAssistantSpeaking()) return;
   if (voiceSocket?.readyState !== WebSocket.OPEN) return;
@@ -1459,113 +1444,145 @@ function populateIntegrationsTable() {
 
 function populateSettingsView() {
   settingsRenderer.populateView();
+  savedPreferences = JSON.stringify(preferenceValues());
 }
 
 function renderApplicationConfig() {
   settingsRenderer.renderApplicationConfig();
 }
 
+function changedConfigValues(fields) {
+  return Object.fromEntries([...fields.querySelectorAll('[data-config-key]')]
+    .filter(control => control.value !== control.dataset.savedValue && !(control.dataset.configSecret === 'true' && !control.value))
+    .map(control => [control.dataset.configKey, control.value]));
+}
+
+async function saveApplicationConfig(fields, feedback, saveButton) {
+  const values = changedConfigValues(fields);
+  if (!Object.keys(values).length) return true;
+  for (const control of fields.querySelectorAll('[data-config-key]')) {
+    if (!Object.hasOwn(values, control.dataset.configKey) || control.checkValidity()) continue;
+    control.closest('details').open = true;
+    control.reportValidity();
+    return false;
+  }
+  feedback.textContent = '';
+  feedback.className = 'settings-feedback';
+  saveButton.disabled = true;
+  try {
+    const previousRecognizer = appConfig?.local?.sttProvider;
+    const response = await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ values }) });
+    const result = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(result?.error || `HTTP ${response.status}`);
+    appConfig = result;
+    for (const control of fields.querySelectorAll('[data-config-key]')) {
+      if (!Object.hasOwn(values, control.dataset.configKey) || control.value !== values[control.dataset.configKey]) continue;
+      if (control.dataset.configSecret === 'true') control.value = '';
+      control.dataset.savedValue = control.value;
+    }
+    renderApplicationConfig();
+    await loadConfig(true);
+    if (appConfig?.local?.sttProvider !== previousRecognizer) await localSetup.recognitionChanged();
+    const pending = appConfig?.configuration?.fields?.some(field => field.pendingRestart);
+    feedback.textContent = fields === privateWorkFields ? 'Access saved. No restart needed. Applies to new research tasks and follow-ups, not tasks already running.'
+      : pending ? 'Saved. Restart Invoke to apply the marked changes.' : 'Saved. Applies to new sessions.';
+    return true;
+  } catch (error) {
+    feedback.textContent = `Error: ${error.message}`;
+    feedback.className = 'settings-feedback error';
+    feedback.closest('details')?.setAttribute('open', '');
+    feedback.scrollIntoView({ block: 'center' });
+    return false;
+  } finally {
+    saveButton.disabled = false;
+  }
+}
+
 for (const [form, fields, feedback, saveButton] of [
   [configForm, configFields, configFeedback, configSaveBtn],
   [document.getElementById('private-work-form'), privateWorkFields, document.getElementById('private-work-feedback'), document.getElementById('private-work-save-btn')],
 ]) {
-  form?.addEventListener('submit', async event => {
+  form?.addEventListener('submit', event => {
     event.preventDefault();
-    feedback.textContent = '';
-    feedback.className = 'settings-feedback';
-    const values = {};
-    for (const control of fields.querySelectorAll('[data-config-key]')) {
-      if (control.dataset.configSecret === 'true' && !control.value) continue;
-      values[control.dataset.configKey] = control.value;
-    }
-    saveButton.disabled = true;
-    try {
-      const previousRecognizer = appConfig?.local?.sttProvider;
-      const response = await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ values }) });
-      const result = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(result?.error || `HTTP ${response.status}`);
-      appConfig = result;
-      renderApplicationConfig();
-      await loadConfig(true);
-      if (appConfig?.local?.sttProvider !== previousRecognizer) await localSetup.recognitionChanged();
-      const pending = appConfig?.configuration?.fields?.some(field => field.pendingRestart);
-      feedback.textContent = fields === privateWorkFields ? 'Access saved. No restart needed. Applies to new research tasks and follow-ups, not tasks already running.'
-        : pending ? 'Config saved. Restart the app to apply pending local performance changes.' : 'Config saved and applied to new sessions.';
-    } catch (error) {
-      feedback.textContent = `Error: ${error.message}`;
-      feedback.className = 'settings-feedback error';
-    } finally {
-      saveButton.disabled = false;
-    }
+    void saveApplicationConfig(fields, feedback, saveButton);
   });
+}
+
+function preferenceValues() {
+  return {
+    defaultAreaId: settingsDefaultArea.value || null,
+    defaultBackend: settingsDefaultBackend.value,
+    copilotModel: settingsCopilotModel.value,
+    copilotContext: settingsCopilotContext.value,
+    notifyCompleted: settingsNotifyCompleted.checked,
+    notifyNeedsInput: settingsNotifyNeedsInput.checked,
+    notifyFailed: settingsNotifyFailed.checked,
+    voiceNotifications: settingsVoiceNotifications.checked,
+    browserNotifications: settingsBrowserNotifications.checked,
+    greetOnConnect: settingsGreetOnConnect.checked,
+    autoEndCall: settingsIdleEnd.value !== '0',
+    idleEndSeconds: Number(settingsIdleEnd.value) || (appState.settings?.idleEndSeconds ?? 60),
+  };
+}
+
+async function savePreferences() {
+  if (!settingsForm.reportValidity()) return false;
+  if (settingsFeedback) {
+    settingsFeedback.textContent = '';
+    settingsFeedback.className = 'settings-feedback';
+  }
+
+  const values = preferenceValues();
+  const browserNotifications = values.browserNotifications;
+
+  if (browserNotifications && typeof window.Notification !== 'undefined' && Notification.permission === 'default') {
+    try {
+      await Notification.requestPermission();
+    } catch (_) {}
+  }
+  const browserAllowed = browserNotifications && typeof window.Notification !== 'undefined' && Notification.permission === 'granted';
+
+  try {
+    const res = await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...values, browserNotifications: browserAllowed })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    const updated = await res.json();
+    settingsDirty = JSON.stringify(preferenceValues()) !== JSON.stringify(values);
+    appState.settings = updated;
+    savedPreferences = JSON.stringify({ ...values, browserNotifications: browserAllowed });
+    if (settingsFeedback) {
+      settingsFeedback.textContent = browserNotifications && !browserAllowed ? 'Settings saved; browser notifications were not permitted.' : 'Settings saved.';
+    }
+    await loadState();
+    return true;
+  } catch (err) {
+    if (settingsFeedback) {
+      settingsFeedback.textContent = `Error: ${err.message}`;
+      settingsFeedback.className = 'settings-feedback error';
+      settingsFeedback.scrollIntoView({ block: 'center' });
+    }
+    return false;
+  }
 }
 
 if (settingsForm) {
-  settingsForm.addEventListener('input', () => { settingsDirty = true; });
-  settingsForm.addEventListener('change', () => { settingsDirty = true; });
-  settingsForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    if (settingsFeedback) {
-      settingsFeedback.textContent = '';
-      settingsFeedback.className = 'settings-feedback';
-    }
-
-    const defaultAreaId = settingsDefaultArea.value || null;
-    const defaultBackend = settingsDefaultBackend ? settingsDefaultBackend.value : (appState.settings?.defaultBackend || 'copilot');
-    const copilotModel = settingsCopilotModel.value;
-    const copilotContext = settingsCopilotContext.value;
-    const notifyCompleted = settingsNotifyCompleted.checked;
-    const notifyNeedsInput = settingsNotifyNeedsInput.checked;
-    const notifyFailed = settingsNotifyFailed.checked;
-    const voiceNotifications = settingsVoiceNotifications.checked;
-    const browserNotifications = settingsBrowserNotifications.checked;
-
-    if (browserNotifications && typeof window.Notification !== 'undefined' && Notification.permission === 'default') {
-      try {
-        await Notification.requestPermission();
-      } catch (_) {}
-    }
-    const browserAllowed = browserNotifications && typeof window.Notification !== 'undefined' && Notification.permission === 'granted';
-
-    try {
-      const res = await fetch('/api/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          defaultAreaId,
-          defaultBackend,
-          copilotModel,
-          copilotContext,
-          notifyCompleted,
-          notifyNeedsInput,
-          notifyFailed,
-          voiceNotifications,
-          greetOnConnect: settingsGreetOnConnect.checked,
-          autoEndCall: settingsAutoEndCall.checked,
-          idleWarningSeconds: Number(settingsIdleWarning.value),
-          idleEndSeconds: Number(settingsIdleEnd.value),
-          browserNotifications: browserAllowed
-        })
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-        throw new Error(err.error || `HTTP ${res.status}`);
-      }
-      const updated = await res.json();
-      appState.settings = updated;
-      settingsDirty = false;
-      if (settingsFeedback) {
-        settingsFeedback.textContent = browserNotifications && !browserAllowed ? 'Settings saved; browser notifications were not permitted.' : 'Settings saved.';
-      }
-      await loadState();
-    } catch (err) {
-      if (settingsFeedback) {
-        settingsFeedback.textContent = `Error: ${err.message}`;
-        settingsFeedback.className = 'settings-feedback error';
-      }
-    }
-  });
+  const checkChanges = () => { settingsDirty = JSON.stringify(preferenceValues()) !== savedPreferences; };
+  settingsForm.addEventListener('input', checkChanges);
+  settingsForm.addEventListener('change', checkChanges);
+  settingsForm.addEventListener('submit', event => { event.preventDefault(); void savePreferences(); });
 }
+
+window.addEventListener('beforeunload', event => {
+  if (!settingsDirty && !Object.keys(changedConfigValues(settingsView)).length) return;
+  event.preventDefault();
+  event.returnValue = '';
+});
 
 if (window.voiceSupervisorData) {
   const clearData = document.getElementById('application-data-clear');
@@ -1576,19 +1593,19 @@ if (window.voiceSupervisorData) {
     feedback.textContent = `Data folder: ${info.path}`;
     clearData.addEventListener('click', async () => {
       clearData.disabled = true;
-      let restarting = false;
+      let closing = false;
       try {
-        const confirmed = await showAppConfirm('Permanently delete all data in the Invoke data folder, including saved keys, settings, conversations, tasks, unsaved managed worktrees, models, runtimes and browser data? The app will close and restart with setup required. External repositories, custom files and Agency account credentials are not deleted. This cannot be undone.', { heading: 'Clear all application data?', acceptLabel: 'Delete data and restart', danger: true });
+        const confirmed = await showAppConfirm('Permanently delete all data in the Invoke data folder, including saved keys, settings, conversations, tasks, unsaved managed worktrees, models, runtimes and browser data? The app will close. Reopen Invoke to set it up again. External repositories, custom files and Agency account credentials are not deleted. This cannot be undone.', { heading: 'Clear all application data?', acceptLabel: 'Delete data and close', danger: true });
         if (!confirmed) return;
         const result = await window.voiceSupervisorData.clear('DELETE_ALL_APP_DATA');
         if (!result.started) throw new Error(result.error || 'Data reset could not start.');
-        restarting = true;
+        closing = true;
         feedback.textContent = 'Closing Invoke and clearing application data...';
         return;
       } catch (error) {
         feedback.textContent = error.message;
       } finally {
-        clearData.disabled = restarting;
+        clearData.disabled = closing;
       }
     });
   }).catch(() => { feedback.textContent = 'Application data reset is unavailable.'; });
@@ -1729,7 +1746,10 @@ async function loadConfig(preserveSelection = false) {
     for (const [control, saved] of [[sttProvider, selection?.sttProvider], [ttsProvider, selection?.ttsProvider], [nativeProvider, selection?.nativeProvider]]) {
       if ([...control.options].some(option => option.value === saved)) control.value = saved;
     }
-    populateSettingsOptions();
+    if (!settingsDirty) {
+      populateSettingsOptions();
+      populateSettingsView();
+    }
     populateTaskModalOptions();
     populateIntegrationsTable();
     renderApplicationConfig();
@@ -2679,7 +2699,7 @@ btnNewTask.addEventListener('click', async () => {
   }
 
   if (taskBackendSelect) {
-    taskBackendSelect.value = appState.settings?.defaultBackend || appConfig?.defaults?.codingBackend || 'copilot';
+    taskBackendSelect.value = appState.settings?.defaultBackend || appConfig?.defaults?.codingBackend || 'agency';
   }
 
   taskObjectiveInput.value = '';
@@ -2703,7 +2723,7 @@ taskDialogClose.addEventListener('click', () => newTaskDialog.close());
 newTaskForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   const areaId = taskAreaSelect.value ? taskAreaSelect.value : undefined;
-  const backend = taskBackendSelect ? taskBackendSelect.value : (appState.settings?.defaultBackend || 'copilot');
+  const backend = taskBackendSelect ? taskBackendSelect.value : (appState.settings?.defaultBackend || 'agency');
   const objective = taskObjectiveInput.value.trim();
   const model = taskModelSelect ? taskModelSelect.value : (appState.settings?.copilotModel || 'gpt-5.6-sol');
   const context = taskContextSelect ? taskContextSelect.value : (appState.settings?.copilotContext || 'default');

@@ -6,13 +6,15 @@ This document holds operational detail that is useful to maintainers and distrib
 
 The desktop app stores configuration, task state, logs, models, runtimes, and caches under `%LOCALAPPDATA%\VoiceSupervisor` by default. Source runs can override the location with `SUPERVISOR_DATA_DIR`, `SUPERVISOR_CACHE_DIR`, and `SUPERVISOR_CONFIG_DIR`.
 
+Applied settings survive normal app restarts. Desktop appearance, sound, sidebar, and voice-route choices are saved immediately in `preferences.json` inside the application data folder, independently of the local server's changing port. Only known non-secret preference keys are accepted; provider keys/configuration and coding defaults keep their existing server-side storage. Browser-only use retains per-origin browser storage. Clear application data removes these preferences too; an ordinary restart does not. Agency is the fresh-install coding default, while an explicitly saved Copilot CLI choice is preserved.
+
 Use **Settings > Providers & keys** for supported provider, model, endpoint, default, and local-performance values. Secrets stay in the server process and are never returned to the browser. A source-only `.env` file remains available for automation and settings not exposed in the UI; never commit it.
 
-Provider changes apply to new sessions. Fields marked **Restart required** need an app restart, not a rebuild.
+Provider changes apply to new sessions. Settings prompts to save edited values when you leave; unchanged values are not resaved. Only saved changes that differ from the running configuration are marked **Restart to apply**.
 
 ### Clear Application Data
 
-In the installed desktop app, open **Settings > Application data > Clear application data**. Cancel is focused by default. **Delete data and restart** stops owned services, closes the app and removes `%LOCALAPPDATA%\VoiceSupervisor` before the new renderer starts. This removes saved keys/configuration, task history, managed worktrees including uncommitted changes, downloaded models/runtimes, setup receipts, logs, browser storage and update caches. Legacy temporary updater installers are removed too. The application remains installed and local setup requires fresh download consent.
+In the installed desktop app, open **Settings > Application data > Clear application data**. Cancel is focused by default. **Delete data and close** stops owned services, closes the app and removes `%LOCALAPPDATA%\VoiceSupervisor`. Reopen Invoke to set it up again; automatic restart is not guaranteed. This removes saved keys/configuration, task history, managed worktrees including uncommitted changes, downloaded models/runtimes, setup receipts, logs, browser storage and update caches. Legacy temporary updater installers are removed too. The application remains installed and local setup requires fresh download consent.
 
 External repositories and custom paths outside that data folder, source `.env`, system Python, Agency credentials/session storage and cloud-provider records are not removed. Directory links are not followed into external files. Source/browser runs cannot invoke desktop reset. If Windows prevents deletion, startup reports failure instead of claiming completion; close other processes holding the data folder and retry the reset launch. The reset marker is retained while contents are removed. External Git repositories may retain stale worktree registrations until `git worktree prune` is run in those repositories.
 
@@ -42,6 +44,10 @@ Windows releases share a pinned, hash-verified Python dependency pack:
 - **Online** downloads the same pack after consent.
 
 Both editions still download selected models and native runtimes. For an approved offline source, set `LOCAL_VOICE_PACK_FILE`; for an approved HTTPS mirror, set `LOCAL_VOICE_PACK_URL`. TLS, size, and SHA-256 checks remain mandatory. The app resumes interrupted downloads when the server supports ranges.
+
+Verified dependency packs install with Python's bundled `pip` and `--no-index --require-hashes`, without contacting PyPI. Managed Python bootstraps pip through `ensurepip`, also offline. This avoids uv 0.8.17 rejecting the large recompressed PyTorch wheel. uv still provisions managed Python; the pack format and verification are unchanged.
+
+Inactive calls have Off, 30s and 1 minute presets. Existing custom durations are retained. The timer pauses while speech or generation is active; there is no spoken presence check.
 
 Source-only downloads:
 
@@ -104,7 +110,7 @@ npm run agency:check
 
 ## Calls And Notifications
 
-Idle calls check in after 40 seconds and end after 60 seconds by default. Both values can be changed or automatic hang-up can be disabled. User speech and **Stay connected** reset the timer; active generation and playback are allowed to finish.
+Idle calls end after 60 seconds by default, without a presence check. Choose Off, 30s or 1 minute in Settings; existing custom durations are retained. User speech resets the timer; active generation and playback are allowed to finish.
 
 Task announcements are queued and deduplicated. Accepting an announcement marks its existing inbox entry read before acknowledging delivery, so reconnects and restarts cannot replay it. Busy sessions leave it unread. Acceptance is not proof that playback finished: interrupted announcements remain in the inbox but do not automatically replay. The inbox keeps the latest 100 heading-only updates across restarts; full answers stay in task details. Clear/read actions remove pending announcements for those entries. Quiet mode suppresses spoken announcements without deleting inbox history.
 

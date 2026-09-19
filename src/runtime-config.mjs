@@ -126,7 +126,7 @@ export function createRuntimeConfig({ dataDir, env = process.env } = {}) {
     }
   }
   const startupEnvironment = { ...env, WHISPER_LANGUAGE: env.WHISPER_LANGUAGE || 'auto', WHISPER_THREADS: env.WHISPER_THREADS || env.LOCAL_THREADS || localThreadDefault(8), CRISPASR_THREADS: env.CRISPASR_THREADS || env.LOCAL_THREADS || localThreadDefault(12), PYTHON_BIN: stackPaths(env).pythonBase || '' };
-  startupValues = Object.fromEntries(fields.filter(field => field.restartRequired).map(field => [field.key, startupEnvironment[field.key]]));
+  startupValues = Object.fromEntries(fields.filter(field => field.restartRequired).map(field => [field.key, startupEnvironment[field.key] || field.defaultValue || '']));
   return {
     snapshot,
     update(input) {

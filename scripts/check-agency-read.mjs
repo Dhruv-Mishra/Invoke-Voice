@@ -62,7 +62,7 @@ try {
   let completed = once(supervisor, 'notification');
   const receipt = await supervisor.callTool('start_work', {
     objective: 'Synthetic permission check. Only public Microsoft Learn content may be read.',
-    readOnly: true, model: 'gpt-4.1',
+    readOnly: true, model: 'default',
   }, { requestId: 'synthetic-read' });
   const queued = await supervisor.callTool('send_work_message', { taskId: receipt.taskId, message: 'Once done, if the prior result is READ_CHECK_OK, reply THREAD_RESUMED. Otherwise report the failure. Do not read sources.' }, { requestId: 'synthetic-resume' });
   assert.equal(queued.state, 'queued');

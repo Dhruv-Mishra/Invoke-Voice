@@ -92,7 +92,7 @@ async function startSttRuntime(config, env, signal) {
   const whisper = config.sttProvider === 'whisper';
   const name = whisper ? 'Whisper' : 'CrispASR';
   const executable = whisper ? config.pythonBin : config.crispasrBin;
-  const args = whisper ? ['-I', '-u', whisperWorker, '--model', config.whisperModelDir, '--threads', env.WHISPER_THREADS || env.LOCAL_THREADS || localThreadDefault(8), '--language', env.WHISPER_LANGUAGE || 'auto', '--silence-ms', env.WHISPER_END_SILENCE_MS || '650'] : localSttArguments(config, env);
+  const args = whisper ? ['-I', '-u', whisperWorker, '--model', config.whisperModelDir, '--threads', env.WHISPER_THREADS || env.LOCAL_THREADS || localThreadDefault(8), '--language', env.WHISPER_LANGUAGE || 'auto', '--silence-ms', env.WHISPER_END_SILENCE_MS || '1400'] : localSttArguments(config, env);
   const process = spawn(executable, args, { windowsHide: true, env: { ...env, HF_HUB_OFFLINE: '1', HF_HUB_DISABLE_TELEMETRY: '1' }, stdio: ['pipe', 'pipe', 'pipe'] });
   sttProcess = process;
   desktopLaunch.trackChild(process);
@@ -215,7 +215,7 @@ export function localConfiguration(env = process.env) {
 }
 
 export function localSttArguments(config, env = process.env) {
-  return ['--backend', 'moonshine-streaming', '-m', config.moonshineModel, '--cache-dir', path.dirname(config.moonshineTokenizer), '--stream', '--stream-json', '--vad', '--vad-model', config.vadModel, '--stream-step', env.CRISPASR_STREAM_STEP_MS || '500', '--stream-length', env.CRISPASR_STREAM_LENGTH_MS || '4000', '--stream-partial-decode-ms', env.CRISPASR_PARTIAL_DECODE_MS || '4000', '--stream-partial-tail-sec', env.CRISPASR_PARTIAL_TAIL_SEC || '4', '--stream-final-on-silence-ms', env.END_SILENCE_MS || '800', '--stream-final-mode', env.CRISPASR_FINAL_MODE || 'redecode', '-t', env.CRISPASR_THREADS || env.LOCAL_THREADS || localThreadDefault(12)];
+  return ['--backend', 'moonshine-streaming', '-m', config.moonshineModel, '--cache-dir', path.dirname(config.moonshineTokenizer), '--stream', '--stream-json', '--vad', '--vad-model', config.vadModel, '--stream-step', env.CRISPASR_STREAM_STEP_MS || '500', '--stream-length', env.CRISPASR_STREAM_LENGTH_MS || '4000', '--stream-partial-decode-ms', env.CRISPASR_PARTIAL_DECODE_MS || '4000', '--stream-partial-tail-sec', env.CRISPASR_PARTIAL_TAIL_SEC || '4', '--stream-final-on-silence-ms', env.END_SILENCE_MS || '1400', '--stream-final-mode', env.CRISPASR_FINAL_MODE || 'redecode', '-t', env.CRISPASR_THREADS || env.LOCAL_THREADS || localThreadDefault(12)];
 }
 
 export function createPcmWriter(stream, onError, { maxBytes = 32000 * 8, stallMs = 8000 } = {}) {
@@ -282,6 +282,7 @@ export function createSttWriter(stream, provider, onError) {
   const writer = createPcmWriter(stream, onError, whisper ? { maxBytes: 32000 * 8 * 2 } : undefined);
   const packet = event => writer.write(Buffer.from(`${JSON.stringify(event)}\n`));
   return {
+    begin() { if (whisper) packet({ type: 'begin' }); },
     write(pcm) { if (whisper) packet({ type: 'audio', data: pcm.toString('base64') }); else writer.write(pcm); },
     commit() { if (whisper) packet({ type: 'commit' }); else writer.write(Buffer.alloc(32000 * 2)); },
     dispose: writer.dispose,
@@ -389,7 +390,6 @@ export async function createLocalVoice({ send, callTool, provider = 'local', stt
     }
     for (const [responseId, response] of responses) {
       if (response.token !== interruptedToken) continue;
-      if (response.announcement) announcementQueue.unshift({ ...response.announcement, transcript: false });
       clearTimeout(response.playbackTimer);
       responses.delete(responseId);
     }
@@ -539,6 +539,7 @@ export async function createLocalVoice({ send, callTool, provider = 'local', stt
     }
     const onTranscription = event => {
       if (closed) return;
+      if (['partial', 'final'].includes(event.type) && event.utterance_id !== undefined && finalized.has(event.utterance_id)) return;
       if (event.type === 'error') {
         if (event.fatal !== false) return fail(event.message || 'Speech recognition failed');
         recognizing = false;
@@ -561,10 +562,6 @@ export async function createLocalVoice({ send, callTool, provider = 'local', stt
       const text = String(event.text || '').trim();
       if (event.type === 'final' && event.utterance_id === latestSpeechId) {
         recognizing = false;
-        if (finalized.has(event.utterance_id)) {
-          send({ type: 'state', state: 'listening' });
-          pumpAnnouncements();
-        }
       }
       if (event.type === 'partial' && text) {
         lastSpeechAt = Date.now();
@@ -603,6 +600,13 @@ export async function createLocalVoice({ send, callTool, provider = 'local', stt
     if (closed) throw new Error('Local voice startup was interrupted');
     send({ type: 'ready' });
     return {
+      begin() {
+        if (closed) return;
+        if (recognizing && latestSpeechId !== undefined) finalized.add(latestSpeechId);
+        recognizing = false;
+        interrupt();
+        pcmWriter.begin?.();
+      },
       audio(base64) {
         if (closed) return;
         pcmWriter.write(Buffer.from(base64, 'base64'));
@@ -610,6 +614,7 @@ export async function createLocalVoice({ send, callTool, provider = 'local', stt
       commit() { if (!closed) pcmWriter.commit(); },
       interrupt() {
         if (recognizing && latestSpeechId !== undefined) finalized.add(latestSpeechId);
+        recognizing = false;
         interrupt();
       },
       playbackDone(responseId) {

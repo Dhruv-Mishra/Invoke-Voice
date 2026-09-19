@@ -867,6 +867,7 @@ function startPttHold() {
   if (!isPttMode || isPttHeld) return;
   if (!voiceSocket || voiceSocket.readyState !== WebSocket.OPEN || !isServerReady) return;
   if (isMuted || pendingCommit) return;
+  voiceSocket.send(JSON.stringify({ type: 'input_start' }));
   workletNode?.port.postMessage({ type: 'reset' });
   isPttHeld = true;
   pttBtn.classList.add('btn-accent');

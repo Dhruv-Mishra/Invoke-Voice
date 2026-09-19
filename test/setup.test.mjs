@@ -38,7 +38,7 @@ test('local STT defaults to Moonshine Tiny streaming and Whisper remains optiona
   const args = localSttArguments(config, {});
   for (const flag of ['moonshine-streaming', '--stream', '--stream-json', '--vad']) assert.ok(args.includes(flag));
   assert.equal(args[args.indexOf('--stream-step') + 1], '500');
-  assert.equal(args[args.indexOf('--stream-final-on-silence-ms') + 1], '800');
+  assert.equal(args[args.indexOf('--stream-final-on-silence-ms') + 1], '1400');
 });
 
 test('saving unchanged defaults never requires restart and reverting a change clears it', context => {
@@ -1475,4 +1475,19 @@ test('saved configuration retains valid fields beside malformed values', context
   context.after(() => rmSync(malformedDirectory, { recursive: true, force: true }));
   writeFileSync(path.join(malformedDirectory, 'config.json'), '{');
   assert.match(createRuntimeConfig({ dataDir: malformedDirectory, env: {} }).snapshot().warnings[0], /file is invalid/);
+});
+
+test('speech pause and local model settings override legacy environment only after restart', context => {
+  const { directory } = fixture(context);
+  const env = { END_SILENCE_MS: '800', WHISPER_END_SILENCE_MS: '650', LOCAL_LLM_PATH: path.join(directory, 'old.gguf') };
+  const config = createRuntimeConfig({ dataDir: directory, env });
+  config.update({ values: { END_SILENCE_MS: '1400', WHISPER_END_SILENCE_MS: '1800', LOCAL_LLM_PATH: '' } });
+  assert.equal(env.END_SILENCE_MS, '800');
+  createRuntimeConfig({ dataDir: directory, env });
+  assert.equal(env.END_SILENCE_MS, '1400');
+  assert.equal(env.WHISPER_END_SILENCE_MS, '1800');
+  assert.equal(env.LOCAL_LLM_PATH, '');
+  assert.throws(() => config.update({ values: { WHISPER_END_SILENCE_MS: '0' } }), /integer/);
+  assert.throws(() => config.update({ values: { END_SILENCE_MS: '500' } }), /integer/);
+  assert.throws(() => config.update({ values: { LOCAL_LLM_PATH: 'relative.gguf' } }), /absolute/);
 });

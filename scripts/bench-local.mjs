@@ -78,6 +78,7 @@ async function json(url, body) {
 async function voiceTurn(env, name, messages, outcome) {
   const originalFetch = globalThis.fetch;
   const document = name.startsWith('document-');
+  const expectedAction = { delegate: 'start_work', delete: 'delete_work', followup: 'send_work_message' }[outcome];
   const status = {
     taskId: 'synthetic-task', title: document ? 'Onboarding document' : 'Synthetic login fix', state: 'result_ready',
     result: document ? 'The document draft is ready for review.' : 'The synthetic login fix is complete and its tests passed.',
@@ -95,7 +96,7 @@ async function voiceTurn(env, name, messages, outcome) {
     const round = { inputMessages: body.messages.length };
     rounds.push(round);
     const roundStart = performance.now();
-    const response = await originalFetch(url, { ...init, body: JSON.stringify({ ...body, seed: 42, stream_options: { include_usage: true } }) });
+    const response = await originalFetch(url, { ...init, body: JSON.stringify({ ...body, chat_template_kwargs: { enable_thinking: false }, temperature: 0.2, seed: Number(env.BENCH_SEED || 42), stream_options: { include_usage: true } }) });
     const copy = response.clone();
     pending.push((async () => {
       const reader = createInterface({ input: (await import('node:stream')).Readable.fromWeb(copy.body) });
@@ -113,7 +114,7 @@ async function voiceTurn(env, name, messages, outcome) {
     return response;
   };
   try {
-    for await (const event of streamReply({ provider: 'local', profile: 'voice', env, messages, requestId: `synthetic-${name}`, signal: deadline,
+    for await (const event of streamReply({ provider: env.BENCH_NATIVE === '1' ? 'custom' : 'local', profile: 'voice', env: { ...env, CUSTOM_BASE_URL: env.LOCAL_LLM_URL, CUSTOM_MODEL: env.LOCAL_LLM_MODEL || 'ling-local', CUSTOM_API_KEY: '' }, messages, requestId: `synthetic-${name}`, signal: deadline,
       callTool: async (tool, args) => {
         calls.push({ tool, args, atMs: rounded(performance.now() - started) });
         if (tool === 'list_work') {
@@ -123,6 +124,10 @@ async function voiceTurn(env, name, messages, outcome) {
           return args.query === undefined ? { tasks: [{ id: status.taskId, title: status.title, state: status.state }] } : { tasks: [status], hasMore: false };
         }
         if (tool === 'get_work_status') return args.taskId === status.taskId ? status : { error: 'Unknown synthetic task.' };
+        if (tool === expectedAction) {
+          if (outcome !== 'delegate' && args.taskId !== status.taskId) return { error: 'Unknown synthetic task.' };
+          return outcome === 'delete' ? { taskId: args.taskId, title: status.title, deleted: true } : { taskId: status.taskId, title: outcome === 'delegate' ? 'JavaScript Map research' : status.title, state: 'dispatching' };
+        }
         return { error: 'Benchmark refuses all work mutations.' };
       },
     })) {
@@ -139,8 +144,10 @@ async function voiceTurn(env, name, messages, outcome) {
   const listIndex = calls.findIndex(call => call.tool === 'list_work');
   const statusIndex = calls.findIndex(call => call.tool === 'get_work_status' && call.args.taskId === 'synthetic-task');
   const queried = calls.some(call => call.tool === 'list_work' && typeof call.args.query === 'string' && call.args.query.trim());
-  const passiveReadContract = listIndex >= 0 && calls.every(call => ['list_work', 'get_work_status'].includes(call.tool)) &&
-    (outcome === 'status' ? queried || statusIndex > listIndex : calls.every(call => call.tool === 'list_work'));
+  const passiveReadContract = outcome === 'conversation' ? calls.length === 0 : expectedAction
+    ? calls.filter(call => call.tool === expectedAction).length === 1 && calls.every(call => ['list_work', expectedAction].includes(call.tool)) && (outcome === 'delegate' ? calls.find(call => call.tool === expectedAction)?.args.readOnly === true : calls.find(call => call.tool === expectedAction)?.args.taskId === status.taskId)
+    : listIndex >= 0 && calls.every(call => ['list_work', 'get_work_status'].includes(call.tool)) &&
+      (outcome === 'status' ? queried || statusIndex > listIndex : calls.every(call => call.tool === 'list_work'));
   const spokenContract = !/synthetic-(task|other)|list_work|get_work_status|start_work|send_work_message|result_ready|<think>|```/i.test(text);
   const searchContract = !document || (queried && (outcome === 'status' ? calls.length === 1 : /\?/.test(text)));
   const completed = !error && Boolean(text.trim()) && rounds.every(round => round.finishReason === 'stop' || round.finishReason === 'tool_calls');
@@ -207,6 +214,10 @@ async function benchLlm(baseEnv, selected) {
       await voiceTurn(env, 'document-unique', documentQuestion, 'status');
       await voiceTurn(env, 'document-ambiguous', documentQuestion, 'ambiguous');
       await voiceTurn(env, 'document-missing', documentQuestion, 'empty');
+      await voiceTurn(env, 'conversation', [{ role: 'user', content: 'Hello, how are you?' }], 'conversation');
+      await voiceTurn(env, 'read-delegation', [{ role: 'user', content: 'Ask Agency to look up the JavaScript Map API in Microsoft Learn. Read-only; do not change anything.' }], 'delegate');
+      await voiceTurn(env, 'delete-by-subject', [{ role: 'user', content: 'Delete the task about the login fix, keeping its files.' }], 'delete');
+      await voiceTurn(env, 'worker-followup', [{ role: 'user', content: 'Send the worker for task synthetic-task this new instruction: run the tests again and report the result.' }], 'followup');
     } catch (error) {
       output({ kind: 'llm-error', case: candidate.name, error: error.message });
       process.exitCode = 1;
@@ -237,7 +248,7 @@ async function speech(env, text) {
 async function benchWhisper(env, selectedSample) {
   const config = localConfiguration({ ...env, LOCAL_STT_PROVIDER: 'whisper' });
   if (!existsSync(path.join(config.whisperModelDir, 'model.bin'))) throw new Error('Whisper model is missing. Install it in Settings before benchmarking.');
-  const args = ['-I', '-u', fileURLToPath(new URL('./whisper_worker.py', import.meta.url)), '--model', config.whisperModelDir, '--language', env.WHISPER_LANGUAGE || 'auto', '--threads', env.WHISPER_THREADS || '8', '--silence-ms', env.WHISPER_END_SILENCE_MS || '650'];
+  const args = ['-I', '-u', fileURLToPath(new URL('./whisper_worker.py', import.meta.url)), '--model', config.whisperModelDir, '--language', env.WHISPER_LANGUAGE || 'auto', '--threads', env.WHISPER_THREADS || '8', '--silence-ms', env.WHISPER_END_SILENCE_MS || '1400'];
   const child = childProcess(config.pythonBin, args, { ...env, HF_HUB_OFFLINE: '1', HF_HUB_DISABLE_TELEMETRY: '1' });
   const reader = createInterface({ input: child.stdout });
   let diagnostic = '';
@@ -275,15 +286,16 @@ async function benchWhisper(env, selectedSample) {
   try {
     const loading = performance.now();
     const ready = await waitEvent('ready');
-    if (ready.compute_type !== 'int8') throw new Error('Whisper did not initialize INT8 inference.');
+    if (!['int8', 'int8_float32'].includes(ready.compute_type)) throw new Error('Whisper did not initialize INT8 inference.');
     output({ kind: 'stt-runtime', provider: 'whisper', loadMs: rounded(ready.wallMs - loading), computeType: ready.compute_type, args });
     for (const sample of samples.filter(item => !selectedSample || item.name === selectedSample)) {
       const pcm = await speech(env, sample.text);
       for (const mode of ['commit', 'hands-free']) {
         const final = waitEvent('final');
         final.catch(() => {});
+        if (mode === 'commit') writer.begin();
         const started = performance.now();
-        const audio = mode === 'commit' ? pcm : Buffer.concat([pcm, Buffer.alloc(32000)]);
+        const audio = mode === 'commit' ? pcm : Buffer.concat([pcm, Buffer.alloc(32000 * 4)]);
         for (let offset = 0; offset < audio.length; offset += 640) {
           deadline.throwIfAborted();
           if (workerError) throw new Error(workerError);

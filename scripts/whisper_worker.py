@@ -14,7 +14,7 @@ MAX_SAMPLES = SAMPLE_RATE * 55
 
 
 class SpeechSegmenter:
-    def __init__(self, probability, submit, emit, silence_ms=650):
+    def __init__(self, probability, submit, emit, silence_ms=1400):
         self.probability = probability
         self.submit = submit
         self.emit = emit
@@ -28,6 +28,7 @@ class SpeechSegmenter:
         self.silent_samples = 0
         self.overlong = False
         self.start_sample = 0
+        self.manual = False
 
     def feed(self, pcm):
         if len(pcm) % 2:
@@ -45,7 +46,7 @@ class SpeechSegmenter:
         speaking = probability >= (0.35 if self.audio is not None or self.overlong else 0.5)
         self.silent_samples = 0 if speaking else self.silent_samples + FRAME_SAMPLES
         if self.overlong:
-            if self.silent_samples >= self.silence_samples:
+            if not self.manual and self.silent_samples >= self.silence_samples:
                 self.finish()
             return
         if self.audio is None:
@@ -64,7 +65,7 @@ class SpeechSegmenter:
             self.audio = None
             self.overlong = True
             self.emit({'type': 'error', 'message': 'Long utterance reached the STT cap. Please repeat a shorter complete request.', 'fatal': False})
-        elif self.silent_samples >= self.silence_samples:
+        elif not self.manual and self.silent_samples >= self.silence_samples:
             self.finish()
 
     def finish(self):
@@ -87,12 +88,18 @@ class SpeechSegmenter:
         self.overlong = False
         self.preroll.clear()
 
+    def begin(self):
+        self.clear()
+        self.pending.clear()
+        self.manual = True
+
     def commit(self):
         if self.pending:
             frame = bytes(self.pending).ljust(FRAME_BYTES, b'\0')
             self.pending.clear()
             self.process(frame)
         self.finish()
+        self.manual = False
 
 
 def run():
@@ -100,9 +107,9 @@ def run():
     parser.add_argument('--model', required=True)
     parser.add_argument('--threads', type=int, default=8)
     parser.add_argument('--language', default='auto')
-    parser.add_argument('--silence-ms', type=int, default=650)
+    parser.add_argument('--silence-ms', type=int, default=1400)
     args = parser.parse_args()
-    if not 1 <= args.threads <= 128 or not 200 <= args.silence_ms <= 2000:
+    if not 1 <= args.threads <= 128 or not 200 <= args.silence_ms <= 3000:
         raise ValueError('Invalid Whisper thread count or silence threshold')
 
     import numpy as np
@@ -169,7 +176,9 @@ def run():
             if len(line) > 45000 or not line.endswith(b'\n'):
                 raise ValueError('Whisper input frame exceeded its limit')
             event = json.loads(line)
-            if event.get('type') == 'commit':
+            if event.get('type') == 'begin':
+                segmenter.begin()
+            elif event.get('type') == 'commit':
                 segmenter.commit()
             elif event.get('type') == 'audio':
                 pcm = base64.b64decode(event['data'], validate=True)

@@ -297,6 +297,12 @@ test('fresh installs persist an editable private workspace and omitted work opti
     assert.throws(() => supervisor.deleteArea(area.id), /Delete this area's tasks first/);
     await supervisor.registerArea({ ...area, name: 'Personal workspace', agent: 'builder', baseRef: 'main', instructions: 'Keep changes local.' });
     supervisor.updateSettings({ defaultAreaId: null, copilotModel: 'chosen-model', copilotContext: 'long_context' });
+    await supervisor.callTool('invoke_vscode', { prompt: 'Default model note', model: 'default' }, { requestId: 'sentinel-note' });
+    assert.equal(invocation.model, 'chosen-model');
+    const defaultReceipt = await supervisor.callTool('start_work', { objective: 'Default model dispatch', model: ' Default ', readOnly: true }, { requestId: 'sentinel-work' });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(supervisor.status(defaultReceipt.taskId).state, 'result_ready');
+    assert.equal(dispatched.task.model, 'chosen-model');
     const restored = new Supervisor({ dataDir, bridge });
     assert.equal(restored.resolveArea().name, 'Personal workspace');
     assert.equal(restored.resolveArea().agent, 'builder');

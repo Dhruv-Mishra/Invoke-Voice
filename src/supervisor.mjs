@@ -386,7 +386,7 @@ export class Supervisor extends EventEmitter {
     if (name === 'invoke_vscode') {
       const area = this.resolveArea(args.areaId);
       const prompt = requiredText(args.prompt, 'prompt');
-      const model = requiredText(args.model || this.state.settings.copilotModel, 'model', 100);
+      const model = requiredText((typeof args.model === 'string' && args.model.trim().toLowerCase() === 'default' ? '' : args.model) || this.state.settings.copilotModel, 'model', 100);
       const selectedContext = args.context || this.state.settings.copilotContext;
       if (!CONTEXTS.includes(selectedContext)) throw new Error('Invalid context tier');
       const requestId = requiredText(context.requestId, 'request ID', 200);
@@ -400,7 +400,7 @@ export class Supervisor extends EventEmitter {
     const backend = args.backend || (readOnly ? 'agency' : this.state.settings.defaultBackend);
     if (!BACKENDS.includes(backend)) throw new Error('Invalid coding backend');
     if (readOnly && backend !== 'agency') throw new Error('Read-only tasks require Agency');
-    const model = requiredText(args.model || this.state.settings.copilotModel, 'model', 100);
+    const model = requiredText((typeof args.model === 'string' && args.model.trim().toLowerCase() === 'default' ? '' : args.model) || this.state.settings.copilotModel, 'model', 100);
     const agent = requiredText(readOnly ? 'agent' : (args.agent || area.agent || DEFAULT_WORK_AREA.agent), 'agent', 100);
     if (!/^[\w ./-]+$/.test(agent)) throw new Error('Invalid agent');
     const selectedContext = args.context || this.state.settings.copilotContext;

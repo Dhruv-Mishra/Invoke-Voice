@@ -118,6 +118,40 @@ test('voice tool bridge ends calls locally and delegates supervisor tools', asyn
   assert.deepEqual(calls, [{ name: 'list_work', args: { query: 'docs' }, context: { requestId: 'voice-list' } }]);
 });
 
+test('voice transport preserves push-to-talk begin, audio and release order', async context => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-input-boundary-'));
+  const supervisor = new Supervisor({ dataDir, bridge: {} });
+  supervisor.updateSettings({ greetOnConnect: false });
+  const input = [];
+  const app = await startSupervisor({ dataDir, port: 0, prewarm: false, supervisor,
+    createRealtimeVoice: async ({ send }) => {
+      send({ type: 'ready' });
+      return {
+        close() {},
+        begin() { input.push('begin'); },
+        audio(data) { input.push(data); },
+        commit() { input.push('commit'); send({ type: 'input_received' }); },
+      };
+    },
+  });
+  const socket = new WebSocket(`${app.url.replace('http:', 'ws:')}/voice`);
+  context.after(async () => {
+    socket.terminate();
+    await app.close();
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+  await once(socket, 'open');
+  const ready = once(socket, 'message');
+  socket.send(JSON.stringify({ type: 'start', mode: 'openai-realtime' }));
+  assert.equal(JSON.parse((await ready)[0]).type, 'ready');
+  const received = once(socket, 'message');
+  socket.send(JSON.stringify({ type: 'input_start' }));
+  socket.send(JSON.stringify({ type: 'audio', data: 'AAA=' }));
+  socket.send(JSON.stringify({ type: 'commit' }));
+  assert.equal(JSON.parse((await received)[0]).type, 'input_received');
+  assert.deepEqual(input, ['begin', 'AAA=', 'commit']);
+});
+
 test('local runtime defaults match displayed settings and honor explicit overrides', () => {
   const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-runtime-defaults-'));
   try {

@@ -7,7 +7,7 @@ const choice = (description, values) => ({ type: 'string', ...(description ? { d
 export const supervisorTools = [
   definition('list_work', 'Find tasks by subject; omit query for latest/recent tasks and areas.', { query: text('Subject keywords only; max 200 characters') }),
   definition('start_work', 'Delegate work; returns taskId.', { areaId: text(), objective: text('Request and constraints'), readOnly: { type: 'boolean', description: 'External questions; no changes' }, backend: choice('', ['copilot', 'agency']), model: text(), agent: text(), context: choice('', ['default', 'long_context']) }, ['objective']),
-  definition('send_work_message', 'Resume or queue FIFO in the same session; evaluate conditions there. Failure/restart pauses queue.', { taskId: text(), message: text() }, ['taskId', 'message']),
+  definition('send_work_message', 'User-requested follow-up to existing worker; never a reply to user. Queues FIFO.', { taskId: text(), message: text() }, ['taskId', 'message']),
   definition('get_work_status', 'Read state, actions, and outcome.', { taskId: text() }, ['taskId']),
   definition('cancel_work', 'Stop a task and discard queued follow-ups; prior changes remain.', { taskId: text() }, ['taskId']),
   definition('open_work', 'Open when status actions allow it.', { taskId: text() }, ['taskId']),

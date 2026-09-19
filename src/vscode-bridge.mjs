@@ -57,7 +57,7 @@ export function sessionLaunch(task, area, env = process.env, { resume = false, m
     '--no-ask-user',
     '--output-format', 'json',
     '--stream', 'on',
-    '--model', task.model,
+    ...(task.model?.trim() && task.model.trim().toLowerCase() !== 'default' ? ['--model', task.model.trim()] : []),
     '--reasoning-effort', task.readOnly ? 'low' : env.COPILOT_REASONING || 'medium',
     '--context', task.context,
   ];

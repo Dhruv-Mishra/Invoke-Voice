@@ -44,7 +44,7 @@ class SegmenterTest(unittest.TestCase):
 
     def test_hands_free_endpoint_has_padding_and_no_duplicate_commit(self):
         self.segmenter.feed(self.speech * 30)
-        self.segmenter.feed(self.silence * 20)
+        self.segmenter.feed(self.silence * 43)
         self.assertEqual(self.jobs, [])
         self.segmenter.feed(self.silence)
         self.assertEqual(len(self.jobs), 1)
@@ -52,6 +52,28 @@ class SegmenterTest(unittest.TestCase):
         self.assertEqual(len(self.jobs[0]['audio']), len(self.speech) * 30 + 5120)
         self.segmenter.commit()
         self.assertEqual(len(self.jobs), 1)
+
+    def test_one_second_mid_sentence_pause_does_not_dispatch(self):
+        self.segmenter.feed(self.speech * 30)
+        self.segmenter.feed(self.silence * 32)
+        self.assertEqual(self.jobs, [])
+        self.segmenter.feed(self.speech * 30)
+        self.segmenter.feed(self.silence * 44)
+        self.assertEqual(len(self.jobs), 1)
+        self.assertIn(self.speech * 30 + self.silence * 32 + self.speech * 30, self.jobs[0]['audio'])
+
+    def test_push_to_talk_waits_for_release_across_long_pauses(self):
+        self.segmenter.begin()
+        audio = self.speech * 30 + self.silence * 100 + self.speech * 30
+        self.segmenter.feed(audio)
+        self.assertEqual(self.jobs, [])
+        self.segmenter.commit()
+        self.assertEqual(len(self.jobs), 1)
+        self.assertEqual(self.jobs[0]['audio'], audio)
+        self.segmenter.commit()
+        self.assertEqual(len(self.jobs), 1)
+        self.segmenter.feed(self.speech * 30 + self.silence * 44)
+        self.assertEqual(len(self.jobs), 2)
 
     def test_clicks_and_overlong_speech_never_dispatch_truncated_commands(self):
         self.segmenter.feed(self.speech)

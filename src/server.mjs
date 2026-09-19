@@ -314,6 +314,7 @@ export async function startSupervisor(options = {}) {
           if (cancelled || socket.readyState !== 1) { session.close(); if (voiceOwner === socket) voiceOwner = null; }
           else if (supervisor.snapshot().settings.greetOnConnect !== false) session.notify('Hello. What would you like to do?', `greeting-${randomUUID()}`);
         } else if (message.type === 'stop') { session?.close(); socket.close(); }
+        else if (message.type === 'input_start') session?.begin?.();
         else if (message.type === 'audio') {
           if (typeof message.data !== 'string' || message.data.length > 40000 || Buffer.from(message.data, 'base64').length % 2) throw new Error('Invalid PCM frame');
           session?.audio(message.data);

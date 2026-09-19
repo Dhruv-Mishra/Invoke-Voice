@@ -20,7 +20,7 @@ import { createRuntimeConfig } from '../src/runtime-config.mjs';
 
 function localSSE(delta, local = true) {
   const value = delta.tool_calls
-    ? { calls: delta.tool_calls.map(call => ({ name: call.function.name, arguments: JSON.parse(call.function.arguments) })) }
+    ? { intent: delta.intent || (delta.tool_calls.every(call => ['list_work', 'get_work_status'].includes(call.function.name)) ? 'read' : 'change'), calls: delta.tool_calls.map(call => ({ name: call.function.name, arguments: JSON.parse(call.function.arguments) })) }
     : { answer: delta.content };
   return `data: ${JSON.stringify({ choices: [{ delta: local ? { content: JSON.stringify(value) } : delta, finish_reason: !local && delta.tool_calls ? 'tool_calls' : 'stop' }] })}\n\ndata: [DONE]\n\n`;
 }
@@ -146,11 +146,12 @@ test('Whisper writes bounded JSON audio and explicit commits while Moonshine ret
     const errors = [];
     const writer = createSttWriter(stream, provider, error => errors.push(error));
     const audio = Buffer.from([1, 2, 3, 4]);
+    writer.begin();
     writer.write(audio);
     writer.commit();
     if (provider === 'whisper') {
       assert.deepEqual(Buffer.concat(chunks).toString().trim().split('\n').map(line => JSON.parse(line)), [
-        { type: 'audio', data: audio.toString('base64') }, { type: 'commit' },
+        { type: 'begin' }, { type: 'audio', data: audio.toString('base64') }, { type: 'commit' },
       ]);
     } else assert.deepEqual(Buffer.concat(chunks), Buffer.concat([audio, Buffer.alloc(64000)]));
     assert.deepEqual(errors, []);
@@ -337,7 +338,7 @@ test('bounds STT partial work and redecodes full finals with explicit overrides 
   assert.ok(Number(value('--stream-length')) >= 2000 + Number(value('--stream-final-on-silence-ms')) + Number(value('--stream-step')));
   assert.equal(value('--stream-partial-decode-ms'), '4000');
   assert.equal(value('--stream-partial-tail-sec'), '4');
-  assert.equal(value('--stream-final-on-silence-ms'), '800');
+  assert.equal(value('--stream-final-on-silence-ms'), '1400');
   assert.ok(Number(value('--stream-final-on-silence-ms')) > Number(value('--stream-step')));
   assert.equal(value('--stream-final-mode'), 'redecode');
   assert.equal(value('--backend'), 'moonshine-streaming');
@@ -445,7 +446,7 @@ test('local context slides history on every round without splitting tool exchang
     requests.push(JSON.parse(text));
     const round = requests.length;
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
-    const delta = round < 4 ? { tool_calls: [{ index: 0, id: `call-${round}`, function: { name: round === 1 ? 'list_work' : 'get_work_status', arguments: round === 1 ? '{}' : '{"taskId":"task-24"}' } }] } : { content: 'The latest task is running.' };
+    const delta = round < 4 ? { intent: 'change', tool_calls: [{ index: 0, id: `call-${round}`, function: { name: round === 1 ? 'list_work' : 'get_work_status', arguments: round === 1 ? '{}' : '{"taskId":"task-24"}' } }] } : { content: 'The latest task is running.' };
     res.end(localSSE(delta));
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -465,7 +466,8 @@ test('local context slides history on every round without splitting tool exchang
     })) events.push(event);
     assert.equal(requests.length, 5);
     for (const request of requests.slice(0, -1)) {
-      assert.deepEqual(request.messages.filter(message => message.role === 'system'), [{ role: 'system', content: localInstructions(themedInstructions(voiceInstructions, ''), voiceTools) }]);
+      const instructions = themedInstructions(voiceInstructions, '') + (request.response_format.json_schema.schema.properties?.answer ? ' Tool budget reached. Answer now using the tool results. State what succeeded and what remains unfinished; do not claim unconfirmed actions or request more tools.' : '');
+      assert.deepEqual(request.messages.filter(message => message.role === 'system'), [{ role: 'system', content: localInstructions(instructions, voiceTools) }]);
       const estimated = Math.ceil(Buffer.byteLength(JSON.stringify({ tools: request.tools, messages: request.messages })) / 3) + request.messages.length * 16;
       assert.ok(estimated + request.max_tokens + 256 <= 4096);
       assert.deepEqual(request.messages.filter(message => message.role === 'user'), [{ role: 'user', content: latest }]);
@@ -515,7 +517,7 @@ test('local final requests retain mutation receipts and multiple task statuses u
       requests.push(JSON.parse(text));
       const step = scenario.steps[requests.length - 1];
       const delta = step
-        ? { tool_calls: [{ index: 0, id: `call-${requests.length}`, function: { name: step.name, arguments: JSON.stringify(step.args) } }] }
+        ? { intent: 'change', tool_calls: [{ index: 0, id: `call-${requests.length}`, function: { name: step.name, arguments: JSON.stringify(step.args) } }] }
         : { content: 'Status received.' };
       res.writeHead(200, { 'Content-Type': 'text/event-stream' });
       res.end(localSSE(delta));
@@ -682,9 +684,9 @@ test('local and hybrid voice execute tools before playback and retain real answe
       for await (const chunk of req) text += chunk;
       requests.push(JSON.parse(text));
       const round = requests.length;
-      const name = (provider === 'local' ? [2, 6, 10] : [2, 5, 8]).includes(round) ? 'list_work' : (provider === 'local' ? [3, 7] : [3, 6]).includes(round) ? 'get_work_status' : null;
+      const name = [2, 5, 8].includes(round) ? 'list_work' : [3, 6].includes(round) ? 'get_work_status' : null;
       const delta = name ? { tool_calls: [{ index: 0, id: `call-${round}`, function: { name, arguments: name === 'list_work' ? '{}' : '{"taskId":"task-new"}' } }] }
-        : { content: round === 1 ? 'I cannot access tasks.' : round === 4 || (provider === 'local' && round === 5) ? 'The newest task passed its tests.' : 'The newest task is still complete.' };
+        : { content: round === 1 ? 'I cannot access tasks.' : round === 4 ? 'The newest task passed its tests.' : 'The newest task is still complete.' };
       res.writeHead(200, { 'Content-Type': 'text/event-stream' });
       res.end(localSSE(delta, provider === 'local'));
     });
@@ -744,7 +746,7 @@ test('local and hybrid voice execute tools before playback and retain real answe
       send(event) { events.push(event); bus.emit('event', event); },
       callTool: async (name, args) => {
         calls.push({ name, args });
-        if (requests.length === (provider === 'local' ? 10 : 8)) {
+        if (requests.length === 8) {
           markToolStarted();
           return new Promise(resolve => { releaseTool = resolve; });
         }
@@ -789,7 +791,10 @@ test('local and hybrid voice execute tools before playback and retain real answe
       const ending = waitFor(event => event.type === 'response_end');
       if (whisper) speechEvent('speech_start', index);
       utterance(text, index);
-      if (whisper) utterance(text, index);
+      const deliveredEvents = events.length;
+      utterance(text, index);
+      stt.stdout.write(`${JSON.stringify({ type: 'partial', text, utterance_id: index })}\n`);
+      assert.equal(events.length, deliveredEvents, 'late partials and duplicate finals cannot interrupt an accepted turn');
       const ended = await ending;
       assert.equal(ended.playable, true);
       const final = events.findLast(event => event.type === 'transcript' && event.role === 'assistant' && event.partial === false);
@@ -801,7 +806,7 @@ test('local and hybrid voice execute tools before playback and retain real answe
       session.playbackDone('unrelated-response', 'played');
       session.playbackDone(ended.responseId, index === 1 ? 'failed' : 'played');
     }
-    assert.equal(requests.length, provider === 'local' ? 9 : 7);
+    assert.equal(requests.length, 7);
     for (const request of requests) {
       if (request.response_format?.json_schema.schema.properties?.answer) continue;
       if (provider === 'local') assert.ok(request.response_format.json_schema.schema.oneOf);
@@ -811,7 +816,7 @@ test('local and hybrid voice execute tools before playback and retain real answe
     assert.match(requests[1].messages[0].content, /Read fresh status, not chat history/);
     assert.match(requests[1].messages[0].content, /list_work\(query\).*get_work_status/);
     assert.ok(requests[1].messages.some(message => message.role === 'assistant' && message.content === answers[0]));
-    assert.ok(requests[provider === 'local' ? 5 : 4].messages.some(message => message.role === 'assistant' && message.content === answers[1]));
+    assert.ok(requests[4].messages.some(message => message.role === 'assistant' && message.content === answers[1]));
     assert.deepEqual(calls.map(call => call.name), ['list_work', 'get_work_status', 'list_work', 'get_work_status']);
     assert.equal(events.filter(event => event.type === 'tool').length, 4);
     const toolEventCount = events.filter(event => event.type === 'tool').length;
@@ -821,7 +826,7 @@ test('local and hybrid voice execute tools before playback and retain real answe
     session.interrupt();
     releaseTool({ tasks: [] });
     await new Promise(setImmediate);
-    assert.equal(requests.length, provider === 'local' ? 10 : 8);
+    assert.equal(requests.length, 8);
     assert.equal(events.filter(event => event.type === 'tool').length, toolEventCount);
     assert.ok(events.some(event => event.type === 'interrupted'));
     const announcement = waitFor(event => event.type === 'response_end');
@@ -834,9 +839,12 @@ test('local and hybrid voice execute tools before playback and retain real answe
     assert.equal(session.notify('Third task finished.', 'notification-3'), true);
     assert.equal(spoken.length, spokenBeforeQueue, 'completions wait for current playback');
     const secondAnnouncement = waitFor(event => event.type === 'response_end');
+    session.interrupt();
     session.playbackDone(announced.responseId, 'played');
+    session.notify('A task finished.', 'notification-1');
     const secondAnnounced = await secondAnnouncement;
     assert.match(spoken.at(-1).text, /Second task/);
+    assert.equal(spoken.filter(phrase => phrase.text === 'A task finished.').length, 1, 'interrupted announcements are never replayed');
     const thirdAnnouncement = waitFor(event => event.type === 'response_end');
     session.playbackDone(secondAnnounced.responseId, 'played');
     const thirdAnnounced = await thirdAnnouncement;
@@ -851,7 +859,7 @@ test('local and hybrid voice execute tools before playback and retain real answe
       assert.match(events.at(-1).message, /superseded/);
       session.interrupt();
       utterance('Cancelled command.', 6);
-      assert.equal(requests.length, provider === 'local' ? 10 : 8, 'superseded or explicitly interrupted transcripts must not execute');
+      assert.equal(requests.length, 8, 'superseded or explicitly interrupted transcripts must not execute');
       context.mock.timers.enable({ apis: ['Date'], now: Date.now() });
       context.mock.timers.tick(1000);
       const ending = waitFor(event => event.type === 'response_end');
@@ -904,8 +912,10 @@ test('task reads preserve empty and failed status evidence without mutations', a
         env: { LOCAL_LLM_URL: `http://127.0.0.1:${server.address().port}/v1` },
       })) events.push(event);
       assert.deepEqual(calls, statusRead ? ['list_work', 'get_work_status'] : ['list_work']);
-      const result = JSON.parse(requests.at(-2).messages.at(-1).content);
+      const result = events.filter(event => event.type === 'tool').at(-1).result;
       assert.deepEqual(result, scenario.startsWith('failed') ? { error: 'State unavailable' } : statusRead ? {} : { tasks: [] });
+      assert.equal(requests.length, statusRead ? 3 : 2);
+      assert.ok(requests.at(-1).response_format.json_schema.schema.properties.answer);
       assert.equal(events.filter(event => event.type === 'text').map(event => event.text).join(''), answer);
       assert.equal(events.at(-1).type, 'done');
     } finally { await new Promise(resolve => server.close(resolve)); }
@@ -937,15 +947,15 @@ test('multiple action rounds publish only the final receipt-backed response with
   assert.equal(events.at(-1).type, 'done');
 });
 
-test('tool budget permits longer chains and reserves a tool-disabled answer', async context => {
-  for (const toolRounds of [4, 8]) {
+test('local tool budget bounds chains and reserves a tool-disabled answer', async context => {
+  for (const toolRounds of [2, 3]) {
     const requests = [];
     const executed = [];
     context.mock.method(globalThis, 'fetch', async (_url, options) => {
       const body = JSON.parse(options.body);
       requests.push(body);
       const round = requests.length;
-      const delta = round <= toolRounds ? { tool_calls: [{ index: 0, id: `status-${round}`, function: { name: 'get_work_status', arguments: JSON.stringify({ taskId: `task-${round}` }) } }] } : { content: 'The checked tasks are running; other tasks remain unchecked.' };
+      const delta = round <= toolRounds ? { intent: 'change', tool_calls: [{ index: 0, id: `status-${round}`, function: { name: 'get_work_status', arguments: JSON.stringify({ taskId: `task-${round}` }) } }] } : { content: 'The checked tasks are running; other tasks remain unchecked.' };
       return new Response(localSSE(delta));
     });
     const events = [];
@@ -956,9 +966,9 @@ test('tool budget permits longer chains and reserves a tool-disabled answer', as
     })) events.push(event);
     assert.equal(executed.length, toolRounds);
     assert.equal(requests.length, toolRounds + 2);
-    assert.equal(Boolean(requests.at(-2).response_format.json_schema.schema.properties?.answer), toolRounds === 8);
+    assert.equal(Boolean(requests.at(-2).response_format.json_schema.schema.properties?.answer), toolRounds === 3);
     assert.equal(requests.at(-2).messages.filter(message => message.role === 'tool').length, toolRounds);
-    if (toolRounds === 8) assert.match(requests.at(-2).messages[0].content, /what remains unfinished/);
+    if (toolRounds === 3) assert.match(requests.at(-2).messages[0].content, /what remains unfinished/);
     assert.equal(events.at(-1).type, 'done');
     context.mock.restoreAll();
   }
@@ -974,7 +984,27 @@ test('tool budget never executes calls from the final answer turn', async contex
       callTool: async () => { executed++; return { tasks: [] }; },
     })) assert.notEqual(event.type, 'done');
   }, /budget ended/);
-  assert.equal(executed, 8);
+  assert.equal(executed, 1);
+});
+
+test('local call budget is enforced across parallel batches before dispatch', async context => {
+  let executed = 0;
+  const requests = [];
+  context.mock.method(globalThis, 'fetch', async (_url, options) => {
+    const body = JSON.parse(options.body);
+    requests.push(body);
+    const delta = requests.length === 1 ? { tool_calls: Array.from({ length: 8 }, (_, index) => ({ index, function: { name: 'get_work_status', arguments: JSON.stringify({ taskId: `task-${index}` }) } })) } : { content: 'Six checked; two remain unchecked.' };
+    return new Response(localSSE(delta));
+  });
+  const events = [];
+  for await (const event of streamReply({ provider: 'local', messages: [{ role: 'user', content: 'Check these tasks.' }],
+    env: { LOCAL_LLM_URL: 'http://127.0.0.1:1/v1', LLAMA_CONTEXT: '8192' },
+    callTool: async () => { executed++; return { state: 'running' }; },
+  })) events.push(event);
+  assert.equal(executed, 6);
+  assert.equal(events.filter(event => event.type === 'tool' && event.result.error).length, 2);
+  assert.ok(requests[1].response_format.json_schema.schema.properties.answer);
+  assert.equal(events.at(-1).type, 'done');
 });
 
 test('tool arguments fail closed and the model can correct them on the next round', async context => {
@@ -1005,7 +1035,7 @@ test('local structured turns execute validated batches and never speak wire synt
   const calls = [];
   context.mock.method(globalThis, 'fetch', async (_url, options) => {
     requests.push(JSON.parse(options.body));
-    const turn = requests.length === 1 ? { calls: [{ name: 'list_work', arguments: {} }] } : { answer: requests.length === 2 ? 'ID private-id, list_work, running.' : 'The parser task is running.' };
+    const turn = requests.length === 1 ? { intent: 'read', calls: [{ name: 'list_work', arguments: {} }] } : { answer: requests.length === 2 ? 'ID private-id, list_work, running.' : 'The parser task is running.' };
     const text = JSON.stringify(turn);
     return new Response([...text].map(content => `data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`).join('') + 'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
   });
@@ -1018,10 +1048,43 @@ test('local structured turns execute validated batches and never speak wire synt
   assert.equal(requests[0].tools, undefined);
   assert.equal(requests[0].response_format.type, 'json_schema');
   assert.equal(requests[0].chat_template_kwargs.enable_thinking, false);
-  assert.deepEqual(JSON.parse(requests[1].messages.find(message => message.role === 'assistant').content), { calls: [{ name: 'list_work', arguments: {} }] });
+  assert.deepEqual(JSON.parse(requests[1].messages.find(message => message.role === 'assistant').content), { intent: 'read', calls: [{ name: 'list_work', arguments: {} }] });
   assert.equal(requests.length, 3);
   assert.doesNotMatch(JSON.stringify(requests[2].messages), /private-id|list_work|taskId|actions/);
   assert.match(JSON.stringify(requests[2].messages), /Parser|running/);
+});
+
+test('local read intent cannot escalate and ambiguous searches ask without further generation', async context => {
+  for (const result of [{ tasks: [], hasMore: false }, { tasks: [{ id: 'first', title: 'Parser' }, { id: 'second', title: 'Compiler' }], hasMore: false }]) {
+    let requests = 0;
+    let calls = 0;
+    context.mock.method(globalThis, 'fetch', async () => {
+      requests++;
+      return new Response(localSSE({ tool_calls: [{ function: { name: 'list_work', arguments: '{"query":"build"}' } }] }));
+    });
+    const events = [];
+    for await (const event of streamReply({ provider: 'local', env: { LOCAL_LLM_URL: 'http://127.0.0.1:1/v1' }, callTool: async () => { calls++; return result; } })) events.push(event);
+    assert.equal(requests, 1);
+    assert.equal(calls, 1);
+    assert.match(events.find(event => event.type === 'text').text, /\?$/);
+    assert.equal(events.at(-1).type, 'done');
+    context.mock.restoreAll();
+  }
+  for (const intent of ['read', 'change']) {
+    let requests = 0;
+    let calls = 0;
+    context.mock.method(globalThis, 'fetch', async () => {
+      requests++;
+      return new Response(localSSE(requests === 1
+        ? { tool_calls: [{ function: { name: 'list_work', arguments: '{}' } }] }
+        : { intent, tool_calls: [{ function: { name: 'send_work_message', arguments: '{"taskId":"task","message":"Done"}' } }] }));
+    });
+    await assert.rejects(async () => {
+      for await (const event of streamReply({ provider: 'local', env: { LOCAL_LLM_URL: 'http://127.0.0.1:1/v1' }, callTool: async () => { calls++; return { tasks: [{ id: 'task', state: 'running' }] }; } })) assert.notEqual(event.type, 'done');
+    }, /cannot change/);
+    assert.equal(calls, 1);
+    context.mock.restoreAll();
+  }
 });
 
 test('invalid local envelopes fail closed before any batch action or speech', async context => {
@@ -1030,6 +1093,8 @@ test('invalid local envelopes fail closed before any batch action or speech', as
     '{"answer":"Deleted","calls":[{"name":"delete_work","arguments":{"taskId":"task"}}]}',
     '{"calls":[{"name":"delete_work","arguments":{"taskId":"task"}},{"name":"unknown","arguments":{}}]}',
     '{"calls":[{"name":"delete_work","arguments":{"taskId":42}}]}',
+    '{"intent":"read","calls":[{"name":"list_work","arguments":{}},{"name":"delete_work","arguments":{"taskId":"task"}}]}',
+    '{"intent":"read","calls":[{"name":"start_work","arguments":{"objective":"change files"}}]}',
   ]) {
     context.mock.method(globalThis, 'fetch', async () => new Response(`data: ${JSON.stringify({ choices: [{ delta: { content: text }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`));
     await assert.rejects(async () => {
@@ -1057,7 +1122,7 @@ test('failed mutations can be retried after a state change without replaying suc
   assert.deepEqual(results, [{ error: 'Task is settling' }, { deleted: 'task' }, { deleted: 'task' }]);
 });
 
-test('identical mutations share receipts across batches and rounds while status reads stay fresh', async context => {
+test('identical local calls share receipts across batches and rounds', async context => {
   for (const [name, args] of [
     ['start_work', { objective: 'Build it' }],
     ['send_work_message', { taskId: 'task', message: 'Continue' }],
@@ -1069,7 +1134,7 @@ test('identical mutations share receipts across batches and rounds while status 
     let executed = 0;
     context.mock.method(globalThis, 'fetch', async () => {
       round++;
-      const delta = round < 3 ? { tool_calls: [0, 1].map(index => ({ index, id: `call-${round}-${index}`, function: { name, arguments: JSON.stringify(args) } })) } : { content: 'Confirmed.' };
+      const delta = round < 3 ? { intent: 'change', tool_calls: [0, 1].map(index => ({ index, id: `call-${round}-${index}`, function: { name, arguments: JSON.stringify(args) } })) } : { content: 'Confirmed.' };
       return new Response(localSSE(delta));
     });
     const events = [];
@@ -1078,7 +1143,7 @@ test('identical mutations share receipts across batches and rounds while status 
       env: { LOCAL_LLM_URL: 'http://127.0.0.1:1/v1', LLAMA_CONTEXT: '8192' },
       callTool: async () => ({ receipt: ++executed }),
     })) events.push(event);
-    assert.equal(executed, name === 'get_work_status' ? 4 : 1, name);
+    assert.equal(executed, 1, name);
     assert.equal(events.filter(event => event.type === 'tool').length, 4);
     assert.equal(events.at(-1).type, 'done');
     context.mock.restoreAll();
@@ -1164,10 +1229,8 @@ test('normal local tool/result roundtrip verifies thinking false, tools roundtri
     assert.deepEqual(toolEvents[0].result, { areas: [{ id: 'area-1', name: 'UI' }], tasks: [] });
 
     assert.ok(round2Messages, 'Round 2 messages must have been sent');
-    const toolMsg = round2Messages.find(m => m.role === 'tool');
-    assert.ok(toolMsg, 'Expected tool result message in round 2 continuation');
-    assert.equal(toolMsg.name, 'list_work');
-    assert.deepEqual(JSON.parse(toolMsg.content), { areas: [{ id: 'area-1', name: 'UI' }], tasks: [] });
+    assert.match(round2Messages.at(-1).content, /"tasks":\[\]/);
+    assert.equal(round2Messages.some(message => message.role === 'tool'), false);
 
     assert.equal(events[events.length - 1].type, 'done');
   } finally {

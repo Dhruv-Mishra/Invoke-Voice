@@ -172,6 +172,16 @@ test('builds explicit Copilot and Agency start and resume commands', () => {
   assert.ok(agency.args.includes(`--resume=${base.sessionId}`));
   assert.equal(agency.args.includes('--session-id'), false);
   assert.equal(agency.prompt.includes(base.sessionId), false);
+  assert.equal(agency.args[agency.args.indexOf('--model') + 1], base.model);
+  for (const backend of ['copilot', 'agency']) {
+    for (const resume of [false, true]) {
+      for (const model of ['default', ' Default ', '', undefined]) {
+        const launch = sessionLaunch({ ...base, backend, model }, area, {}, { resume });
+        assert.equal(launch.args.includes('--model'), false);
+        assert.equal(launch.args.includes(undefined), false);
+      }
+    }
+  }
 });
 
 test('agent progress reports one process start across multiple model turns', async context => {

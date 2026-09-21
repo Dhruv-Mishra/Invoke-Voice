@@ -394,7 +394,7 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
       }
       await closeLocalVoice();
       await activateChat({ report: () => {}, signal });
-      if (upgradeManagedModel) writeJson(completionFile, { version: 1, pathInputs, paths: Object.fromEntries(ASSETS.map(asset => [asset.id, paths[asset.id]])) });
+      if (!saved || upgradeManagedModel) writeJson(completionFile, { version: 1, pathInputs, paths: Object.fromEntries(ASSETS.map(asset => [asset.id, paths[asset.id]])) });
       applyPaths();
       let runtime = `${sttLabel()} / Kokoro`;
       try {

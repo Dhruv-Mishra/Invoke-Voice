@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { EventEmitter } from 'node:events';
+import { EventEmitter, getEventListeners } from 'node:events';
 import childProcess from 'node:child_process';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
@@ -12,7 +12,7 @@ import { PassThrough, Writable } from 'node:stream';
 import { compactToolResult, localInstructions, streamReply, voiceInstructions } from '../src/llm.mjs';
 import { supervisorInstructions } from '../src/supervisor.mjs';
 import { voiceTools } from '../src/supervisor/contract.mjs';
-import { closeLocalVoice, createLocalVoice, createPcmWriter, createSttWriter, drainVoiceText, isVoiceResponsePlayable, localSttArguments, onLocalVoiceRuntimeExit } from '../src/local-voice.mjs';
+import { closeLocalVoice, createLocalVoice, createPcmWriter, createSttWriter, drainVoiceText, isVoiceResponsePlayable, localSttArguments, onLocalVoiceRuntimeExit, warmLocalVoice } from '../src/local-voice.mjs';
 import { createRealtimeAnnouncementGate, createRealtimeVoice, createTranscriptStream, DEFAULT_GEMINI_LIVE_MODEL, geminiLiveConfig, geminiLiveFunctionResponse } from '../src/realtime.mjs';
 import { sessionThemeOptions, themedInstructions, themeVoicePreset } from '../src/theme-session.mjs';
 import { providerProfiles, resolveEndpoint } from '../src/llm/provider-config.mjs';
@@ -651,6 +651,63 @@ test('voice requests include spoken instructions and preserve final response tex
   } finally {
     await new Promise(resolve => server.close(resolve));
   }
+});
+
+test('Kokoro cold initialization tolerates slow loading, reuses warm workers and cleans up failure and cancellation', async context => {
+  const processes = [];
+  const spawn = context.mock.method(childProcess, 'spawn', (binary, args) => {
+    assert.ok(args.includes('-I'));
+    const child = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), exitCode: null, signalCode: null });
+    child.kill = () => {
+      if (child.exitCode !== null) return;
+      child.exitCode = 0;
+      child.emit('exit', 0);
+      child.stdout.end();
+      child.stderr.end();
+    };
+    processes.push(child);
+    return child;
+  });
+  syncBuiltinESMExports();
+  context.mock.timers.enable({ apis: ['setTimeout'] });
+  context.after(async () => {
+    await closeLocalVoice();
+    spawn.mock.restore();
+    syncBuiltinESMExports();
+  });
+  const env = { PYTHON_BIN: process.execPath, LOCAL_STT_PROVIDER: 'whisper', WHISPER_MODEL_DIR: path.join(os.tmpdir(), 'missing-voice-startup-fixture') };
+  const controller = new AbortController();
+  let ready = false;
+  const pending = warmLocalVoice(env, controller.signal).then(result => { ready = result; });
+  context.mock.timers.tick(60000);
+  await new Promise(setImmediate);
+  assert.equal(ready, false);
+  assert.equal(processes[0].exitCode, null);
+  processes[0].stdout.write('{"type":"ready"}\n');
+  await pending;
+  assert.equal(ready, true);
+  assert.equal(getEventListeners(controller.signal, 'abort').length, 0);
+  await warmLocalVoice(env);
+  assert.equal(processes.length, 1);
+  await closeLocalVoice();
+
+  const timeoutController = new AbortController();
+  const timedOut = assert.rejects(warmLocalVoice(env, timeoutController.signal), /initialization exceeded 3 minutes/);
+  context.mock.timers.tick(180000);
+  await timedOut;
+  assert.equal(processes[1].exitCode, 0);
+  assert.equal(getEventListeners(timeoutController.signal, 'abort').length, 0);
+
+  const cancelledController = new AbortController();
+  const cancelled = assert.rejects(warmLocalVoice(env, cancelledController.signal), /cancelled/);
+  cancelledController.abort();
+  await cancelled;
+  assert.equal(processes[2].exitCode, 0);
+  assert.equal(getEventListeners(cancelledController.signal, 'abort').length, 0);
+
+  const retry = warmLocalVoice(env);
+  processes[3].stdout.write('{"type":"ready"}\n');
+  assert.equal(await retry, true);
 });
 
 test('local and hybrid voice execute tools before playback and retain real answers across turns', { timeout: 10000 }, async context => {

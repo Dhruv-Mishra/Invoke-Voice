@@ -13,7 +13,7 @@ export const SETUP_ELEMENT_NAMES = [
   'status', 'message', 'warning', 'error', 'chat-status', 'voice-status',
   'progress-region', 'progress', 'progress-label', 'platform',
   'cache', 'runtime', 'components', 'consent', 'consent-label',
-  'install-btn', 'install-label', 'refresh-btn', 'log-details', 'log',
+  'install-btn', 'install-label', 'refresh-btn', 'log-details', 'log', 'estimate',
 ];
 
 export function createLocalSetupController({
@@ -60,9 +60,15 @@ export function createLocalSetupController({
     return Boolean(!doc?.hidden && doc?.body?.dataset?.view === 'settings' && dialog?.open);
   }
 
+  function componentsInstalled() {
+    return Boolean(setupSnapshot?.components?.length && setupSnapshot.components.every(component => component.ready));
+  }
+
   function renderSetup() {
     const snapshot = setupSnapshot;
     const running = snapshot?.status === 'running';
+    const installed = componentsInstalled();
+    const initializing = running && snapshot.stage === 'starting';
     const ready = snapshot?.status === 'ready';
     const chatReady = snapshot?.capabilities?.chat?.ready === true;
     const voiceReady = snapshot?.capabilities?.voice?.ready === true;
@@ -73,16 +79,16 @@ export function createLocalSetupController({
       setupElements.status.textContent = setupHttpError
         ? 'Status unavailable'
         : snapshot
-          ? (supported ? chatReady && !voiceReady ? 'Chat ready' : snapshot.status : 'Unsupported platform')
+          ? (supported ? initializing ? 'Initializing' : chatReady && !voiceReady ? 'Chat ready' : snapshot.status : 'Unsupported platform')
           : busy ? 'Checking' : 'Not checked';
       setupElements.status.className = `badge${setupHttpError || (snapshot?.status === 'error' && !chatReady) ? ' badge-danger' : ready ? ' badge-success' : chatReady ? ' badge-warning' : running ? ' badge-accent' : ''}`;
     }
 
     if (setupElements.message) {
       setupElements.message.textContent = snapshot?.status === 'error'
-        ? (chatReady ? 'Local chat is ready. Voice setup needs attention.' : 'Local setup needs attention. Retry when ready.')
+        ? (installed ? chatReady ? 'Local chat is ready. Voice initialization needs attention.' : 'Local initialization needs attention. Retry when ready.' : chatReady ? 'Local chat is ready. Voice setup needs attention.' : 'Local setup needs attention. Retry when ready.')
         : snapshot
-          ? [snapshot.stage, snapshot.message].filter(Boolean).join(': ') || (ready ? 'Local voice is installed.' : 'Local voice is not installed.')
+          ? snapshot.message || (ready ? 'Local voice is ready.' : 'Local voice is not installed.')
         : busy ? 'Checking local voice setup...' : 'Local voice setup status is unavailable.';
     }
 
@@ -104,7 +110,7 @@ export function createLocalSetupController({
     }
 
     if (localSetupStartLabel) {
-      localSetupStartLabel.textContent = ready ? 'Continue local' : 'Set up local';
+      localSetupStartLabel.textContent = ready ? 'Continue local' : installed ? 'Local voice status' : 'Set up local';
     }
 
     for (const [name, capability] of [['chat-status', snapshot?.capabilities?.chat], ['voice-status', snapshot?.capabilities?.voice]]) {
@@ -112,7 +118,7 @@ export function createLocalSetupController({
         setupElements[name].textContent = capability?.ready
           ? 'Ready'
           : running
-            ? 'Setting up'
+            ? initializing ? 'Initializing' : 'Setting up'
             : snapshot?.status === 'error'
               ? 'Needs attention'
               : 'Not ready';
@@ -146,22 +152,25 @@ export function createLocalSetupController({
       const estimate = running && !setupHttpError && received < total && Number.isFinite(remaining) && remaining > 0
         ? remaining < 60 ? 'About a minute remaining' : remaining < 3600 ? `About ${Math.ceil(remaining / 60)} minutes remaining` : `About ${Math.ceil(remaining / 3600)} hours remaining`
         : '';
-      const downloaded = total > 0 ? `${Math.min(100, Math.floor(received * 100 / total))}% - ${formatSetupBytes(received)} of ${formatSetupBytes(total)}` : received > 0 ? `${formatSetupBytes(received)} downloaded` : 'Preparing local components';
+      const downloaded = total > 0 ? `${Math.min(100, Math.floor(received * 100 / total))}% - ${formatSetupBytes(received)} of ${formatSetupBytes(total)}` : received > 0 ? `${formatSetupBytes(received)} downloaded` : initializing ? 'Loading installed models into memory' : 'Preparing local components';
       setupElements['progress-label'].textContent = [downloaded, estimate && `${estimate} for this download`].filter(Boolean).join('. ');
     }
 
-    if (setupElements.consent) setupElements.consent.disabled = busy || running || ready || !supported;
-    if (setupElements['consent-label']) setupElements['consent-label'].hidden = running || ready;
+    if (setupElements.estimate) setupElements.estimate.hidden = installed || ready;
+    if (setupElements.consent) setupElements.consent.disabled = busy || running || ready || installed || !supported;
+    if (setupElements['consent-label']) setupElements['consent-label'].hidden = running || ready || installed;
 
     if (setupElements['install-btn']) {
-      setupElements['install-btn'].disabled = busy || running || ready || !supported || Boolean(setupHttpError) || !setupElements.consent?.checked;
+      setupElements['install-btn'].disabled = busy || running || ready || !supported || Boolean(setupHttpError) || (!installed && !setupElements.consent?.checked);
     }
 
     if (setupElements['install-label']) {
       setupElements['install-label'].textContent = ready
-        ? 'Installed'
+        ? 'Ready'
         : running
-          ? 'Installing local AI'
+          ? initializing ? 'Initializing local AI' : 'Installing local AI'
+          : installed
+            ? 'Retry voice'
           : snapshot?.status === 'error' && chatReady
             ? 'Retry voice setup'
             : snapshot?.status === 'error'
@@ -227,7 +236,7 @@ export function createLocalSetupController({
 
   async function requestSetup(start = false) {
     if (setupRequest || !isVisible()) return;
-    if (start && (setupElements['install-btn']?.disabled || !setupElements.consent?.checked)) return;
+    if (start && (setupElements['install-btn']?.disabled || (!componentsInstalled() && !setupElements.consent?.checked))) return;
     if (setupPoll) clearTimeoutFn(setupPoll);
     const controller = new Controller();
     setupRequest = controller;
@@ -343,7 +352,7 @@ export function createLocalSetupController({
         setupSnapshot = await response.json();
         renderSetup();
         const settings = getAppState?.()?.settings;
-        const unpromptedOnboarding = settings?.localSetupPrompted !== true && setupSnapshot?.status !== 'ready';
+        const unpromptedOnboarding = settings?.localSetupPrompted !== true && setupSnapshot?.status !== 'ready' && !componentsInstalled();
         const hasHardwareWarning = Boolean(setupSnapshot?.hardware?.warning);
         const shouldWarnHardware = hasHardwareWarning && !hardwareWarningPrompted && isLocalRouteSelected();
         if (shouldWarnHardware) {

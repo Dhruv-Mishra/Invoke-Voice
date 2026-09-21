@@ -42,7 +42,8 @@ function reportRuntimeExit(runtime) {
 }
 
 async function startKokoroRuntime(config, env, signal) {
-  const process = spawn(config.pythonBin, ['-u', worker], { windowsHide: true, env: { ...env, LOCAL_THREADS: env.KOKORO_THREADS || env.LOCAL_THREADS || localThreadDefault(8) }, stdio: ['pipe', 'pipe', 'pipe'] });
+  signal?.throwIfAborted();
+  const process = spawn(config.pythonBin, ['-I', '-u', worker], { windowsHide: true, env: { ...env, LOCAL_THREADS: env.KOKORO_THREADS || env.LOCAL_THREADS || localThreadDefault(8) }, stdio: ['pipe', 'pipe', 'pipe'] });
   kokoroProcess = process;
   desktopLaunch.trackChild(process);
   let diagnostic = '';
@@ -51,22 +52,32 @@ async function startKokoroRuntime(config, env, signal) {
   const reader = createInterface({ input: process.stdout });
   try {
     await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('Kokoro startup exceeded 45s. Run its warm-up command first.')), 45000);
-      const abort = () => { clearTimeout(timer); stopRuntime(process); reject(new Error('Kokoro startup was cancelled')); };
-      const finish = error => { clearTimeout(timer); signal?.removeEventListener('abort', abort); error ? reject(error) : resolve(); };
-      signal?.addEventListener('abort', abort, { once: true });
-      process.once('error', error => finish(new Error(`Kokoro failed to start: ${error.message}`)));
-      process.once('exit', code => finish(new Error(`Kokoro exited (${code}). ${diagnostic}`)));
+      const finish = error => {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', abort);
+        process.off('error', onError);
+        process.off('exit', onExit);
+        reader.off('line', onLine);
+        error ? reject(error) : resolve();
+      };
+      const timer = setTimeout(() => finish(new Error('Kokoro initialization exceeded 3 minutes while loading installed models. Retry local voice; no reinstall is needed.')), 180000);
+      const abort = () => finish(new Error('Kokoro startup was cancelled'));
+      const onError = error => finish(new Error(`Kokoro failed to start: ${error.message}`));
+      const onExit = code => finish(new Error(`Kokoro exited (${code}). ${diagnostic}`));
       const onLine = line => {
         let event;
         try { event = JSON.parse(line); } catch { return; }
-        if (event.type === 'ready') { reader.off('line', onLine); finish(); }
+        if (event.type === 'ready') finish();
       };
+      signal?.addEventListener('abort', abort, { once: true });
+      process.once('error', onError);
+      process.once('exit', onExit);
       reader.on('line', onLine);
     });
   } catch (error) {
     reader.close();
     stopRuntime(process);
+    if (kokoroProcess === process) kokoroProcess = undefined;
     throw error;
   }
   return { process, reader };

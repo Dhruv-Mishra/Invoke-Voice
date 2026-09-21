@@ -674,7 +674,7 @@
 
       <section class="settings-section local-setup" id="local-setup" aria-labelledby="setup-title">
         <div class="setup-heading"><h2 class="settings-section-title" id="setup-title"><i data-lucide="hard-drive-download" aria-hidden="true"></i>Local voice</h2><span class="badge" id="setup-status">Not checked</span></div>
-        <p class="setup-estimate">7-8 GB download, plus Python dependencies. Allow at least 18 GB free space; retained models and dependencies may need more.</p>
+        <p class="setup-estimate" id="setup-estimate">7-8 GB download, plus Python dependencies. Allow at least 18 GB free space; retained models and dependencies may need more.</p>
         <p id="setup-message" role="status" aria-live="polite">Setup status is available when Settings is open.</p>
         <p id="setup-warning" class="setup-warning" role="status" hidden></p>
         <p id="setup-error" role="alert" hidden></p>
@@ -785,14 +785,12 @@
         <form id="private-work-form">
           <div id="private-work-fields" class="config-fields"></div>
           <div class="settings-actions">
-            <span id="private-work-feedback" class="settings-feedback" role="status" aria-live="polite"></span>
+            <button type="button" class="btn" id="agency-check-btn"><i data-lucide="refresh-cw" aria-hidden="true"></i>Check connections</button>
             <button type="submit" class="btn btn-accent" id="private-work-save-btn"><i data-lucide="save" aria-hidden="true"></i>Save access</button>
           </div>
+          <p id="private-work-feedback" class="settings-feedback" role="status" aria-live="polite"></p>
+          <p id="agency-check-feedback" class="settings-feedback" role="status" aria-live="polite"></p>
         </form>
-        <div class="settings-actions">
-          <span id="agency-check-feedback" class="settings-feedback" role="status" aria-live="polite"></span>
-          <button type="button" class="btn" id="agency-check-btn"><i data-lucide="refresh-cw" aria-hidden="true"></i>Check connections</button>
-        </div>
         <div class="integrations-table-wrapper">
           <table class="integrations-table" aria-label="MCP Integrations">
             <thead>

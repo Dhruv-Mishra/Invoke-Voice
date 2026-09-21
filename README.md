@@ -93,6 +93,8 @@ Local setup is opt-in and provisions:
 
 Downloads are pinned and hash-verified. Working chat remains available if speech setup fails. Detailed model, mirror, and release-pack behavior is documented in [docs/operations.md](docs/operations.md#voice-routes).
 
+Each desktop launch initializes the installed models in memory; it does not reinstall them. Settings labels this **Initializing** and hides download consent when every component is installed. Kokoro has up to three minutes for cold initialization, including its automatic warm-up. **Retry voice** restarts installed runtimes without rerunning installation; no separate warm-up command is needed.
+
 The Gemma text model is 3.35 GB. Previously consented, verified managed Ling Compact/Quality installations upgrade on startup; custom model paths and fresh-install consent are preserved. Previous files stay on disk. Gemma passed the expanded 21-case synthetic tool gate after API fixes, but is slower than Ling on the measured CPU. See the [comparison and limitations](docs/operations.md#local-acceptance-checks); this is not a guarantee across requests or hardware. The `ling-local` endpoint alias remains for compatibility.
 
 Local turns use llama.cpp JSON-schema generation: either a validated tool batch or an answer, never executable XML embedded in prose. Only completed answers are published. After tools, a separate tool-free summary receives bounded outcomes and titles without routing IDs or action names. This adds a local generation pass but prevents routing output from becoming speech. Thinking stays disabled; warm-up uses the same contract.

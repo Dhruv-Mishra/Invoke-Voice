@@ -74,11 +74,12 @@ export function createSetup({ platform = process.platform, arch = process.arch, 
   };
   function begin(download) {
     if (job || state.status === 'ready') return snapshot();
+    const needsInstall = download && !inspect().every(component => component.ready);
     controller = new AbortController();
-    report({ stage: 'checking', message: download ? 'Checking reusable local files.' : 'Starting previously installed local runtimes offline.' });
+    report({ stage: needsInstall ? 'checking' : 'starting', message: needsInstall ? 'Checking reusable local files.' : 'Initializing installed local models. No installation is needed.' });
     job = new Promise(resolve => setImmediate(resolve)).then(async () => {
-      if (download) await install({ report, signal: controller.signal });
-      report({ stage: 'starting', message: 'Starting and checking the local voice runtimes.' });
+      if (needsInstall) await install({ report, signal: controller.signal });
+      report({ stage: 'starting', message: 'Initializing local chat and voice models.' });
       await activate({ signal: controller.signal, report });
       state = { status: 'ready', stage: 'complete', message: 'Local voice runtimes passed startup checks. Cached files can be reused offline.' };
     }).catch(error => {

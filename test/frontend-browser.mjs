@@ -439,6 +439,13 @@ try {
   }
   await pointerClick('#config-section > summary');
   assert.equal(await checkEditableInputs('#config-fields'), 3);
+  assert.equal(await evaluate(() => {
+    const hint = document.querySelector('#config-section > .field-hint').getBoundingClientRect();
+    const form = document.getElementById('config-form').getBoundingClientRect();
+    const actions = document.querySelector('#config-form .settings-actions').getBoundingClientRect();
+    const fields = document.getElementById('config-fields').getBoundingClientRect();
+    return form.top - hint.bottom >= 16 && fields.top - actions.bottom >= 16;
+  }), true, 'expanded Keys and config must space its contents, not only its summary');
   assert.equal(await evaluate(() => document.getElementById('config-local-stt-provider').value), 'whisper');
   await click('#setup-consent');
   await pointerClick('[data-for="config-local-stt-provider"] button[value="moonshine"]');
@@ -450,6 +457,7 @@ try {
   assert.equal(await evaluate(() => document.getElementById('setup-message').textContent.includes('moonshine selected')), true);
   assert.equal(setupWrites, 0, 'saving speech selection must not download anything');
   await evaluate(() => document.querySelector('[data-for="config-local-stt-provider"]').scrollIntoView({ block: 'center' }));
+  await settle();
   await assertPainted('[data-for="config-local-stt-provider"]');
   await screenshot('speech-selector-desktop');
   assert.equal(await evaluate(() => document.querySelectorAll('.config-restart').length), 0);
@@ -478,6 +486,14 @@ try {
   assert.equal(settings.idleEndSeconds, 30);
   await visit('settings');
   assert.equal(await evaluate(() => document.querySelectorAll('.config-restart').length), 1);
+  assert.equal(await evaluate(() => {
+    const control = document.getElementById('config-llama-threads');
+    const field = control.closest('.config-field');
+    const label = field.querySelector('label').getBoundingClientRect();
+    const notice = field.querySelector('.config-restart').getBoundingClientRect();
+    const bounds = control.getBoundingClientRect();
+    return Math.abs(bounds.top - label.bottom - 8) < 1 && notice.top - bounds.bottom >= 8;
+  }), true, 'restart notices must not displace the label-to-control spacing');
   await typeText('#config-llama-threads', '8');
   await choose('#settings-idle-end', '60');
   await click('#close-view-btn');
@@ -581,6 +597,14 @@ try {
   await waitFor(() => !document.getElementById('agency-check-btn').disabled && document.getElementById('agency-check-feedback').textContent.includes('Private work sources are off'));
   assert.equal(agencyChecks, 1);
   assert.equal(await evaluate(() => Boolean(document.querySelector('#agency-check-btn svg'))), true);
+  assert.equal(await evaluate(() => {
+    const check = document.getElementById('agency-check-btn').getBoundingClientRect();
+    const save = document.getElementById('private-work-save-btn').getBoundingClientRect();
+    const feedback = document.getElementById('agency-check-feedback').getBoundingClientRect();
+    return save.left - check.right >= 12 && feedback.top - Math.max(save.bottom, check.bottom) >= 16;
+  }), true, 'integration actions and status must have distinct spacing');
+  assert.equal(await evaluate(() => getComputedStyle(document.querySelector('.application-data')).borderTopWidth), '0px');
+  assert.equal(await evaluate(() => getComputedStyle(document.querySelector('#integrations-section a.btn')).textDecorationLine), 'none');
   assert.equal(await evaluate(() => document.querySelector('#integrations-table-body img') === null && document.getElementById('integrations-table-body').textContent.includes('<img src=x onerror=alert(1)>')), true);
   await click('#settings-view > .settings-container > details:last-of-type > summary');
   await evaluate(() => document.getElementById('home-tab').focus());
@@ -607,7 +631,7 @@ try {
   await click('[data-open-view="tool-lab"]');
   assert.equal(await evaluate(() => document.body.dataset.view === 'tool-lab' && document.activeElement.id === 'close-view-btn'), true);
   assert.equal(await checkEditableInputs('#tool-lab-view'), 2);
-  for (const width of [820, 390]) {
+  for (const width of [820, 390, 320]) {
     resizeWindow(width, 844);
     await visit('workspace');
     if (width === 390 && await evaluate(() => document.getElementById('areas-disclosure').open)) await pointerClick('#areas-disclosure > summary');
@@ -642,6 +666,18 @@ try {
     await pointerClick('#config-section > summary');
     assert.equal(await checkEditableInputs('#config-fields'), 3);
     await pointerClick('#config-section > summary');
+    await pointerClick('#integrations-section > summary');
+    assert.equal(await evaluate(() => {
+      const check = document.getElementById('agency-check-btn').getBoundingClientRect();
+      const save = document.getElementById('private-work-save-btn').getBoundingClientRect();
+      const feedback = document.getElementById('agency-check-feedback').getBoundingClientRect();
+      const section = document.getElementById('integrations-section');
+      return (save.left - check.right >= 12 || save.top - check.bottom >= 12)
+        && feedback.top - Math.max(save.bottom, check.bottom) >= 16
+        && section.scrollWidth <= section.clientWidth;
+    }), true, `integration actions must wrap without overlap at ${width}px`);
+    await screenshot(`integrations-${width}`);
+    await pointerClick('#integrations-section > summary');
     await pointerClick('.toggle-control[for="transparency-preference"] .toggle-track');
     await press('Space');
     await assertPainted('.toggle-control[for="transparency-preference"]');

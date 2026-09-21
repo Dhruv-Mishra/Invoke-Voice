@@ -187,12 +187,6 @@ export function createSettingsRenderer({
         label.htmlFor = id;
         label.textContent = field.label;
         wrapper.appendChild(label);
-        if (field.pendingRestart) {
-          const restart = document.createElement('span');
-          restart.className = 'config-restart';
-          restart.textContent = 'Restart to apply';
-          wrapper.appendChild(restart);
-        }
 
         let control;
         if (field.type === 'select') {
@@ -223,6 +217,12 @@ export function createSettingsRenderer({
         control.dataset.savedValue = control.value;
         if (drafts.has(field.key)) control.value = drafts.get(field.key);
         wrapper.appendChild(control);
+        if (field.pendingRestart) {
+          const restart = document.createElement('span');
+          restart.className = 'config-restart';
+          restart.textContent = 'Restart to apply';
+          wrapper.appendChild(restart);
+        }
         if (field.description) {
           const hint = document.createElement('p');
           hint.id = `${id}-hint`;

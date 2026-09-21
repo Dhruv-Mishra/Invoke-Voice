@@ -104,6 +104,22 @@ function controller(options = {}) {
   return createSetup({ platform: 'win32', arch: 'x64', cacheDir: 'cache', runtimeDir: 'runtime', inspect: () => [{ id: 'fixture', label: 'Fixture', ready: false, sourceUrl: 'https://huggingface.co' }], install: async () => {}, activate: async () => {}, ...options });
 }
 
+test('installed runtime launch and retry initialize without running installation', async () => {
+  let activations = 0;
+  const setup = controller({
+    inspect: () => [{ id: 'fixture', ready: true }],
+    install: async () => assert.fail('Installed components must not be installed again'),
+    activate: async () => { activations += 1; },
+  });
+  assert.equal(setup.resume().stage, 'starting');
+  assert.equal((await setup.settled()).status, 'ready');
+  setup.invalidate('Voice runtime stopped');
+  assert.equal(setup.start({ consent: true }).stage, 'starting');
+  assert.equal((await setup.settled()).status, 'ready');
+  assert.equal(activations, 2);
+  await setup.close();
+});
+
 test('setup estimates remaining download time and resets across stalls, retries and install stages', async () => {
   let timestamp = 0;
   let report;
@@ -1364,6 +1380,48 @@ test('local setup accepts explicit HTTPS package mirrors and rejects insecure in
     invalid.setup.start({ consent: true });
     assert.match((await invalid.setup.settled()).error, /spaCy model URL must use HTTPS/);
     assert.equal(invalid.commands.length, 0);
+  }
+});
+
+test('preinstalled components recreate the setup receipt and resume without installation', windowsSetup, async context => {
+  const initial = localFixture(context);
+  initial.setup.start({ consent: true });
+  assert.equal((await initial.setup.settled()).status, 'ready');
+  await initial.setup.close();
+  const home = initial.paths.home;
+  const env = {
+    SUPERVISOR_CACHE_DIR: home, LOCAL_STT_PROVIDER: 'moonshine',
+    LOCAL_LLM_PATH: path.join(home, 'preinstalled.gguf'), MOONSHINE_MODEL: path.join(home, 'moonshine.gguf'),
+    VAD_MODEL: path.join(home, 'silero.gguf'),
+  };
+  for (const destination of [env.LOCAL_LLM_PATH, env.MOONSHINE_MODEL, env.VAD_MODEL]) writeFileSync(destination, 'preinstalled fixture');
+  const paths = stackPaths(env);
+  mkdirSync(paths.receiptDir, { recursive: true });
+  for (const asset of localSetupAssets(env)) {
+    const destination = paths[asset.id];
+    assert.ok(destination.startsWith(home + path.sep), 'fixture writes must remain isolated');
+    mkdirSync(path.dirname(destination), { recursive: true });
+    writeFileSync(destination, 'verified fixture');
+    const stat = statSync(destination);
+    const receipt = path.join(paths.receiptDir, `${asset.id}-${createHash('sha256').update(destination).digest('hex').slice(0, 20)}.json`);
+    writeFileSync(receipt, JSON.stringify({ sourceUrl: asset.sourceUrl, files: [{ path: destination, size: stat.size, mtimeMs: stat.mtimeMs }] }));
+  }
+  const completionFile = path.join(home, 'local-setup.json');
+  rmSync(completionFile);
+  for (const phase of ['start', 'resume']) {
+    const setup = createLocalSetup({
+      env: { ...env },
+      provision: async () => assert.fail('Installed assets must not be provisioned again'),
+      run: async () => assert.fail('Installed Python must not be installed again'),
+      activateLLM: async () => ({ llama: null }), warm: async () => true,
+    });
+    context.after(() => setup.close());
+    assert.ok(setup.snapshot().components.every(component => component.ready));
+    if (phase === 'start') setup.start({ consent: true });
+    else setup.resume();
+    assert.equal((await setup.settled()).status, 'ready', phase);
+    assert.equal(JSON.parse(readFileSync(completionFile, 'utf8')).version, 1);
+    await setup.close();
   }
 });
 

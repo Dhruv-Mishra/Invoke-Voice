@@ -14,6 +14,42 @@ test('formatSetupBytes formats byte sizes into MB and GB units with boundary rou
   assert.ok(SETUP_ELEMENT_NAMES.includes('install-btn'));
 });
 
+test('installed models show initialization and can retry voice without download consent', async () => {
+  const elements = Object.fromEntries(['status', 'message', 'voice-status', 'estimate', 'consent', 'consent-label', 'install-btn', 'install-label', 'progress-label'].map(name => [name, {}]));
+  let prompts = 0;
+  elements.localSetupPrompt = { showModal() { prompts += 1; } };
+  const requests = [];
+  let snapshot = { supported: true, status: 'running', stage: 'starting', message: 'Initializing local chat and voice models.', components: [{ id: 'kokoro', ready: true }] };
+  const controller = createLocalSetupController({
+    document: { getElementById: () => null },
+    window: { setTimeout: () => 1, clearTimeout() {} },
+    elements,
+    isSetupVisible: () => true,
+    fetch: async (url, options) => {
+      requests.push(options);
+      return { ok: true, json: async () => snapshot };
+    },
+  });
+  try {
+    await controller.initialize();
+    assert.equal(prompts, 0, 'installed models must not reopen first-time setup during startup');
+    await controller.requestSetup();
+    assert.equal(elements.status.textContent, 'Initializing');
+    assert.equal(elements['voice-status'].textContent, 'Initializing');
+    assert.equal(elements['install-label'].textContent, 'Initializing local AI');
+    assert.equal(elements['progress-label'].textContent, 'Loading installed models into memory');
+    assert.equal(elements.estimate.hidden, true);
+    assert.equal(elements['consent-label'].hidden, true);
+    snapshot = { ...snapshot, status: 'error', error: 'Kokoro timed out' };
+    await controller.requestSetup();
+    assert.equal(elements['install-label'].textContent, 'Retry voice');
+    assert.equal(elements['install-btn'].disabled, false);
+    await controller.requestSetup(true);
+    assert.equal(requests.at(-1).method, 'POST');
+    assert.equal(elements.consent.checked, undefined);
+  } finally { controller.destroy(); }
+});
+
 test('recognizer changes clear consent and ignore stale setup responses', async () => {
   const consent = { checked: true };
   const status = {};

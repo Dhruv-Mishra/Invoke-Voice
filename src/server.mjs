@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { Supervisor, tools } from './supervisor.mjs';
-import { voiceTools, validateToolArgs } from './supervisor/contract.mjs';
+import { voiceToolsFor, validateToolArgs } from './supervisor/contract.mjs';
 import { createVSCodeBridge } from './vscode-bridge.mjs';
 import { providerProfiles, streamReply } from './llm.mjs';
 import { createRealtimeVoice, DEFAULT_GEMINI_LIVE_MODEL } from './realtime.mjs';
@@ -16,19 +16,21 @@ import { createRuntimeConfig } from './runtime-config.mjs';
 import { sessionThemeOptions } from './theme-session.mjs';
 import { AGENCY_MCP_SERVERS, createAgencyMcp } from './agency-mcp.mjs';
 import { agencyReadPolicy } from './agency-read.mjs';
+import { createDirectWorkTools } from './direct-work-tools.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const publicDir = path.join(root, 'public');
 const frontendDir = path.join(root, 'dist');
 
-export function createVoiceToolCaller(supervisor, send) {
+export function createVoiceToolCaller(supervisor, send, { directWorkTools, env = process.env } = {}) {
   return (name, args, context) => {
-    const error = validateToolArgs(args, voiceTools.find(tool => tool.function.name === name)?.function.parameters);
+    const error = validateToolArgs(args, voiceToolsFor(env).find(tool => tool.function.name === name)?.function.parameters);
     if (error) return { error };
     if (name === 'end_call') {
       send({ type: 'end_call' });
       return { ended: true };
     }
+    if (['find_work_tools', 'call_work_tool'].includes(name)) return directWorkTools.call(name, args);
     return supervisor.callTool(name, args, context);
   };
 }
@@ -94,6 +96,7 @@ export async function startSupervisor(options = {}) {
   mkdirSync(inbox, { recursive: true });
   const runtimeConfig = createRuntimeConfig({ dataDir });
   const agencyMcp = options.agencyMcp || createAgencyMcp();
+  const directWorkTools = options.directWorkTools || createDirectWorkTools(agencyMcp);
   const supervisor = options.supervisor || new Supervisor({ dataDir, bridge: createVSCodeBridge(dataDir, process.env, { agencyMcp }) });
   const setup = options.setup || createLocalSetup();
   const voiceFactory = options.createRealtimeVoice || createRealtimeVoice;
@@ -300,7 +303,7 @@ export async function startSupervisor(options = {}) {
     let cancelled = false;
     let previousNotifications = new Set();
     const send = event => { if (socket.readyState === 1) socket.send(JSON.stringify(event)); };
-    const callVoiceTool = createVoiceToolCaller(supervisor, send);
+    const callVoiceTool = createVoiceToolCaller(supervisor, send, { directWorkTools });
     socket.on('message', async raw => {
       try {
         const message = JSON.parse(raw);

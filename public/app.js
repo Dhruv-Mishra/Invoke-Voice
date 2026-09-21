@@ -1487,7 +1487,7 @@ async function saveApplicationConfig(fields, feedback, saveButton) {
     await loadConfig(true);
     if (appConfig?.local?.sttProvider !== previousRecognizer) await localSetup.recognitionChanged();
     const pending = appConfig?.configuration?.fields?.some(field => field.pendingRestart);
-    feedback.textContent = fields === privateWorkFields ? 'Access saved. No restart needed. Applies to new research tasks and follow-ups, not tasks already running.'
+    feedback.textContent = fields === privateWorkFields ? 'Access saved. No restart needed. Applies to new voice calls, research tasks and follow-ups.'
       : pending ? 'Saved. Restart Invoke to apply the marked changes.' : 'Saved. Applies to new sessions.';
     return true;
   } catch (error) {

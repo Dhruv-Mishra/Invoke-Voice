@@ -24,6 +24,16 @@ export const modelTools = supervisorTools.map(({ function: tool }) => {
 });
 export const endCallTool = definition('end_call', 'End the active voice call when requested.', {});
 export const voiceTools = [...modelTools, endCallTool];
+const directSources = ['workiq', 'teams', 'calendar', 'people', 'learn'];
+export const directWorkTools = [
+  definition('find_work_tools', 'Find approved read-only tools for a work source before calling one.', { source: choice('', directSources), query: text('Capability keywords') }, ['source']),
+  definition('call_work_tool', 'Call one tool returned by find_work_tools.', { source: choice('', directSources), name: text(), arguments: { type: 'object', additionalProperties: true } }, ['source', 'name', 'arguments']),
+];
+export function voiceToolsFor(env = process.env) {
+  return env.VOICE_DIRECT_MCP_ACCESS === 'read-only' && env.AGENCY_WORK_DATA_ACCESS === 'read-only'
+    ? [...voiceTools, ...directWorkTools]
+    : voiceTools;
+}
 export function validateToolArgs(args, schema) {
   if (!schema) return 'Unknown tool.';
   if (!args || typeof args !== 'object' || Array.isArray(args)) return 'Tool arguments must be a JSON object.';

@@ -237,7 +237,7 @@ export function createSettingsRenderer({
           saved.textContent = 'Saved on this device';
           wrapper.appendChild(saved);
         }
-        if (field.key === 'AGENCY_WORK_DATA_ACCESS' && privateWorkFields) privateWorkFields.appendChild(wrapper);
+        if (['AGENCY_WORK_DATA_ACCESS', 'VOICE_DIRECT_MCP_ACCESS'].includes(field.key) && privateWorkFields) privateWorkFields.appendChild(wrapper);
         else grid.appendChild(wrapper);
       }
       group.append(legend, grid);

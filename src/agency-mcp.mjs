@@ -40,6 +40,18 @@ export function createAgencyMcp({ env = process.env, spawnImpl = spawn, startupM
   const entries = new Map();
   let starting;
   let closed = false;
+  async function clientRequest(name, request, timeoutMs = 60000) {
+    await api.start([name]);
+    const entry = entries.get(name);
+    if (!entry?.url) throw new Error(`${name} MCP is unavailable. Check Agency connections in Settings.`);
+    const client = new Client({ name: 'invoke-direct-tools', version: '1.0.0' }, { capabilities: {} });
+    const transport = new StreamableHTTPClientTransport(new URL(entry.url), { requestInit: { redirect: 'error' } });
+    const signal = AbortSignal.timeout(timeoutMs);
+    try {
+      await client.connect(transport, { signal, timeout: timeoutMs });
+      return await request(client, { signal, timeout: timeoutMs });
+    } finally { await client.close().catch(() => {}); }
+  }
   function launch(name) {
     const entry = { name, status: 'starting' };
     entries.set(name, entry);
@@ -71,7 +83,7 @@ export function createAgencyMcp({ env = process.env, spawnImpl = spawn, startupM
       child.once('close', () => { finish(closed ? 'stopped' : 'unavailable'); lines.close(); });
     });
   }
-  return {
+  const api = {
     start(names = AGENCY_MCP_SERVERS) {
       if (closed) return Promise.resolve();
       if (names.some(name => !knownServers.has(name))) throw new Error('Unknown Agency server');
@@ -91,6 +103,22 @@ export function createAgencyMcp({ env = process.env, spawnImpl = spawn, startupM
         return { id: name, ...result };
       }));
     },
+    async listTools(name) {
+      return clientRequest(name, async (client, options) => {
+        const tools = [];
+        let cursor;
+        for (let page = 0; page < 10; page += 1) {
+          const result = await client.listTools(cursor ? { cursor } : {}, options);
+          tools.push(...result.tools);
+          cursor = result.nextCursor;
+          if (!cursor) return tools;
+        }
+        throw new Error('Tool catalog exceeded the direct-access limit.');
+      });
+    },
+    callTool(name, tool, args) {
+      return clientRequest(name, (client, options) => client.callTool({ name: tool, arguments: args }, undefined, options));
+    },
     configuration() {
       return Object.fromEntries([...entries.values()].filter(entry => entry.status === 'listening').map(entry =>
         [entry.name, { type: 'http', url: entry.url, tools: ['*'] }]));
@@ -108,4 +136,5 @@ export function createAgencyMcp({ env = process.env, spawnImpl = spawn, startupM
       await starting;
     },
   };
+  return api;
 }

@@ -4,6 +4,9 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { createServer } from 'node:http';
 import { createAgencyMcp, AGENCY_MCP_SERVERS, probeAgencyMcp } from '../src/agency-mcp.mjs';
+import { createDirectWorkTools } from '../src/direct-work-tools.mjs';
+import { compactToolResult } from '../src/llm.mjs';
+import { voiceTools, voiceToolsFor } from '../src/supervisor/contract.mjs';
 import { sessionLaunch } from '../src/vscode-bridge.mjs';
 
 function fixture() {
@@ -118,6 +121,50 @@ test('Agency retries failed proxies and reports catalog readiness without readin
   assert.deepEqual(Object.keys(mcp.configuration()).sort(), [...AGENCY_MCP_SERVERS].sort());
   assert.throws(() => mcp.start(['untrusted']), /Unknown Agency/);
   await mcp.close();
+});
+
+test('direct voice tools load approved schemas on demand and reject unapproved calls', async context => {
+  const methods = [];
+  const server = createServer(async (request, response) => {
+    let body = '';
+    for await (const chunk of request) body += chunk;
+    if (!body) { response.writeHead(200).end(); return; }
+    const message = JSON.parse(body);
+    methods.push(message.method);
+    if (message.id === undefined) { response.writeHead(202).end(); return; }
+    const result = message.method === 'initialize'
+      ? { protocolVersion: '2025-03-26', capabilities: { tools: {} }, serverInfo: { name: 'fixture', version: '1' } }
+      : message.method === 'tools/list'
+        ? { tools: [{ name: 'retrieve', description: 'Search work data', inputSchema: { type: 'object', properties: { query: { type: 'string' } } } }, { name: 'fetch', description: 'Fetch work data', inputSchema: { type: 'object', description: 'x'.repeat(6000) } }, { name: 'ask', description: 'Delegate work', inputSchema: { type: 'object' } }] }
+        : { content: [{ type: 'text', text: 'Found the requested item.' }] };
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result }));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  context.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); });
+  const { children, spawnImpl } = fixture();
+  const mcp = createAgencyMcp({ spawnImpl });
+  context.after(() => mcp.close());
+  const env = { AGENCY_WORK_DATA_ACCESS: 'read-only', VOICE_DIRECT_MCP_ACCESS: 'read-only' };
+  const direct = createDirectWorkTools(mcp, env);
+  const discovery = direct.call('find_work_tools', { source: 'workiq' });
+  children[0].stdout.write(`${server.address().port}\n`);
+  const discovered = await discovery;
+  assert.deepEqual(discovered.tools.map(tool => tool.name), ['retrieve']);
+  assert.equal(discovered.hasMore, true);
+  assert.ok(JSON.stringify(discovered).length < 6000);
+  const compact = compactToolResult({ source: 'workiq', tools: [discovered.tools[0], { ...discovered.tools[0], name: 'fetch' }], hasMore: false }, 240);
+  assert.equal(Array.isArray(compact.tools), true);
+  assert.equal(compact.preview, undefined);
+  assert.equal(compact.hasMore, true);
+  assert.ok(compact.tools.every(tool => tool.inputSchema));
+  assert.deepEqual(await direct.call('call_work_tool', { source: 'workiq', name: 'retrieve', arguments: { query: 'status' } }), { content: [{ type: 'text', text: 'Found the requested item.' }] });
+  await assert.rejects(direct.call('call_work_tool', { source: 'workiq', name: 'ask', arguments: {} }), /not approved/);
+  assert.deepEqual(methods.filter(method => method === 'tools/call'), ['tools/call']);
+  assert.deepEqual(voiceToolsFor({}), voiceTools);
+  assert.equal(voiceToolsFor(env).length, voiceTools.length + 2);
+  env.VOICE_DIRECT_MCP_ACCESS = 'disabled';
+  await assert.rejects(direct.call('find_work_tools', { source: 'workiq' }), /disabled/);
 });
 
 test('shared MCP launch preserves read filters and avoids duplicate coding proxies', () => {

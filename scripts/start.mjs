@@ -2,9 +2,9 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { localInstructions, localRequestBody, voiceInstructions } from '../src/llm.mjs';
+import { localInstructions, localRequestBody, voiceInstructionsFor } from '../src/llm.mjs';
 import { localThreadDefault } from '../src/runtime-config.mjs';
-import { voiceTools } from '../src/supervisor/contract.mjs';
+import { voiceToolsFor } from '../src/supervisor/contract.mjs';
 import net from 'node:net';
 import { stackPaths } from './models.mjs';
 import desktopLaunch from './desktop-launch.cjs';
@@ -185,14 +185,15 @@ export async function ensureLocalLLM(options = {}) {
 
   async function warmVoiceLane() {
     try {
+      const tools = voiceToolsFor(env);
       const response = await fetch(`${serverUrl.origin}/v1/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(localRequestBody({
           model: env.LOCAL_LLM_MODEL || 'ling-local',
-          messages: [{ role: 'system', content: localInstructions(voiceInstructions, voiceTools) }, { role: 'user', content: 'Say hello.' }],
+          messages: [{ role: 'system', content: localInstructions(voiceInstructionsFor(env), tools) }, { role: 'user', content: 'Say hello.' }],
           max_tokens: 1,
-        }, voiceTools)),
+        }, tools)),
         signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(30000)]) : AbortSignal.timeout(30000),
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);

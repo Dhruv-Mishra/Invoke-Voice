@@ -75,6 +75,8 @@ Invoke starts its Agency connections and checks tool catalogs on entry. A concis
 
 **Enable Teams and calendar:** install and sign in to [Agency](https://aka.ms/agency) with your work account. Open **Settings > Integrations > Private work sources**, choose **Read-only**, then **Save access**. This is Invoke's research permission, not an Agency setting or a grant of Microsoft 365 access. Questions and answers use cloud services, are saved, and may be spoken.
 
+For lower-latency reads during a voice call, also enable **Direct voice work tools**. Invoke then discovers approved WorkIQ, Teams, calendar, people, or Microsoft Learn schemas only when the voice model asks for them and calls the selected read tool directly, without creating an Agency task. The feature is off by default and never exposes write or delegated `ask` operations.
+
 No restart is required after saving access. New research tasks and subsequent follow-ups use the saved permission; an already-running task keeps its original tools. Coding and research sessions use task-local Agency profiles to avoid inheriting incompatible global Copilot MCP entries. Explicit Invoke MCPs and coding repository MCP configuration remain available.
 
 Installing Agency does not start Teams MCP. Invoke explicitly runs `agency mcp --transport http --port 0 teams` on app launch, alongside its WorkIQ and Bluebird proxies. **Check connections** starts or retries these proxies without reading business content. From source, `npm run agency:setup:check` verifies all research catalogs and closes its temporary proxies; it never changes consent.

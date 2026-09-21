@@ -103,6 +103,14 @@ The manual HTTP API and Tool Lab retain advanced options. LLM text/voice catalog
 
 Local envelopes contain either `calls` or `answer`. Read-only first batches cannot escalate to mutation; action batches may read results. This scope is derived from the model's selected calls, not an independent authorization classifier. Completed status reads return bounded outcomes directly, avoiding a second status call.
 
+## Direct Voice Work Tools
+
+Direct access is off by default. Enable both **Settings > Integrations > Private work sources > Read-only** and **Direct voice work tools > Read-only** to let a new voice call read WorkIQ, Teams, calendar, people, or Microsoft Learn without creating an Agency task. Disabling either setting removes the feature from subsequent voice sessions; an active session keeps its launch-time provider contract.
+
+The model receives only two compact broker definitions: `find_work_tools` and `call_work_tool`. Discovery performs MCP `tools/list` on demand and returns at most twelve complete matching approved definitions within a 5,000-character budget; `hasMore` reports omitted matches. Invocation checks the selected name against Invoke's existing fixed read allowlist before sending MCP `tools/call` through the app-owned Agency loopback proxy. Upstream catalogs are not included in the default prompt or cached into later sessions. Provider result compaction still bounds returned content.
+
+This path avoids the Agency worker, model turn, task record, worktree, and resumable session. It is intended for short reads where lower latency matters; use an Agency research task for multi-source synthesis, durable follow-ups, or background work. WorkIQ `ask`, writes, shell, filesystem, URL, repository, and unrecognized tools remain unavailable. A discovered schema or listening proxy does not establish account, tenant, or resource authorization, and private results may be spoken aloud.
+
 ## Agency Delegation
 
 Fresh installations default to Agency; existing saved choices remain unchanged. Coding sessions run in isolated worktrees and may use the Agency MCPs available to the signed-in client.

@@ -14,6 +14,20 @@ const BACKENDS = ['copilot', 'agency'];
 const TERMINAL_STATES = new Set(['result_ready', 'agent_failed', 'agent_stopped', 'completed', 'failed', 'cancelled']);
 const RESUMABLE_STATES = new Set([...TERMINAL_STATES, 'needs_input']);
 const SEARCH_STOP_WORDS = new Set('a an and are can could do for how i in is it me my of on please s status task tasks tell that the this to was what whats which work you'.split(' '));
+const TRANSIENT_RENAME_ERRORS = new Set(['EACCES', 'EBUSY', 'EPERM']);
+const RENAME_RETRY_SIGNAL = new Int32Array(new SharedArrayBuffer(4));
+
+function renameStateFile(source, destination) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      renameSync(source, destination);
+      return;
+    } catch (error) {
+      if (attempt >= 4 || !TRANSIENT_RENAME_ERRORS.has(error.code)) throw error;
+      Atomics.wait(RENAME_RETRY_SIGNAL, 0, 0, 20 * (attempt + 1));
+    }
+  }
+}
 
 function requiredText(value, label, limit = 12000) {
   if (typeof value !== 'string' || !value.trim() || value.length > limit) throw new Error(`Invalid ${label}`);
@@ -39,7 +53,7 @@ export class Supervisor extends EventEmitter {
     catch (error) {
       if (error.code !== 'ENOENT') {
         const backup = `${this.file}.corrupt-${this.now()}`;
-        renameSync(this.file, backup);
+        renameStateFile(this.file, backup);
         this.recoveryWarning = `Invalid saved state was preserved at ${backup}.`;
         console.warn(`${this.recoveryWarning} ${error.message}`);
       }
@@ -105,7 +119,7 @@ export class Supervisor extends EventEmitter {
       this.state.settings.defaultAreaId = this.state.areas[0]?.id || null;
     }
     writeFileSync(`${this.file}.tmp`, JSON.stringify(this.state, null, 2));
-    renameSync(`${this.file}.tmp`, this.file);
+    renameStateFile(`${this.file}.tmp`, this.file);
     this.emit('change', this.snapshot());
   }
 

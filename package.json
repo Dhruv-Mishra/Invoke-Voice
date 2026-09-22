@@ -27,7 +27,7 @@
     "agency:check": "node --env-file-if-exists=.env scripts/check-copilot.mjs --agency",
     "agency:setup:check": "node --env-file-if-exists=.env scripts/check-agency-setup.mjs",
     "agency:read:check": "node scripts/check-agency-read.mjs",
-    "test": "node --test test/*.test.mjs",
+    "test": "node --test --test-concurrency=4 test/*.test.mjs",
     "desktop": "npm run build && node scripts/desktop-icon.mjs && electron desktop.cjs",
     "kokoro-pack": "node scripts/build-kokoro-pack.mjs",
     "dist:win": "node scripts/dist-win.mjs",

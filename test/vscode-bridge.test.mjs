@@ -166,7 +166,7 @@ test('builds explicit Copilot and Agency start and resume commands', () => {
   assert.deepEqual(copilot.args.slice(-4), ['--session-id', base.sessionId, '--agent', 'builder']);
   const agency = sessionLaunch({ ...base, backend: 'agency' }, area, { AGENCY_CLI: 'agency-test' }, { resume: true });
   assert.equal(agency.executable, 'agency-test');
-  assert.deepEqual(agency.args.slice(0, 13), ['copilot', '--hub', '--profile-only', `invoke-work-${base.sessionId}`, '--no-default-mcps', '--mcp', 'bluebird', '--mcp', 'workiq', '--mcp', 'teams', '--mcp', 'msft-learn']);
+  assert.deepEqual(agency.args.slice(0, 11), ['copilot', '--hub', '--profile-only', `invoke-work-${base.sessionId}`, '--no-default-mcps', '--mcp', 'bluebird', '--mcp', 'workiq', '--mcp', 'msft-learn']);
   assert.equal(copilot.args.includes('--mcp'), false);
   assert.equal(agency.args.includes('workiq'), true);
   assert.ok(agency.args.includes(`--resume=${base.sessionId}`));
@@ -236,9 +236,10 @@ test('read-only Agency launch exposes only curated MCP reads and rejects changed
     const prepared = await prepareAgencyRead(task, dataDir, env, async (executable, args, options) => {
       assert.equal(executable, 'agency-test');
       assert.deepEqual(args.slice(0, 6), ['config', 'set', '--local', '--no-aec', '--profile', 'voice-read-read-session']);
-      assert.ok(args.includes('voice-teams: teams'));
-      assert.ok(args.includes('voice-calendar: calendar'));
-      assert.ok(args.includes('voice-m365-user: m365-user'));
+      assert.ok(args.includes('voice-workiq: workiq'));
+      assert.equal(args.includes('voice-teams: teams'), false);
+      assert.equal(args.includes('voice-calendar: calendar'), false);
+      assert.equal(args.includes('voice-m365-user: m365-user'), false);
       assert.equal(options.timeout, 30000);
       assert.equal(options.env.COPILOT_ALLOW_ALL, '0');
       assert.equal(options.cwd, path.join(realpathSync.native(dataDir), 'agency-read', task.id));
@@ -257,10 +258,12 @@ test('read-only Agency launch exposes only curated MCP reads and rejects changed
       assert.ok(launch.args.includes('--deny-tool=shell,write,read,url'));
       assert.equal(launch.args.includes('--additional-mcp-config'), false);
       const policy = agencyReadPolicy(env);
-      assert.deepEqual(Object.keys(policy.tools), ['voice-msft-learn', 'voice-workiq', 'voice-teams', 'voice-calendar', 'voice-m365-user']);
+      assert.deepEqual(Object.keys(policy.tools), ['voice-msft-learn', 'voice-workiq']);
       assert.deepEqual(policy.tools['voice-workiq'], ['retrieve', 'fetch', 'search_paths', 'get_schema']);
-      assert.ok(policy.tools['voice-teams'].includes('ListChatMessages'));
-      assert.ok(policy.tools['voice-m365-user'].includes('GetMyDetails'));
+      const expanded = agencyReadPolicy({ ...env, AGENCY_M365_TOOLS: 'expanded' });
+      assert.ok(expanded.tools['voice-teams'].includes('ListChatMessages'));
+      assert.ok(expanded.tools['voice-m365-user'].includes('GetMyDetails'));
+      assert.notEqual(expanded.id, policy.id);
       const available = launch.args.find(arg => arg.startsWith('--available-tools=')).slice('--available-tools='.length).split(',');
       const allowed = launch.args.find(arg => arg.startsWith('--allow-tool=')).slice('--allow-tool='.length).split(',');
       for (const [server, tools] of Object.entries(policy.tools)) {

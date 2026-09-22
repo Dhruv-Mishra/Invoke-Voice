@@ -55,7 +55,7 @@ test('Agency proxies start once, publish only loopback endpoints and stop with t
   const mcp = createAgencyMcp({ env: { AGENCY_CLI: 'agency-test' }, spawnImpl });
   const start = mcp.start();
   const concurrent = mcp.start();
-  assert.equal(children.length, 3);
+  assert.equal(children.length, 2);
   children.forEach((child, index) => {
     assert.deepEqual(child.args, ['mcp', '--transport', 'http', '--port', '0', AGENCY_MCP_SERVERS[index]]);
     assert.equal(child.executable, 'agency-test');
@@ -74,7 +74,7 @@ test('Agency proxies start once, publish only loopback endpoints and stop with t
   await mcp.close();
   assert.deepEqual(mcp.configuration(), {});
   await mcp.start();
-  assert.equal(children.length, 3);
+  assert.equal(children.length, 2);
 });
 
 test('missing or stalled Agency never blocks startup and shutdown during startup settles', async () => {
@@ -107,12 +107,11 @@ test('Agency retries failed proxies and reports catalog readiness without readin
   const first = mcp.start();
   children[0].emit('error', new Error('ENOENT'));
   children[1].stdout.write('12001\n');
-  children[2].stdout.write('12002\n');
   await first;
   const retry = mcp.start();
-  assert.equal(children.length, 4);
-  assert.equal(children[3].args.at(-1), 'bluebird');
-  children[3].stdout.write('12003\n');
+  assert.equal(children.length, 3);
+  assert.equal(children[2].args.at(-1), 'bluebird');
+  children[2].stdout.write('12003\n');
   await retry;
   const results = await mcp.check();
   assert.ok(results.every(result => result.status === 'ready'));
@@ -162,7 +161,7 @@ test('direct voice tools load approved schemas on demand and reject unapproved c
   await assert.rejects(direct.call('call_work_tool', { source: 'workiq', name: 'ask', arguments: {} }), /not approved/);
   assert.deepEqual(methods.filter(method => method === 'tools/call'), ['tools/call']);
   assert.deepEqual(voiceToolsFor({}), voiceTools);
-  assert.equal(voiceToolsFor(env).length, voiceTools.length + 2);
+  assert.equal(voiceToolsFor(env).length, voiceTools.length + 3);
   env.VOICE_DIRECT_MCP_ACCESS = 'disabled';
   await assert.rejects(direct.call('find_work_tools', { source: 'workiq' }), /disabled/);
 });
@@ -175,9 +174,41 @@ test('shared MCP launch preserves read filters and avoids duplicate coding proxi
   assert.deepEqual(coding.args.slice(0, 7), ['copilot', '--hub', '--profile-only', `invoke-work-${task.sessionId}`, '--no-default-mcps', '--mcp', 'msft-learn']);
   const config = launch => JSON.parse(launch.args[launch.args.indexOf('--additional-mcp-config') + 1]).mcpServers;
   assert.deepEqual(config(coding), mcpServers);
-  const read = sessionLaunch({ ...task, readOnly: true, directory: 'C:\\read', agencyProfile: 'voice-read-session', agencyReadPolicy: 'read-only-v1' }, area, { AGENCY_WORK_DATA_ACCESS: 'read-only' }, { mcpServers });
-  assert.deepEqual(Object.keys(config(read)), ['voice-workiq', 'voice-teams']);
+  const read = sessionLaunch({ ...task, readOnly: true, directory: 'C:\\read', agencyProfile: 'voice-read-session', agencyReadPolicy: 'read-only-workiq-v2' }, area, { AGENCY_WORK_DATA_ACCESS: 'read-only' }, { mcpServers });
+  assert.deepEqual(Object.keys(config(read)), ['voice-workiq']);
   assert.deepEqual(config(read)['voice-workiq'].tools, ['retrieve', 'fetch', 'search_paths', 'get_schema']);
   const disabled = sessionLaunch({ ...task, readOnly: true, directory: 'C:\\read', agencyProfile: 'voice-read-session', agencyReadPolicy: 'disabled-v1' }, area, {}, { mcpServers });
   assert.equal(disabled.args.includes('--additional-mcp-config'), false);
+});
+
+test('compact WorkIQ search skips schema discovery and preserves consent, citations and errors', async () => {
+  const calls = [];
+  const env = { AGENCY_WORK_DATA_ACCESS: 'read-only', VOICE_DIRECT_MCP_ACCESS: 'read-only' };
+  let isError = false;
+  const direct = createDirectWorkTools({
+    listTools: () => assert.fail('Search must not need a discovery round'),
+    callTool: async (...args) => {
+      calls.push(args);
+      return { isError, content: [{ type: 'text', text: 'Duplicate grounding' }], structuredContent: { markdown: 'Evidence [^1]', sources: [{ id: '1', url: 'https://example.test/item' }] } };
+    },
+  }, env);
+  const result = await direct.call('search_work', { query: ' What changed in the project? ', source: 'email' });
+  assert.deepEqual(calls, [['workiq', 'retrieve', { query: ['What changed in the project?'], strategy: 'grounding', capabilities: [{ name: 'Email' }] }]]);
+  assert.equal(result.data.markdown, 'Evidence [^1]');
+  assert.equal(result.data.sources[0].id, '1');
+  assert.equal(result.error, undefined);
+  for (const [source, name] of [['teams', 'TeamsMessages'], ['calendar', 'Meetings'], ['files', 'OneDriveAndSharePoint'], ['people', 'People']]) {
+    await direct.call('search_work', { query: 'Project status', source });
+    assert.deepEqual(calls.at(-1), ['workiq', 'retrieve', { query: ['Project status'], strategy: 'grounding', capabilities: [{ name }] }]);
+  }
+  isError = true;
+  assert.match((await direct.call('search_work', { query: 'Project status', source: 'all' })).error, /could not complete/);
+  assert.equal(calls.at(-1)[2].capabilities, undefined);
+  for (const args of [{ query: '', source: 'email' }, { query: 'x'.repeat(1001), source: 'email' }, { query: 'test', source: 'email', agentId: 'other' }, { query: 'test', source: 'invalid' }, { query: 'test' }]) await assert.rejects(direct.call('search_work', args), /requires only/);
+  env.AGENCY_WORK_DATA_ACCESS = 'disabled';
+  await assert.rejects(direct.call('search_work', { query: 'Project status' }), /disabled/);
+  env.AGENCY_WORK_DATA_ACCESS = 'read-only';
+  env.VOICE_DIRECT_MCP_ACCESS = 'disabled';
+  await assert.rejects(direct.call('search_work', { query: 'Project status', source: 'all' }), /disabled/);
+  assert.equal(calls.length, 6);
 });

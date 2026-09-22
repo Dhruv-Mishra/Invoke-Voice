@@ -464,7 +464,7 @@ test('local context slides history on every round without splitting tool exchang
         : { taskId: 'task-24', state: 'running', actions: [], update: 'Progress '.repeat(2000) },
       env: { LOCAL_LLM_URL: `http://127.0.0.1:${server.address().port}/v1`, LLAMA_CONTEXT: '8192', LLAMA_PARALLEL: '2' },
     })) events.push(event);
-    assert.equal(requests.length, 5);
+    assert.equal(requests.length, 4);
     for (const request of requests.slice(0, -1)) {
       const instructions = themedInstructions(voiceInstructions, '') + (request.response_format.json_schema.schema.properties?.answer ? ' Tool budget reached. Answer now using the tool results. State what succeeded and what remains unfinished; do not claim unconfirmed actions or request more tools.' : '');
       assert.deepEqual(request.messages.filter(message => message.role === 'system'), [{ role: 'system', content: localInstructions(instructions, voiceTools) }]);
@@ -482,7 +482,8 @@ test('local context slides history on every round without splitting tool exchang
         }
       }
     }
-    assert.deepEqual(requests.at(-2).messages.filter(message => message.role === 'tool').map(message => message.tool_call_id), ['call_0_0', 'call_1_0', 'call_2_0']);
+    assert.deepEqual(requests.at(-2).messages.filter(message => message.role === 'tool').map(message => message.tool_call_id), ['call_0_0', 'call_1_0']);
+    assert.match(requests.at(-1).messages.at(-1).content, /running/);
     assert.equal(events.at(-1).type, 'done');
   } finally { await new Promise(resolve => server.close(resolve)); }
 });
@@ -1004,7 +1005,9 @@ test('multiple action rounds publish only the final receipt-backed response with
   assert.deepEqual(executed, ['task-1', 'task-2', 'task-3']);
   assert.deepEqual(events.filter(event => event.type === 'text'), [{ type: 'text', text: answer }]);
   assert.deepEqual(events.filter(event => event.type === 'tool').map(event => event.result), [{ deleted: true, taskId: 'task-1' }, { deleted: true, taskId: 'task-2' }, { error: 'Task is running' }]);
-  assert.equal(requests.at(-2).messages.filter(message => message.role === 'tool').length, 3);
+  assert.equal(requests.length, 4);
+  assert.match(requests.at(-1).messages.at(-1).content, /Task is running/);
+  assert.equal((requests.at(-1).messages.at(-1).content.match(/"deleted":true/g) || []).length, 2);
   assert.equal(events.at(-1).type, 'done');
 });
 
@@ -1026,10 +1029,10 @@ test('local tool budget bounds chains and reserves a tool-disabled answer', asyn
       callTool: async (_name, args) => { executed.push(args.taskId); return { taskId: args.taskId, state: 'running' }; },
     })) events.push(event);
     assert.equal(executed.length, toolRounds);
-    assert.equal(requests.length, toolRounds + 2);
-    assert.equal(Boolean(requests.at(-2).response_format.json_schema.schema.properties?.answer), toolRounds === 3);
-    assert.equal(requests.at(-2).messages.filter(message => message.role === 'tool').length, toolRounds);
-    if (toolRounds === 3) assert.match(requests.at(-2).messages[0].content, /what remains unfinished/);
+    assert.equal(requests.length, 4);
+    assert.ok(requests.at(-1).response_format.json_schema.schema.properties.answer);
+    assert.equal(requests.at(-2).messages.filter(message => message.role === 'tool').length, 2);
+    assert.equal((requests.at(-1).messages.at(-1).content.match(/"state":"running"/g) || []).length, toolRounds);
     assert.equal(events.at(-1).type, 'done');
     context.mock.restoreAll();
   }
@@ -1109,6 +1112,9 @@ test('local structured turns execute validated batches and never speak wire synt
   assert.equal(requests[0].tools, undefined);
   assert.equal(requests[0].response_format.type, 'json_schema');
   assert.equal(requests[0].chat_template_kwargs.enable_thinking, false);
+  assert.equal(requests[0].reasoning_budget, 256);
+  assert.equal(requests[1].response_format.json_schema.schema.oneOf[0].properties.answer.const, '');
+  assert.equal(requests.at(-1).reasoning_budget, 0);
   const taskVariants = request => request.response_format.json_schema.schema.oneOf[1].properties.calls.items.oneOf.find(tool => tool.properties.name.const === 'get_work_status').properties.arguments.oneOf;
   assert.equal(taskVariants(requests[0]).some(variant => variant.properties.taskId), false);
   assert.deepEqual(taskVariants(requests[1]).find(variant => variant.properties.taskId).properties.taskId.enum, ['private-id']);
@@ -1116,6 +1122,31 @@ test('local structured turns execute validated batches and never speak wire synt
   assert.equal(requests.length, 3);
   assert.doesNotMatch(JSON.stringify(requests[2].messages), /private-id|list_work|taskId|actions/);
   assert.match(JSON.stringify(requests[2].messages), /Parser|running/);
+});
+
+test('local direct search preserves grounding citations and summarizes without another routing turn', async context => {
+  const requests = [];
+  const calls = [];
+  const grounding = { source: 'workiq', data: { markdown: 'Review at 10 AM. [^source-1]', sources: [{ id: 'source-1', url: 'https://example.test/review' }] } };
+  context.mock.method(globalThis, 'fetch', async (_url, options) => {
+    requests.push(JSON.parse(options.body));
+    return new Response(localSSE(requests.length === 1
+      ? { intent: 'read', tool_calls: [{ function: { name: 'search_work', arguments: JSON.stringify({ query: 'review time', source: 'email' }) } }] }
+      : { content: 'The review is at 10 AM.' }));
+  });
+  const events = [];
+  for await (const event of streamReply({ provider: 'local', profile: 'voice',
+    env: { LOCAL_LLM_URL: 'http://127.0.0.1:1/v1', VOICE_DIRECT_MCP_ACCESS: 'read-only', AGENCY_WORK_DATA_ACCESS: 'read-only', LLAMA_REASONING_BUDGET: '128' },
+    messages: [{ role: 'user', content: 'Search email for the review time.' }],
+    callTool: async (name, args) => { calls.push({ name, args }); return grounding; },
+  })) events.push(event);
+  assert.deepEqual(calls, [{ name: 'search_work', args: { query: 'review time', source: 'email' } }]);
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0].reasoning_budget, 128);
+  assert.equal(requests[1].reasoning_budget, 0);
+  assert.ok(requests[1].response_format.json_schema.schema.properties.answer);
+  assert.ok(requests[1].messages.at(-1).content.endsWith(JSON.stringify([grounding])));
+  assert.deepEqual(events.filter(event => event.type === 'text'), [{ type: 'text', text: 'The review is at 10 AM.' }]);
 });
 
 test('local read intent cannot escalate and ambiguous searches ask without further generation', async context => {

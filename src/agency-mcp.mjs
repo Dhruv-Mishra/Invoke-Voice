@@ -4,8 +4,8 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { agencyReadPolicy } from './agency-read.mjs';
 
-export const AGENCY_MCP_SERVERS = ['bluebird', 'workiq', 'teams'];
-const readTools = agencyReadPolicy({ AGENCY_WORK_DATA_ACCESS: 'read-only' }).tools;
+export const AGENCY_MCP_SERVERS = ['bluebird', 'workiq'];
+const readTools = agencyReadPolicy({ AGENCY_WORK_DATA_ACCESS: 'read-only', AGENCY_M365_TOOLS: 'expanded' }).tools;
 const knownServers = new Set([...AGENCY_MCP_SERVERS, ...Object.keys(readTools).map(name => name.slice(6))]);
 
 export async function probeAgencyMcp(url, requiredTools = [], { timeoutMs = 30000 } = {}) {

@@ -8,6 +8,7 @@ const sources = Object.freeze({
   learn: 'msft-learn',
 });
 const DISCOVERY_BYTES = 5000;
+const searchCapabilities = { all: null, email: 'Email', teams: 'TeamsMessages', calendar: 'Meetings', files: 'OneDriveAndSharePoint', people: 'People' };
 
 export function createDirectWorkTools(agencyMcp, env = process.env) {
   const access = () => env.VOICE_DIRECT_MCP_ACCESS === 'read-only' && env.AGENCY_WORK_DATA_ACCESS === 'read-only';
@@ -20,6 +21,13 @@ export function createDirectWorkTools(agencyMcp, env = process.env) {
   };
   return {
     async call(name, args = {}) {
+      if (name === 'search_work') {
+        allowed('workiq');
+        if (typeof args.query !== 'string' || !args.query.trim() || args.query.length > 1000 || !Object.hasOwn(searchCapabilities, args.source) || Object.keys(args).some(key => !['query', 'source'].includes(key))) throw new Error('Work search requires only a query of 1 to 1000 characters and an approved source.');
+        const capability = searchCapabilities[args.source];
+        const result = await agencyMcp.callTool('workiq', 'retrieve', { query: [args.query.trim()], strategy: 'grounding', ...(capability ? { capabilities: [{ name: capability }] } : {}) });
+        return { source: 'workiq', data: result.structuredContent ?? result.content, ...(result.isError ? { error: 'WorkIQ could not complete the read.' } : {}) };
+      }
       const { server, names } = allowed(args.source);
       if (name === 'find_work_tools') {
         const query = String(args.query || '').trim().toLowerCase();

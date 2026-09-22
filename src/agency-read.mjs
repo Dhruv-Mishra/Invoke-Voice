@@ -15,10 +15,12 @@ const READ_TOOLS = {
 export function agencyReadPolicy(env = process.env) {
   const access = env.AGENCY_WORK_DATA_ACCESS || 'disabled';
   if (!['disabled', 'read-only'].includes(access)) throw new Error('Invalid Agency work-data access setting');
-  const servers = access === 'read-only' ? Object.keys(READ_TOOLS) : ['msft-learn'];
+  const mode = env.AGENCY_M365_TOOLS || 'workiq';
+  if (!['workiq', 'expanded'].includes(mode)) throw new Error('Invalid Agency M365 tools setting');
+  const servers = access === 'read-only' ? mode === 'expanded' ? Object.keys(READ_TOOLS) : ['msft-learn', 'workiq'] : ['msft-learn'];
   const executable = env.AGENCY_CLI || (process.platform === 'win32' ? 'agency.exe' : 'agency');
   const tools = Object.fromEntries(servers.map(server => [`voice-${server}`, [...READ_TOOLS[server]]]));
-  return { id: `${access}-v1`, executable, servers, tools };
+  return { id: access === 'read-only' && mode === 'workiq' ? 'read-only-workiq-v2' : `${access}-v1`, executable, servers, tools };
 }
 
 export async function prepareAgencyRead(task, dataDir, env = process.env, run = execute, { signal } = {}) {

@@ -37,14 +37,14 @@ test('Agency connection checks respect consent, reject remote origins and never 
   assert.equal(checks.length, 0);
   const disabled = await (await check()).json();
   assert.equal(disabled.workDataAccess, 'disabled');
-  assert.deepEqual(checks[0], ['bluebird', 'workiq', 'teams', 'msft-learn']);
+  assert.deepEqual(checks[0], ['bluebird', 'workiq', 'msft-learn']);
   assert.equal((await check({ AGENCY_WORK_DATA_ACCESS: 'read-only' })).status, 400);
   assert.equal(process.env.AGENCY_WORK_DATA_ACCESS, 'disabled');
   const save = await fetch(`${app.url}/api/config`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: app.url }, body: JSON.stringify({ values: { AGENCY_WORK_DATA_ACCESS: 'read-only' } }) });
   assert.equal(save.status, 200);
   const enabled = await (await check()).json();
   assert.equal(enabled.workDataAccess, 'read-only');
-  assert.deepEqual(checks[1], ['bluebird', 'workiq', 'teams', 'msft-learn', 'calendar', 'm365-user']);
+  assert.deepEqual(checks[1], ['bluebird', 'workiq', 'msft-learn']);
   const revoke = await fetch(`${app.url}/api/config`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: app.url }, body: JSON.stringify({ values: { AGENCY_WORK_DATA_ACCESS: 'disabled' } }) });
   assert.equal(revoke.status, 200);
   assert.equal((await (await check()).json()).workDataAccess, 'disabled');
@@ -130,6 +130,14 @@ test('voice tool bridge ends calls locally and delegates supervisor tools', asyn
   assert.deepEqual(await callTool('list_work', { query: 'docs' }, { requestId: 'voice-list' }), { delegated: true });
   assert.match((await callTool('start_work', { objective: 'Read the calendar', readOnly: true, model: 'gpt-4' })).error, /Unknown argument: model/);
   assert.deepEqual(calls, [{ name: 'list_work', args: { query: 'docs' }, context: { requestId: 'voice-list' } }]);
+  const directCalls = [];
+  const direct = createVoiceToolCaller({ callTool: () => assert.fail('Direct reads must not create a task') }, () => {}, {
+    env: { VOICE_DIRECT_MCP_ACCESS: 'read-only', AGENCY_WORK_DATA_ACCESS: 'read-only' },
+    directWorkTools: { call: async (name, args) => { directCalls.push({ name, args }); return { source: 'workiq', data: 'Evidence' }; } },
+  });
+  assert.deepEqual(await direct('search_work', { query: 'Review time', source: 'email' }), { source: 'workiq', data: 'Evidence' });
+  assert.match((await direct('search_work', { query: 'Review time' })).error, /source/);
+  assert.deepEqual(directCalls, [{ name: 'search_work', args: { query: 'Review time', source: 'email' } }]);
 });
 
 test('voice transport preserves push-to-talk begin, audio and release order', async context => {
@@ -182,6 +190,10 @@ test('local runtime defaults match displayed settings and honor explicit overrid
     assert.equal(defaults.LLAMA_CONTEXT, value('--ctx-size'));
     assert.equal(defaults.LLAMA_PARALLEL, value('--parallel'));
     assert.equal(defaults.LLAMA_THREADS, value('--threads'));
+    assert.equal(defaults.LLAMA_REASONING_BUDGET, value('--reasoning-budget'));
+    assert.equal(value('--load-mode'), 'auto');
+    const tuned = localLlmArguments(paths, url, { LLAMA_THREADS: '3', LLAMA_THREADS_BATCH: '6', LLAMA_BATCH_SIZE: '512', LLAMA_UBATCH_SIZE: '128', LLAMA_REASONING_BUDGET: '0' });
+    for (const [flag, expected] of [['--threads', '3'], ['--threads-batch', '6'], ['--batch-size', '512'], ['--ubatch-size', '128'], ['--reasoning-budget', '0']]) assert.equal(tuned[tuned.indexOf(flag) + 1], expected);
     assert.equal(defaults.CRISPASR_THREADS, localThreadDefault(12));
     for (const [key, flag] of [['LLAMA_GPU_LAYERS', '--gpu-layers'], ['LLAMA_FLASH_ATTN', '--flash-attn'], ['LLAMA_CACHE_TYPE_K', '--cache-type-k'], ['LLAMA_CACHE_TYPE_V', '--cache-type-v']]) {
       assert.equal(defaults[key], value(flag));

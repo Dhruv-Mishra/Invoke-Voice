@@ -21,6 +21,7 @@ const owned = new Set();
 const cancellation = new AbortController();
 const deadline = AbortSignal.any([cancellation.signal, AbortSignal.timeout(15 * 60 * 1000)]);
 const llmCases = [
+  { name: 'configured' },
   { name: 'baseline', threads: '12', context: '8192', parallel: '2', key: 'f16', value: 'f16' },
   { name: 'compact-f16', threads: '8', context: '4096', parallel: '1', key: 'f16', value: 'f16' },
   { name: 'compact-q8-k', threads: '8', context: '4096', parallel: '1', key: 'q8_0', value: 'f16' },
@@ -77,9 +78,10 @@ async function json(url, body) {
 }
 
 async function voiceTurn(env, name, messages, outcome) {
+  if (env.BENCH_TURN && !env.BENCH_TURN.split(',').includes(name)) return;
   const originalFetch = globalThis.fetch;
   const document = name.startsWith('document-');
-  const expectedAction = { delegate: 'start_work', coding: 'start_work', note: 'invoke_vscode', delete: 'delete_work', deleteAll: 'delete_work', followup: 'send_work_message', cancel: 'cancel_work', open: 'open_work', theme: 'control_app', quiet: 'control_app', inbox: 'control_app', end: 'end_call' }[outcome];
+  const expectedAction = { workSearch: 'search_work', delegate: 'start_work', coding: 'start_work', note: 'invoke_vscode', delete: 'delete_work', deleteAll: 'delete_work', followup: 'send_work_message', cancel: 'cancel_work', open: 'open_work', theme: 'control_app', quiet: 'control_app', inbox: 'control_app', end: 'end_call' }[outcome];
   const status = {
     taskId: 'synthetic-task', title: document ? 'Onboarding document' : 'Synthetic login fix', state: 'result_ready',
     result: document ? 'The document draft is ready for review.' : 'The synthetic login fix is complete and its tests passed.',
@@ -107,6 +109,10 @@ async function voiceTurn(env, name, messages, outcome) {
         if (!line.startsWith('data:') || line.includes('[DONE]')) continue;
         const chunk = JSON.parse(line.slice(5));
         const choice = chunk.choices?.[0];
+        if (env.BENCH_TRACE === '1' && choice?.delta) {
+          round.content = (round.content || '') + (choice.delta.content || '');
+          round.reasoning = (round.reasoning || '') + (choice.delta.reasoning_content || '');
+        }
         if (round.firstDeltaMs === undefined && (choice?.delta?.content || choice?.delta?.tool_calls)) round.firstDeltaMs = rounded(performance.now() - roundStart);
         if (choice?.finish_reason) round.finishReason = choice.finish_reason;
         if (chunk.usage) round.usage = chunk.usage;
@@ -132,6 +138,9 @@ async function voiceTurn(env, name, messages, outcome) {
           return matchesTask(args) ? status : { error: 'Unknown synthetic task.' };
         }
         if (tool === expectedAction) {
+          if (outcome === 'workSearch') return args.source === { 'm365-email': 'email', 'm365-teams': 'teams', 'm365-meeting': 'calendar' }[name]
+            ? { source: 'workiq', data: { markdown: 'The synthetic project review is scheduled for tomorrow at 10 AM. [^1]', sources: [{ id: '1', url: 'https://example.test/synthetic-review' }] } }
+            : { error: 'Search must respect the requested source.' };
           if (outcome === 'deleteAll') return args.all === true ? { deleted: 'tasks', deletedCount: 30, failedCount: 0, failed: [], remaining: 0 } : { error: 'Expected bulk deletion.' };
           if (outcome === 'theme') return args.action === 'set_theme' && args.value === 'baymax' ? { saved: true, ...args } : { error: 'Wrong preference.' };
           if (outcome === 'quiet') return args.action === 'set_spoken_updates' && args.value === 'off' ? { saved: true, ...args } : { error: 'Wrong preference.' };
@@ -188,9 +197,13 @@ async function benchLlm(baseEnv, selected) {
     const port = reservation.address().port;
     await new Promise(resolve => reservation.close(resolve));
     const origin = `http://127.0.0.1:${port}`;
-    const env = { ...baseEnv, LOCAL_LLM_URL: `${origin}/v1`, LLAMA_THREADS: candidate.threads, LLAMA_CONTEXT: candidate.context, LLAMA_PARALLEL: candidate.parallel, BENCH_CASE: candidate.name };
+    const env = { ...baseEnv, LOCAL_LLM_URL: `${origin}/v1`, BENCH_CASE: candidate.name };
+    for (const [key, value] of [['LLAMA_THREADS', candidate.threads], ['LLAMA_CONTEXT', candidate.context], ['LLAMA_PARALLEL', candidate.parallel]]) {
+      if (value !== undefined) env[key] = value;
+    }
     const args = localLlmArguments(paths, new URL(origin), env);
-    for (const [flag, value] of [['--cache-type-k', candidate.key], ['--cache-type-v', candidate.value], ['--gpu-layers', 'auto']]) {
+    for (const [flag, value] of [['--cache-type-k', candidate.key], ['--cache-type-v', candidate.value]]) {
+      if (value === undefined) continue;
       const index = args.indexOf(flag);
       if (index < 0) args.push(flag, value);
       else args[index + 1] = value;
@@ -245,6 +258,11 @@ async function benchLlm(baseEnv, selected) {
       await voiceTurn(env, 'coding-task', [{ role: 'user', content: 'Start a new task to add unit tests for the login parser.' }], 'coding');
       await voiceTurn(env, 'vscode-note', [{ role: 'user', content: 'Open a request note in VS Code: review the parser. Do not start an agent.' }], 'note');
       await voiceTurn(env, 'conversation-no-delete', [{ role: 'user', content: 'Do not delete any tasks. Just say hello.' }], 'conversation');
+      if (env.VOICE_DIRECT_MCP_ACCESS === 'read-only' && env.AGENCY_WORK_DATA_ACCESS === 'read-only') {
+        await voiceTurn(env, 'm365-email', [{ role: 'user', content: 'Search my emails for the project review time.' }], 'workSearch');
+        await voiceTurn(env, 'm365-teams', [{ role: 'user', content: 'What did the team say in Teams about the project review time?' }], 'workSearch');
+        await voiceTurn(env, 'm365-meeting', [{ role: 'user', content: 'Find the project review meeting on my calendar.' }], 'workSearch');
+      }
     } catch (error) {
       output({ kind: 'llm-error', case: candidate.name, error: error.message });
       process.exitCode = 1;
@@ -489,9 +507,10 @@ async function benchStt(env, selected, selectedSample) {
 async function main() {
   const [mode = 'all', selected, sample] = process.argv.slice(2);
   if (mode === '--help') {
+    console.log('LLM configured uses current environment and portable defaults. BENCH_TURN=name[,name] selects cases; BENCH_SEED selects the seed; BENCH_TRACE=1 records synthetic model content/reasoning. Enable both direct/private read-only flags to include three synthetic M365 searches. No real MCP calls are made.');
     console.log('STT case whisper tests the installed INT8 worker with push-to-talk and hands-free synthetic audio. Non-Whisper STT cases explicitly use Moonshine/CrispASR.');
     console.log('STT case whisper-scheduling compares predecode off versus 480 ms using identical PCM, including paused/hesitation samples; BENCH_STT_REPEATS=1..5 repeats each sample. No provisional result may end a turn early. WHISPER_PREDECODE_MS=0 disables predecode for the whisper case.');
-    console.log('node scripts/bench-local.mjs [all|llm|stt] [case] [brief|short|long]\nLLM cases: baseline, compact-f16, compact-q8-k, compact-q8-kv\nSTT cases: configured (actual app arguments), baseline, candidate, step1000, redecode, bounded, bounded2 (rejected: loses brief-command words), sparse\nBENCH_STT_IDLE_MS=0..60000 adds paced silence before and after each STT clip (at least 2000 ms after). BENCH_STT_WRITER=app exercises the production bounded PCM writer without slowing input for drain. CRISPASR_BIN selects an already-installed runtime for comparison.\nSynthetic inputs only; JSON lines on stdout. Uses installed assets, private ports and owned processes; no downloads or configuration writes. Baselines and experimental cases are comparison values, not recommended laptop settings.');
+    console.log('node scripts/bench-local.mjs [all|llm|stt] [case] [brief|short|long]\nLLM cases: configured, baseline, compact-f16, compact-q8-k, compact-q8-kv\nSTT cases: configured (actual app arguments), baseline, candidate, step1000, redecode, bounded, bounded2 (rejected: loses brief-command words), sparse\nBENCH_STT_IDLE_MS=0..60000 adds paced silence before and after each STT clip (at least 2000 ms after). BENCH_STT_WRITER=app exercises the production bounded PCM writer without slowing input for drain. CRISPASR_BIN selects an already-installed runtime for comparison.\nSynthetic inputs only; JSON lines on stdout. Uses installed assets, private ports and owned processes; no downloads or configuration writes. Baselines and experimental cases are comparison values, not recommended laptop settings.');
     return;
   }
   if (!['all', 'llm', 'stt'].includes(mode) || (selected && !(mode === 'stt' ? sttCases : llmCases).some(candidate => candidate.name === selected)) || (sample && !(selected?.startsWith('whisper') ? ['brief', 'short', 'long', 'paused', 'hesitation'] : ['brief', 'short', 'long']).includes(sample))) throw new Error('Use --help for benchmark arguments.');

@@ -30,7 +30,7 @@ export function createVoiceToolCaller(supervisor, send, { directWorkTools, env =
       send({ type: 'end_call' });
       return { ended: true };
     }
-    if (['find_work_tools', 'call_work_tool'].includes(name)) return directWorkTools.call(name, args);
+    if (['search_work', 'find_work_tools', 'call_work_tool'].includes(name)) return directWorkTools.call(name, args);
     return supervisor.callTool(name, args, context);
   };
 }

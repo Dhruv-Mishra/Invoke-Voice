@@ -29,7 +29,7 @@ const server = createServer(async (request, response) => {
     call('blocked-shell', 'powershell', { command: 'Write-Output SHELL_REACHED' }),
     call('blocked-workiq-ask', 'voice-workiq-ask', { question: 'Do not execute this synthetic call.' }),
   ] : round === 2 ? [call('public-read', 'voice-msft-learn-microsoft_docs_search', { query: 'C# String.Length property' }),
-    call('workiq-schema', 'voice-workiq-search_paths', { query: '/me/messages' })]
+    call('workiq-schema', 'voice-workiq-search_paths', { filter: '/me/messages' })]
     : [call(`complete-${round}`, 'task_complete', { summary: round === 3 ? 'READ_CHECK_OK' : 'THREAD_RESUMED' })];
   const message = { role: 'assistant', content: null, tool_calls: calls };
   response.writeHead(200, { 'Content-Type': body.stream ? 'text/event-stream' : 'application/json' });
@@ -49,7 +49,7 @@ try {
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const env = {
-    ...process.env, AGENCY_WORK_DATA_ACCESS: 'read-only',
+    ...process.env, AGENCY_WORK_DATA_ACCESS: 'read-only', AGENCY_M365_TOOLS: 'workiq',
     COPILOT_PROVIDER_BASE_URL: `http://127.0.0.1:${server.address().port}/v1`,
     COPILOT_PROVIDER_TYPE: 'openai', COPILOT_PROVIDER_WIRE_API: 'completions', COPILOT_MODEL: 'gpt-4.1',
     COPILOT_PROVIDER_API_KEY: 'synthetic-only', COPILOT_PROVIDER_HEADERS: '',
@@ -57,7 +57,7 @@ try {
   };
   await agencyMcp.start();
   assert.equal(agencyMcp.configuration().workiq?.type, 'http');
-  assert.equal(agencyMcp.configuration().teams?.type, 'http');
+  assert.equal(agencyMcp.configuration().teams, undefined);
   supervisor = new Supervisor({ dataDir, env, bridge: createVSCodeBridge(dataDir, env, { agencyMcp }) });
   let completed = once(supervisor, 'notification');
   const receipt = await supervisor.callTool('start_work', {
@@ -70,7 +70,7 @@ try {
   const [initial] = await completed;
   assert.equal(initial.state, 'result_ready', initial.text);
   assert.equal(initial.text, 'READ_CHECK_OK');
-  assert.ok(visibleTools.has('voice-teams-ListChatMessages'));
+  assert.equal(visibleTools.has('voice-teams-ListChatMessages'), false);
   assert.ok(visibleTools.has('voice-workiq-retrieve'));
   assert.equal(visibleTools.has('voice-workiq-ask'), false);
   assert.equal(visibleTools.has('voice-workiq-create_entity'), false);
@@ -99,11 +99,11 @@ try {
     const [updated] = await completed;
     assert.equal(updated.state, 'result_ready', updated.text);
     assert.equal(visibleTools.has('voice-workiq-retrieve'), access === 'read-only');
-    assert.equal(visibleTools.has('voice-teams-ListChatMessages'), access === 'read-only');
+    assert.equal(visibleTools.has('voice-teams-ListChatMessages'), false);
     assert.equal(visibleTools.has('voice-workiq-ask'), false);
     assert.equal(supervisor.task(task.id).sessionId, sessionId);
   }
-  console.log('PASS: shared WorkIQ/Teams HTTP; WorkIQ schema and public Learn reads; writes, ask and shell rejected; queued same-session resume, consent revoke/restore and private progress.');
+  console.log('PASS: shared WorkIQ HTTP; WorkIQ schema and public Learn reads; redundant M365 servers omitted; writes, ask and shell rejected; queued same-session resume, consent revoke/restore and private progress.');
 } finally {
   await supervisor?.close();
   await agencyMcp.close();

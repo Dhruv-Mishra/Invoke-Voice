@@ -26,6 +26,7 @@ export const endCallTool = definition('end_call', 'End the active voice call whe
 export const voiceTools = [...modelTools, endCallTool];
 const directSources = ['workiq', 'teams', 'calendar', 'people', 'learn'];
 export const directWorkTools = [
+  definition('search_work', 'Search M365 through WorkIQ. Read-only.', { query: text('Question with relevant names and dates; max 1000 characters'), source: choice('Requested source; all for cross-source questions', ['all', 'email', 'teams', 'calendar', 'files', 'people']) }, ['query', 'source']),
   definition('find_work_tools', 'Find approved read-only tools for a work source before calling one.', { source: choice('', directSources), query: text('Capability keywords') }, ['source']),
   definition('call_work_tool', 'Call one tool returned by find_work_tools.', { source: choice('', directSources), name: text(), arguments: { type: 'object', additionalProperties: true } }, ['source', 'name', 'arguments']),
 ];

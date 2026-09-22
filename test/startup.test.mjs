@@ -174,6 +174,52 @@ test('voice transport preserves push-to-talk begin, audio and release order', as
   assert.deepEqual(input, ['begin', 'AAA=', 'commit']);
 });
 
+test('routing-only configuration can change during a call without allowing other configuration changes', async context => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-routing-live-'));
+  const keys = ['LOCAL_ROUTER', 'LOCAL_ROUTER_MIN_PROBABILITY', 'LOCAL_ROUTER_MIN_MARGIN'];
+  const saved = Object.fromEntries(keys.map(key => [key, process.env[key]]));
+  process.env.LOCAL_ROUTER = 'off';
+  const supervisor = new Supervisor({ dataDir, bridge: {} });
+  supervisor.updateSettings({ greetOnConnect: false });
+  let closed = 0;
+  const app = await startSupervisor({ dataDir, port: 0, prewarm: false, supervisor,
+    createRealtimeVoice: async ({ send }) => {
+      send({ type: 'ready' });
+      return { close() { closed++; } };
+    },
+  });
+  const socket = new WebSocket(`${app.url.replace('http:', 'ws:')}/voice`);
+  context.after(async () => {
+    socket.terminate();
+    await app.close();
+    for (const key of keys) {
+      if (saved[key] === undefined) delete process.env[key];
+      else process.env[key] = saved[key];
+    }
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+  await once(socket, 'open');
+  const ready = once(socket, 'message');
+  socket.send(JSON.stringify({ type: 'start', mode: 'openai-realtime' }));
+  assert.equal(JSON.parse((await ready)[0]).type, 'ready');
+  const post = (values, origin = app.url) => fetch(`${app.url}/api/config`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin }, body: JSON.stringify({ values }) });
+  assert.equal((await post({ LOCAL_ROUTER: 'scored' }, 'https://untrusted.test')).status, 403);
+  assert.equal((await post({ LOCAL_ROUTER: 'scored', LOCAL_LLM_MODEL: 'must-not-change' })).status, 409);
+  assert.equal((await post({ LOCAL_ROUTER: 'unsupported' })).status, 400);
+  assert.equal(process.env.LOCAL_ROUTER, 'off');
+  for (const mode of ['scored', 'off']) {
+    const response = await post({ LOCAL_ROUTER: mode });
+    assert.equal(response.status, 200);
+    const field = (await response.json()).configuration.fields.find(item => item.key === 'LOCAL_ROUTER');
+    assert.equal(field.value, mode);
+    assert.equal(field.pendingRestart, false);
+    assert.equal(process.env.LOCAL_ROUTER, mode);
+    assert.equal(socket.readyState, WebSocket.OPEN);
+    assert.equal(closed, 0);
+  }
+  assert.equal((await post({ LLAMA_CONTEXT: '8192' })).status, 409);
+});
+
 test('local runtime defaults match displayed settings and honor explicit overrides', () => {
   const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-runtime-defaults-'));
   try {

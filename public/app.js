@@ -1487,8 +1487,10 @@ async function saveApplicationConfig(fields, feedback, saveButton) {
     await loadConfig(true);
     if (appConfig?.local?.sttProvider !== previousRecognizer) await localSetup.recognitionChanged();
     const pending = appConfig?.configuration?.fields?.some(field => field.pendingRestart);
+    const routingOnly = Object.keys(values).length === 1 && Object.hasOwn(values, 'LOCAL_ROUTER');
     feedback.textContent = fields === privateWorkFields ? 'Access saved. No restart needed. Applies to new voice calls, research tasks and follow-ups.'
-      : pending ? 'Saved. Restart Invoke to apply the marked changes.' : 'Saved. Applies to new sessions.';
+      : pending ? 'Saved. Restart Invoke to apply the marked changes.'
+        : routingOnly ? 'Saved. Routing applies to the next turn. No restart needed.' : 'Saved. Applies to new sessions.';
     return true;
   } catch (error) {
     feedback.textContent = `Error: ${error.message}`;

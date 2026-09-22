@@ -8,6 +8,7 @@ import path from 'node:path';
 import { app, BrowserWindow, ipcMain } from 'electron';
 import { WebSocketServer } from 'ws';
 import desktopLaunch from '../scripts/desktop-launch.cjs';
+import { createRuntimeConfig } from '../src/runtime-config.mjs';
 
 if (process.env.VOICE_SUPERVISOR_DISABLE_GPU === '1') app.disableHardwareAcceleration();
 app.commandLine.appendSwitch('use-fake-ui-for-media-stream');
@@ -72,6 +73,7 @@ const config = {
   voiceModes: [{ id: 'local', label: 'Local voice', configured: true }, { id: 'openai-realtime', label: 'OpenAI', model: 'gpt-realtime', configured: true }, { id: 'gemini-live', label: 'Google', model: 'gemini-live-fixture', configured: true }],
   defaults: { provider: 'local', voiceMode: 'local' },
   configuration: { fields: [
+    ...createRuntimeConfig({ dataDir: preferenceDir, env: {} }).snapshot().fields.filter(field => field.key === 'LOCAL_ROUTER'),
     { key: 'OPENAI_BASE_URL', label: 'OpenAI URL', group: 'Fixture', type: 'url', secret: false, value: 'https://example.test' },
     { key: 'LLAMA_THREADS', label: 'Threads', group: 'Fixture', type: 'number', secret: false, value: '8', min: 1, max: 128, restartRequired: true },
     { key: 'OPENAI_API_KEY', label: 'OpenAI key', group: 'Fixture', type: 'password', secret: true, configured: true },
@@ -461,6 +463,25 @@ try {
   await assertPainted('[data-for="config-local-stt-provider"]');
   await screenshot('speech-selector-desktop');
   assert.equal(await evaluate(() => document.querySelectorAll('.config-restart').length), 0);
+  assert.equal(await evaluate(() => document.getElementById('config-local-router').value), 'scored');
+  const connectionsBeforeRouting = { voice: voiceConnections, events: eventConnections };
+  await pointerClick('[data-for="config-local-router"] button[value="off"]');
+  await click('#config-save-btn');
+  await waitFor(() => document.getElementById('config-local-router').dataset.savedValue === 'off' && document.getElementById('config-feedback').textContent.includes('next turn'));
+  assert.deepEqual(configWrites.at(-1), { LOCAL_ROUTER: 'off' });
+  assert.equal(await evaluate(() => document.querySelector('[data-for="config-local-router"] [aria-checked="true"]').value), 'off');
+  assert.equal(await evaluate(() => document.querySelector('#config-local-router').closest('.config-field').querySelector('.config-restart')), null);
+  await click('#close-view-btn');
+  await waitFor(() => document.body.dataset.view === 'home');
+  await visit('settings');
+  assert.equal(await evaluate(() => document.getElementById('config-local-router').value), 'off');
+  assert.equal(await evaluate(() => document.getElementById('config-section').open), true);
+  await pointerClick('[data-for="config-local-router"] button[value="scored"]');
+  await click('#config-save-btn');
+  await waitFor(() => document.getElementById('config-local-router').dataset.savedValue === 'scored' && document.getElementById('config-feedback').textContent.includes('next turn'));
+  assert.deepEqual(configWrites.at(-1), { LOCAL_ROUTER: 'scored' });
+  assert.deepEqual({ voice: voiceConnections, events: eventConnections }, connectionsBeforeRouting);
+  assert.equal(setupWrites, 0, 'routing changes must not install or restart local models');
   assert.equal(await evaluate(() => document.getElementById('settings-idle-warning')), null);
   await typeText('#config-llama-threads', '9');
   await choose('#settings-idle-end', '30');

@@ -39,6 +39,7 @@ const fields = Object.freeze([
   { key: 'VOICE_DIRECT_MCP_ACCESS', label: 'Direct voice work tools', description: 'Let voice calls use approved read-only work tools without an Agency task. Requires Private work sources; tool definitions load only when needed.', group: 'Coding tools', type: 'select', defaultValue: 'disabled', options: [['disabled', 'Off'], ['read-only', 'Read-only']] },
   { key: 'AGENCY_M365_TOOLS', label: 'Microsoft 365 tools', description: 'WorkIQ covers M365 search and exact reads. Expanded also enables dedicated Teams, calendar and people tools. Does not grant access.', group: 'Coding tools', type: 'select', defaultValue: 'workiq', options: [['workiq', 'WorkIQ'], ['expanded', 'Expanded']] },
   { key: 'COPILOT_REASONING', label: 'Copilot reasoning effort', group: 'Coding tools', type: 'select', defaultValue: 'medium', options: [['low', 'Low'], ['medium', 'Medium'], ['high', 'High']] },
+  { key: 'LOCAL_ROUTER', label: 'Local routing', description: 'Raw-scored is experimental and can select incorrect actions.', group: 'Local performance', type: 'select', defaultValue: 'scored', options: [['off', 'Regular'], ['scored', 'Raw-scored (experimental)']] },
   { key: 'LLAMA_THREADS', label: 'Local LLM threads', group: 'Local performance', type: 'number', defaultValue: localThreadDefault(8), min: 1, max: 128, restartRequired: true },
   { key: 'LLAMA_REASONING_BUDGET', label: 'Local LLM thinking tokens', description: '256 bounds long reasoning. Lower values can reduce tool accuracy. 0 disables thinking; -1 is unlimited. Tool-free summaries use 0.', group: 'Local performance', type: 'number', defaultValue: '256', min: -1, max: 512, restartRequired: true },
   { key: 'LLAMA_CONTEXT', label: 'Local LLM context size', group: 'Local performance', type: 'number', defaultValue: '4096', min: 1024, max: 131072, restartRequired: true },
@@ -86,6 +87,10 @@ export function createRuntimeConfig({ dataDir, env = process.env } = {}) {
       if (!includeRestart && field.restartRequired) continue;
       if (Object.hasOwn(values, field.key)) env[field.key] = values[field.key];
     }
+    if (values.LOCAL_ROUTER === 'scored') {
+      env.LOCAL_ROUTER_MIN_PROBABILITY = '0';
+      env.LOCAL_ROUTER_MIN_MARGIN = '0';
+    }
   };
   const snapshot = () => ({
     path: file,
@@ -131,6 +136,11 @@ export function createRuntimeConfig({ dataDir, env = process.env } = {}) {
       warnings.push(warning);
       console.warn(`${warning} ${error.message}`);
     }
+  }
+  if (!env.LOCAL_ROUTER) {
+    env.LOCAL_ROUTER = byKey.get('LOCAL_ROUTER').defaultValue;
+    env.LOCAL_ROUTER_MIN_PROBABILITY ??= '0';
+    env.LOCAL_ROUTER_MIN_MARGIN ??= '0';
   }
   const startupEnvironment = { ...env, WHISPER_LANGUAGE: env.WHISPER_LANGUAGE || 'auto', WHISPER_THREADS: env.WHISPER_THREADS || env.LOCAL_THREADS || localThreadDefault(8), CRISPASR_THREADS: env.CRISPASR_THREADS || env.LOCAL_THREADS || localThreadDefault(12), PYTHON_BIN: stackPaths(env).pythonBase || '' };
   startupValues = Object.fromEntries(fields.filter(field => field.restartRequired).map(field => [field.key, startupEnvironment[field.key] || field.defaultValue || '']));

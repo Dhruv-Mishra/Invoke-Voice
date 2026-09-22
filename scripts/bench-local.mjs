@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { closeSync, existsSync, openSync, readSync, statSync } from 'node:fs';
+import { appendFileSync, closeSync, createReadStream, existsSync, openSync, readSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { createInterface } from 'node:readline';
 import { availableParallelism, cpus, totalmem } from 'node:os';
@@ -13,9 +13,14 @@ import { localLlmArguments } from './start.mjs';
 import { createPcmWriter, createSttWriter, localConfiguration, localSttArguments } from '../src/local-voice.mjs';
 import { streamReply, voiceInstructions } from '../src/llm.mjs';
 import { modelTools as tools } from '../src/supervisor/contract.mjs';
+import { evaluateJev, jevCases, jevReceipt } from './jev-cases.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
-const output = value => console.log(JSON.stringify(value));
+const output = value => {
+  const line = JSON.stringify(value);
+  console.log(line);
+  if (process.env.BENCH_OUTPUT) appendFileSync(process.env.BENCH_OUTPUT, `${line}\n`);
+};
 const rounded = value => Math.round(value * 10) / 10;
 const owned = new Set();
 const cancellation = new AbortController();
@@ -77,8 +82,20 @@ async function json(url, body) {
   return response.json();
 }
 
-async function voiceTurn(env, name, messages, outcome) {
+async function voiceTurn(env, name, messages, outcome, specification) {
   if (env.BENCH_TURN && !env.BENCH_TURN.split(',').includes(name)) return;
+  const modes = (env.BENCH_ROUTERS || env.LOCAL_ROUTER || 'off').split(',');
+  if (modes.some(mode => !['off', 'choice', 'scored', 'shadow'].includes(mode))) throw new Error('Invalid BENCH_ROUTERS.');
+  const repeats = Number(env.BENCH_REPEATS || 1);
+  if (!Number.isInteger(repeats) || repeats < 1 || repeats > 5) throw new Error('BENCH_REPEATS must be 1..5.');
+  for (let repeat = 0; repeat < repeats; repeat++) {
+    const offset = (name.length + repeat) % modes.length;
+    const order = [...modes.slice(offset), ...modes.slice(0, offset)];
+    for (const mode of order) await measureVoiceTurn({ ...env, LOCAL_ROUTER: mode, BENCH_REPEAT: repeat }, name, messages, outcome, specification);
+  }
+}
+
+async function measureVoiceTurn(env, name, messages, outcome, specification) {
   const originalFetch = globalThis.fetch;
   const document = name.startsWith('document-');
   const expectedAction = { workSearch: 'search_work', delegate: 'start_work', coding: 'start_work', note: 'invoke_vscode', delete: 'delete_work', deleteAll: 'delete_work', followup: 'send_work_message', cancel: 'cancel_work', open: 'open_work', theme: 'control_app', quiet: 'control_app', inbox: 'control_app', end: 'end_call' }[outcome];
@@ -91,6 +108,8 @@ async function voiceTurn(env, name, messages, outcome) {
   const pending = [];
   const calls = [];
   const receipts = [];
+  const decisions = [];
+  const adapter = [];
   const matchesTask = args => args.taskId === status.taskId || args.query === status.taskId || (typeof args.query === 'string' && /login|document/i.test(args.query));
   const started = performance.now();
   let firstTextMs;
@@ -98,7 +117,21 @@ async function voiceTurn(env, name, messages, outcome) {
   let error;
   globalThis.fetch = async (url, init) => {
     const body = JSON.parse(init.body);
-    const round = { inputMessages: body.messages.length };
+    if (env.BENCH_CACHE === 'cold' && (url.endsWith('/completion') || url.endsWith('/chat/completions'))) body.cache_prompt = false;
+    init = { ...init, body: JSON.stringify(body) };
+    if (!url.endsWith('/chat/completions')) {
+      const start = performance.now();
+      const response = await originalFetch(url, init);
+      const record = { endpoint: new URL(url).pathname, wallMs: rounded(performance.now() - start) };
+      if (url.endsWith('/apply-template')) record.promptTail = (await response.clone().json()).prompt?.slice(-240);
+      if (url.endsWith('/completion')) {
+        const result = await response.clone().json();
+        Object.assign(record, { content: result.content, tokens: result.tokens, stopType: result.stop_type, timings: result.timings, tokensCached: result.tokens_cached, scoreCount: (result.completion_probabilities ?? result.probs)?.[0]?.top_logprobs?.length });
+      }
+      adapter.push(record);
+      return response;
+    }
+    const round = { inputMessages: body.messages.length, stage: body.messages[0].content.includes('Available tools:') ? 'planner' : 'text' };
     rounds.push(round);
     const roundStart = performance.now();
     const response = await originalFetch(url, { ...init, body: JSON.stringify({ ...body, chat_template_kwargs: { enable_thinking: false }, temperature: 0.2, seed: Number(env.BENCH_SEED || 42), stream_options: { include_usage: true } }) });
@@ -124,8 +157,10 @@ async function voiceTurn(env, name, messages, outcome) {
   };
   try {
     for await (const event of streamReply({ provider: env.BENCH_NATIVE === '1' ? 'custom' : 'local', profile: 'voice', env: { ...env, CUSTOM_BASE_URL: env.LOCAL_LLM_URL, CUSTOM_MODEL: env.LOCAL_LLM_MODEL || 'ling-local', CUSTOM_API_KEY: '' }, messages, requestId: `synthetic-${name}`, signal: deadline,
+      onDecision: decision => decisions.push(decision),
       callTool: async (tool, args) => {
         calls.push({ tool, args, atMs: rounded(performance.now() - started) });
+        if (specification) return jevReceipt(specification, tool, args);
         if (tool === 'list_work') {
           if (outcome === 'empty') return args.query === undefined ? { tasks: [] } : { tasks: [], hasMore: false };
           if (outcome === 'error') return { error: 'Synthetic status service unavailable.' };
@@ -177,8 +212,10 @@ async function voiceTurn(env, name, messages, outcome) {
   const spokenContract = !/synthetic-(task|other)|list_work|get_work_status|start_work|send_work_message|result_ready|<think>|```/i.test(text);
   const searchContract = !document || (queried && (outcome === 'status' ? calls.length === 1 : /\?/.test(text)));
   const completed = !error && Boolean(text.trim()) && rounds.every(round => round.finishReason === 'stop' || round.finishReason === 'tool_calls');
-  const result = { kind: 'llm-turn', case: env.BENCH_CASE, name, wallMs: rounded(performance.now() - started), firstTextMs, completed, passiveReadContract, spokenContract, searchContract, text, calls, receipts, rounds, ...(error ? { error } : {}) };
-  if (!completed || !passiveReadContract || !spokenContract || !searchContract) process.exitCode = 1;
+  const routingMs = (decisions[0]?.wallMs || 0) + rounds.filter(round => round.stage === 'planner').reduce((sum, round) => sum + round.wallMs, 0);
+  const result = { kind: 'llm-turn', case: env.BENCH_CASE, router: env.LOCAL_ROUTER, repeat: env.BENCH_REPEAT, name, outcome, wallMs: rounded(performance.now() - started), routingMs: rounded(routingMs), firstToolMs: calls[0]?.atMs, firstTextMs, completed, passiveReadContract, spokenContract, searchContract, text, calls, receipts, rounds, decisions, adapter, ...(error ? { error } : {}) };
+  if (specification) Object.assign(result, { category: specification.category, evaluation: evaluateJev(specification, result) });
+  if (specification ? !result.evaluation.passed || !spokenContract : !completed || !passiveReadContract || !spokenContract || !searchContract) process.exitCode = 1;
   output(result);
   return result;
 }
@@ -190,6 +227,9 @@ async function benchLlm(baseEnv, selected) {
   const magic = Buffer.alloc(4);
   try { readSync(descriptor, magic, 0, 4, 0); } finally { closeSync(descriptor); }
   if (magic.toString() !== 'GGUF') throw new Error(`Selected Ling file is not GGUF (${statSync(paths.ling).size} bytes). Supply an intact same-model LOCAL_LLM_PATH; benchmark never repairs assets.`);
+  const hash = createHash('sha256');
+  for await (const chunk of createReadStream(paths.ling)) hash.update(chunk);
+  output({ kind: 'llm-model', name: path.basename(paths.ling), bytes: statSync(paths.ling).size, sha256: hash.digest('hex'), node: process.version, date: new Date().toISOString(), seed: Number(baseEnv.BENCH_SEED || 42), routers: baseEnv.BENCH_ROUTERS || 'off', repeats: Number(baseEnv.BENCH_REPEATS || 1), minimumProbability: baseEnv.LOCAL_ROUTER_MIN_PROBABILITY, minimumMargin: baseEnv.LOCAL_ROUTER_MIN_MARGIN });
   for (const candidate of llmCases.filter(item => !selected || item.name === selected)) {
     deadline.throwIfAborted();
     const reservation = net.createServer();
@@ -233,9 +273,14 @@ async function benchLlm(baseEnv, selected) {
       const template = String(props.chat_template || '');
       const rendered = await json(`${origin}/apply-template`, { messages, tools, add_generation_prompt: true, chat_template_kwargs: { enable_thinking: false } });
       const prompt = String(rendered.prompt || '');
-      output({ kind: 'llm-template', case: candidate.name, loadMs: rounded(performance.now() - started), templateSha256: createHash('sha256').update(template).digest('hex'), templateBytes: template.length, renderedBytes: prompt.length, toolNamesRendered: tools.filter(tool => prompt.includes(tool.function.name)).map(tool => tool.function.name), renderedTail: prompt.slice(-900), context: props.default_generation_settings?.n_ctx, native: startup.split(/\r?\n/).filter(line => /build:|architecture|n_ctx|KV.*(size|buffer)|flash.attn|chat format|chat template|offload|type_[kv]/i.test(line)).slice(-35) });
+      output({ kind: 'llm-template', case: candidate.name, build: props.build_info, loadMs: rounded(performance.now() - started), templateSha256: createHash('sha256').update(template).digest('hex'), templateBytes: template.length, renderedBytes: prompt.length, toolNamesRendered: tools.filter(tool => prompt.includes(tool.function.name)).map(tool => tool.function.name), renderedTail: prompt.slice(-900), context: props.default_generation_settings?.n_ctx, native: startup.split(/\r?\n/).filter(line => /build:|architecture|n_ctx|KV.*(size|buffer)|flash.attn|chat format|chat template|offload|type_[kv]/i.test(line)).slice(-35) });
       const warm = await json(`${origin}/v1/chat/completions`, { model: env.LOCAL_LLM_MODEL || 'ling-local', messages: [messages[0], { role: 'user', content: 'Say hello.' }], tools, tool_choice: 'auto', chat_template_kwargs: { enable_thinking: false }, cache_prompt: true, max_tokens: 1, temperature: 0 });
       output({ kind: 'llm-warm', case: candidate.name, usage: warm.usage, timings: warm.timings, choice: warm.choices?.[0] });
+      if (env.BENCH_SUITE === 'jev') {
+        output({ kind: 'jev-corpus', cases: jevCases.length, sha256: createHash('sha256').update(JSON.stringify(jevCases)).digest('hex'), cache: env.BENCH_CACHE || 'natural', note: 'Synthetic development evaluation, not a 500-case human-reviewed held-out release set.' });
+        for (const specification of jevCases) await voiceTurn(env, specification.name, specification.messages, 'jev', specification);
+        continue;
+      }
       await voiceTurn(env, 'status', [messages[1]], 'status');
       await voiceTurn(env, 'denial-followup', [messages[1], { role: 'assistant', content: 'I cannot access your tasks.' }, { role: 'user', content: 'You do have access. Check the current work and tell me its status; do not start or resume anything.' }], 'status');
       await voiceTurn(env, 'empty', [messages[1]], 'empty');
@@ -507,6 +552,7 @@ async function benchStt(env, selected, selectedSample) {
 async function main() {
   const [mode = 'all', selected, sample] = process.argv.slice(2);
   if (mode === '--help') {
+    console.log('Jevify: BENCH_SUITE=jev selects 54 synthetic probes. BENCH_ROUTERS=off,choice,scored pairs modes per case; BENCH_REPEATS=1..5 rotates order. BENCH_CACHE=cold disables prompt reuse. LOCAL_ROUTER_REVERSE=1 permutes options. BENCH_OUTPUT appends JSONL to an existing directory. Scored mode abstains unless explicit LOCAL_ROUTER_MIN_PROBABILITY/MARGIN pass. All callbacks are synthetic.');
     console.log('LLM configured uses current environment and portable defaults. BENCH_TURN=name[,name] selects cases; BENCH_SEED selects the seed; BENCH_TRACE=1 records synthetic model content/reasoning. Enable both direct/private read-only flags to include three synthetic M365 searches. No real MCP calls are made.');
     console.log('STT case whisper tests the installed INT8 worker with push-to-talk and hands-free synthetic audio. Non-Whisper STT cases explicitly use Moonshine/CrispASR.');
     console.log('STT case whisper-scheduling compares predecode off versus 480 ms using identical PCM, including paused/hesitation samples; BENCH_STT_REPEATS=1..5 repeats each sample. No provisional result may end a turn early. WHISPER_PREDECODE_MS=0 disables predecode for the whisper case.');

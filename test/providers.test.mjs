@@ -11,12 +11,190 @@ import { fileURLToPath } from 'node:url';
 import { PassThrough, Writable } from 'node:stream';
 import { compactToolResult, localInstructions, streamReply, voiceInstructions } from '../src/llm.mjs';
 import { supervisorInstructions } from '../src/supervisor.mjs';
-import { voiceTools } from '../src/supervisor/contract.mjs';
+import { voiceTools, voiceToolsFor } from '../src/supervisor/contract.mjs';
 import { closeLocalVoice, createLocalVoice, createPcmWriter, createSttWriter, drainVoiceText, isVoiceResponsePlayable, localSttArguments, onLocalVoiceRuntimeExit, warmLocalVoice } from '../src/local-voice.mjs';
 import { createRealtimeAnnouncementGate, createRealtimeVoice, createTranscriptStream, DEFAULT_GEMINI_LIVE_MODEL, geminiLiveConfig, geminiLiveFunctionResponse } from '../src/realtime.mjs';
 import { sessionThemeOptions, themedInstructions, themeVoicePreset } from '../src/theme-session.mjs';
 import { providerProfiles, resolveEndpoint } from '../src/llm/provider-config.mjs';
 import { createRuntimeConfig } from '../src/runtime-config.mjs';
+import { chooseLocalRoute, compileChoices } from '../src/llm/choice-router.mjs';
+
+test('choice catalog preserves complete legal tuples and available tools', () => {
+  const choices = compileChoices(voiceTools, 'Change the theme.');
+  assert.ok(choices.length <= 32);
+  assert.equal(choices.some(choice => choice.name === 'search_work'), false);
+  assert.equal(choices.filter(choice => choice.name === 'control_app').length, 7);
+  assert.equal(choices.some(choice => choice.args?.action === 'set_theme' && choice.args.value === 'on'), false);
+  assert.equal(choices.some(choice => choice.name === 'delete_work'), false);
+});
+
+test('choice adapter verifies boundary tokens and fails closed on missing scores', async context => {
+  let missing = false;
+  context.mock.method(globalThis, 'fetch', async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (url.endsWith('/apply-template')) return Response.json({ prompt: 'boundary:' });
+    if (url.endsWith('/tokenize')) return Response.json({ tokens: [99, ...[...body.content.slice('boundary:'.length)].map(label => label.charCodeAt(0))] });
+    assert.equal(body.n_predict, 1);
+    assert.deepEqual(body.samplers, ['temperature']);
+    assert.equal(body.post_sampling_probs, false);
+    assert.equal(body.temperature, -1);
+    return Response.json({ content: 'D', tokens: [68], stop_type: 'limit', completion_probabilities: [{ top_logprobs: missing ? [] : [65, 66, 67, 68].map(id => ({ id, logprob: Math.log(id === 68 ? 0.7 : 0.1) })) }] });
+  });
+  const options = { config: { url: 'http://127.0.0.1:1/v1/chat/completions' }, tools: [voiceTools[0]], messages: [{ role: 'user', content: 'Recent status?' }], instructions: '', contextTokens: 4096, scored: true };
+  const result = await chooseLocalRoute(options);
+  assert.deepEqual(result.choice.args, {});
+  assert.equal(result.choice.name, 'list_work');
+  assert.ok(Math.abs(result.metadata.probability - 0.7) < 0.0001);
+  missing = true;
+  await assert.rejects(chooseLocalRoute(options), /every allowed label/);
+});
+
+test('choice routing uses the existing executor once and never replans after dispatch', async context => {
+  const decisions = [];
+  const calls = [];
+  let completions = 0;
+  context.mock.method(globalThis, 'fetch', async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (url.endsWith('/apply-template')) return Response.json({ prompt: 'boundary:' });
+    if (url.endsWith('/tokenize')) return Response.json({ tokens: [99, ...[...body.content.slice('boundary:'.length)].map(label => label.charCodeAt(0))] });
+    if (url.endsWith('/completion')) return Response.json({ content: 'L', tokens: [76], stop_type: 'limit' });
+    completions++;
+    assert.equal(body.messages[0].content.includes('Available tools:'), false);
+    return new Response(localSSE({ content: 'The Baymax theme is set.' }));
+  });
+  for await (const event of streamReply({ provider: 'local', env: { LOCAL_LLM_URL: 'http://127.0.0.1:1/v1', LOCAL_ROUTER: 'choice' },
+    messages: [{ role: 'user', content: 'Set the Baymax theme.' }], onDecision: value => decisions.push(value),
+    callTool: async (name, args, context) => { calls.push({ name, args, context }); return { saved: true, ...args }; },
+  })) assert.ok(event);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].name, 'control_app');
+  assert.deepEqual(calls[0].args, { action: 'set_theme', value: 'baymax' });
+  assert.ok(calls[0].context.requestId);
+  assert.equal(completions, 1);
+  assert.equal(decisions[0].accepted, true);
+});
+
+test('choice shadow, abstention and malformed responses leave execution to the planner', async context => {
+  let scenario;
+  context.mock.method(globalThis, 'fetch', async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (url.endsWith('/apply-template')) return Response.json({ prompt: 'boundary:' });
+    if (url.endsWith('/tokenize')) return Response.json({ tokens: [99, ...[...body.content.slice('boundary:'.length)].map(label => label.charCodeAt(0))] });
+    if (url.endsWith('/completion')) {
+      const count = compileChoices(voiceTools, 'Hello').length;
+      return Response.json({ content: scenario === 'malformed' ? 'LL' : 'L', tokens: [76], stop_type: 'limit',
+        completion_probabilities: [{ top_logprobs: Array.from({ length: count }, (_, index) => ({ id: 65 + index, logprob: Math.log(index === 11 ? 0.8 : 0.2 / (count - 1)) })) }] });
+    }
+    assert.ok(body.messages[0].content.includes('Available tools:'));
+    return new Response(localSSE({ content: 'Hello.' }));
+  });
+  for (scenario of ['shadow', 'scored', 'malformed']) {
+    const decisions = [];
+    const events = [];
+    for await (const event of streamReply({ provider: 'local', profile: 'voice', messages: [{ role: 'user', content: 'Hello' }],
+      env: { LOCAL_LLM_URL: 'http://127.0.0.1:1/v1', LOCAL_ROUTER: scenario === 'malformed' ? 'choice' : scenario },
+      onDecision: decision => decisions.push(decision), callTool: async () => assert.fail('Rejected choice must not execute'),
+    })) events.push(event);
+    assert.equal(decisions[0].accepted, false);
+    assert.equal(events.find(event => event.type === 'text').text, 'Hello.');
+  }
+});
+
+test('choice adapter rejects collisions, context overflow, incomplete stops and nonloopback endpoints', async context => {
+  let scenario;
+  let inference = 0;
+  context.mock.method(globalThis, 'fetch', async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (url.endsWith('/apply-template')) return Response.json({ prompt: 'boundary:' });
+    if (url.endsWith('/tokenize')) return Response.json({ tokens: [99, ...[...body.content.slice('boundary:'.length)].map(label => scenario === 'collision' ? 65 : label.charCodeAt(0))] });
+    inference++;
+    return Response.json({ content: 'D', tokens: [68], stop_type: 'none' });
+  });
+  const options = { config: { url: 'http://127.0.0.1:1/v1/chat/completions' }, tools: [voiceTools[0]], messages: [{ role: 'user', content: 'Recent status?' }], contextTokens: 4096 };
+  scenario = 'collision';
+  await assert.rejects(chooseLocalRoute(options), /collide/);
+  scenario = 'context';
+  await assert.rejects(chooseLocalRoute({ ...options, contextTokens: 1 }), /budget/);
+  await assert.rejects(chooseLocalRoute({ ...options, config: { url: 'https://example.test/v1/chat/completions' } }), /loopback/);
+  assert.equal(inference, 0);
+  await assert.rejects(chooseLocalRoute(options), /Incomplete/);
+});
+
+test('choice cancellation and consent revocation prevent stale dispatch', async context => {
+  let env;
+  let controller;
+  let revoke;
+  context.mock.method(globalThis, 'fetch', async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (url.endsWith('/apply-template')) return Response.json({ prompt: 'boundary:' });
+    if (url.endsWith('/tokenize')) return Response.json({ tokens: [99, ...[...body.content.slice('boundary:'.length)].map(label => label.charCodeAt(0))] });
+    assert.ok(url.endsWith('/completion'));
+    if (revoke) env.AGENCY_WORK_DATA_ACCESS = 'off';
+    else controller.abort();
+    return Response.json({ content: 'Q', tokens: [81], stop_type: 'limit' });
+  });
+  for (revoke of [false, true]) {
+    env = { LOCAL_LLM_URL: 'http://127.0.0.1:1/v1', LOCAL_ROUTER: 'choice', VOICE_DIRECT_MCP_ACCESS: 'read-only', AGENCY_WORK_DATA_ACCESS: 'read-only' };
+    controller = new AbortController();
+    const consume = async () => {
+      for await (const event of streamReply({ provider: 'local', profile: 'voice', env, signal: controller.signal, messages: [{ role: 'user', content: 'Search my emails.' }], callTool: async () => assert.fail('Stale dispatch') })) assert.fail(JSON.stringify(event));
+    };
+    if (revoke) await assert.rejects(consume(), /no longer available/);
+    else await consume();
+  }
+  const tools = voiceToolsFor(env);
+  assert.equal(compileChoices(tools, 'Search my emails.').some(choice => choice.name === 'search_work'), false);
+});
+
+test('choice settings apply on the next turn while in-flight mode and thresholds remain fixed', async context => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-router-settings-'));
+  context.after(() => rmSync(dataDir, { recursive: true, force: true }));
+  const env = { LOCAL_LLM_URL: 'http://127.0.0.1:1/v1', LOCAL_ROUTER: 'scored', LOCAL_ROUTER_MIN_PROBABILITY: '1', LOCAL_ROUTER_MIN_MARGIN: '1' };
+  const config = createRuntimeConfig({ dataDir, env });
+  const calls = [];
+  const decisions = [];
+  let nativeRequests = 0;
+  context.mock.method(globalThis, 'fetch', async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (url.endsWith('/apply-template')) return Response.json({ prompt: 'boundary:' });
+    if (url.endsWith('/tokenize')) return Response.json({ tokens: [99, ...[...body.content.slice('boundary:'.length)].map(label => label.charCodeAt(0))] });
+    if (url.endsWith('/completion')) {
+      nativeRequests++;
+      config.update({ values: { LOCAL_ROUTER: nativeRequests === 1 ? 'scored' : 'off' } });
+      const count = compileChoices(voiceTools, 'Set the Baymax theme.').length;
+      return Response.json({ content: 'L', tokens: [76], stop_type: 'limit', completion_probabilities: [{ top_logprobs: Array.from({ length: count }, (_, index) => ({ id: 65 + index, logprob: Math.log(index === 11 ? 0.8 : 0.2 / (count - 1)) })) }] });
+    }
+    return new Response(localSSE({ content: 'Synthetic completed response.' }));
+  });
+  const turn = async () => {
+    for await (const event of streamReply({ provider: 'local', profile: 'voice', env, messages: [{ role: 'user', content: 'Set the Baymax theme.' }],
+      onDecision: decision => decisions.push(decision), callTool: async (name, args) => { calls.push({ name, args }); return { saved: true, ...args }; },
+    })) assert.ok(event);
+  };
+  await turn();
+  assert.equal(decisions[0].accepted, false);
+  assert.equal(calls.length, 0);
+  assert.equal(env.LOCAL_ROUTER, 'scored');
+  await turn();
+  assert.equal(decisions[1].accepted, true);
+  assert.deepEqual(calls, [{ name: 'control_app', args: { action: 'set_theme', value: 'baymax' } }]);
+  assert.equal(env.LOCAL_ROUTER, 'off');
+  await turn();
+  assert.equal(nativeRequests, 2);
+  assert.equal(decisions.length, 2);
+  assert.equal(calls.length, 1);
+});
+
+test('choice catalog preserves free text, excludes named targets and keeps overflow on fallback', () => {
+  const tools = voiceToolsFor({ VOICE_DIRECT_MCP_ACCESS: 'read-only', AGENCY_WORK_DATA_ACCESS: 'read-only' });
+  const utterance = 'Find email from Mira between September 12 and 16, excluding drafts.';
+  const choices = compileChoices(tools, utterance);
+  assert.ok(choices.filter(choice => choice.name === 'search_work').every(choice => choice.args.query === utterance));
+  assert.ok(choices.filter(choice => choice.name === 'start_work').every(choice => choice.args.objective === utterance));
+  assert.equal(choices.some(choice => choice.args?.taskId), false);
+  assert.equal(compileChoices(tools, 'x'.repeat(1001)).some(choice => choice.name === 'search_work'), false);
+  assert.equal(compileChoices(tools.filter(tool => tool.function.name !== 'end_call'), utterance).some(choice => choice.name === 'end_call'), false);
+});
 
 function localSSE(delta, local = true) {
   const value = delta.tool_calls

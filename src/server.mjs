@@ -205,7 +205,8 @@ export async function startSupervisor(options = {}) {
       }
       if (request.method === 'POST' && url.pathname === '/api/config') {
         const input = await body(request);
-        if (voiceOwner) return json(response, 409, { error: 'End the active voice call before changing application configuration.' });
+        const routingOnly = Object.keys(input?.values ?? {}).length === 1 && Object.hasOwn(input.values, 'LOCAL_ROUTER');
+        if (voiceOwner && !routingOnly) return json(response, 409, { error: 'End the active voice call before changing application configuration.' });
         if (changingRecognition) return json(response, 409, { error: 'Wait for the speech recognition change to finish.' });
         const previous = localConfiguration().sttProvider;
         const next = input?.values?.LOCAL_STT_PROVIDER ?? previous;

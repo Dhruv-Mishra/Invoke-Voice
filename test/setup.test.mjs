@@ -50,6 +50,63 @@ test('saving unchanged defaults never requires restart and reverting a change cl
   assert.equal(config.update({ values }).fields.some(field => field.pendingRestart), false);
 });
 
+test('local routing defaults to raw-scored on fresh startup and preserves environment overrides', context => {
+  const { directory } = fixture(context);
+  const env = {};
+  const config = createRuntimeConfig({ dataDir: directory, env });
+  const initial = config.snapshot().fields.find(field => field.key === 'LOCAL_ROUTER');
+  assert.equal(initial.value, 'scored');
+  assert.equal(initial.pendingRestart, false);
+  assert.equal(env.LOCAL_ROUTER, 'scored');
+  assert.equal(env.LOCAL_ROUTER_MIN_PROBABILITY, '0');
+  assert.equal(env.LOCAL_ROUTER_MIN_MARGIN, '0');
+  assert.equal(existsSync(path.join(directory, 'config.json')), false);
+  for (const mode of ['off', 'scored', 'choice', 'shadow']) {
+    const overridden = { LOCAL_ROUTER: mode, LOCAL_ROUTER_MIN_PROBABILITY: '0.99', LOCAL_ROUTER_MIN_MARGIN: '0.5' };
+    createRuntimeConfig({ dataDir: directory, env: overridden });
+    assert.deepEqual(overridden, { LOCAL_ROUTER: mode, LOCAL_ROUTER_MIN_PROBABILITY: '0.99', LOCAL_ROUTER_MIN_MARGIN: '0.5' });
+  }
+  const thresholdOverrides = { LOCAL_ROUTER_MIN_PROBABILITY: '0.99', LOCAL_ROUTER_MIN_MARGIN: '0.5' };
+  createRuntimeConfig({ dataDir: directory, env: thresholdOverrides });
+  assert.deepEqual(thresholdOverrides, { LOCAL_ROUTER: 'scored', LOCAL_ROUTER_MIN_PROBABILITY: '0.99', LOCAL_ROUTER_MIN_MARGIN: '0.5' });
+});
+
+test('local routing setting persists and applies without restart or model and permission changes', context => {
+  const { directory } = fixture(context);
+  const env = { LOCAL_ROUTER: 'off', LOCAL_LLM_MODEL: 'saved-model', AGENCY_WORK_DATA_ACCESS: 'disabled', LOCAL_ROUTER_MIN_PROBABILITY: '1', LOCAL_ROUTER_MIN_MARGIN: '1' };
+  const config = createRuntimeConfig({ dataDir: directory, env });
+  const initial = config.snapshot().fields.find(field => field.key === 'LOCAL_ROUTER');
+  assert.equal(initial.value, 'off');
+  assert.equal(initial.restartRequired, false);
+  assert.equal(env.LOCAL_ROUTER_MIN_PROBABILITY, '1');
+  assert.deepEqual(initial.options.map(option => option.value), ['off', 'scored']);
+  const selected = config.update({ values: { LOCAL_ROUTER: 'scored' } }).fields.find(field => field.key === 'LOCAL_ROUTER');
+  assert.equal(selected.value, 'scored');
+  assert.equal(selected.pendingRestart, false);
+  assert.equal(env.LOCAL_ROUTER, 'scored');
+  assert.equal(env.LOCAL_ROUTER_MIN_PROBABILITY, '0');
+  assert.equal(env.LOCAL_ROUTER_MIN_MARGIN, '0');
+  assert.equal(env.LOCAL_LLM_MODEL, 'saved-model');
+  assert.equal(env.AGENCY_WORK_DATA_ACCESS, 'disabled');
+  const restored = { LOCAL_ROUTER: 'off' };
+  createRuntimeConfig({ dataDir: directory, env: restored });
+  assert.equal(restored.LOCAL_ROUTER, 'scored');
+  assert.equal(restored.LOCAL_ROUTER_MIN_PROBABILITY, '0');
+  assert.equal(restored.LOCAL_ROUTER_MIN_MARGIN, '0');
+  assert.throws(() => config.update({ values: { LOCAL_ROUTER: 'unsupported' } }), /unsupported/);
+  assert.equal(env.LOCAL_ROUTER, 'scored');
+  const regular = config.update({ values: { LOCAL_ROUTER: 'off' } });
+  assert.equal(regular.fields.find(field => field.key === 'LOCAL_ROUTER').pendingRestart, false);
+  assert.equal(env.LOCAL_ROUTER, 'off');
+  const restarted = { LOCAL_ROUTER: 'scored' };
+  createRuntimeConfig({ dataDir: directory, env: restarted });
+  assert.equal(restarted.LOCAL_ROUTER, 'off');
+  const cleanRestart = {};
+  const reloaded = createRuntimeConfig({ dataDir: directory, env: cleanRestart });
+  assert.equal(cleanRestart.LOCAL_ROUTER, 'off');
+  assert.equal(reloaded.snapshot().fields.find(field => field.key === 'LOCAL_ROUTER').value, 'off');
+});
+
 test('saved managed Tiny selection overrides older model environment after restart without rewriting it', context => {
   const { directory, paths } = fixture(context);
   const oldModel = path.join(directory, 'moonshine-streaming-small-q4_k.gguf');

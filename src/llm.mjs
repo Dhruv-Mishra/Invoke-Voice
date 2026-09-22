@@ -3,6 +3,7 @@ import { modelTools as supervisorTools, supervisorInstructions, voiceToolsFor } 
 import { validateToolArgs } from './supervisor/contract.mjs';
 import { themedInstructions } from './theme-session.mjs';
 import { assertLoopback, providerProfiles, resolveEndpoint } from './llm/provider-config.mjs';
+import { chooseLocalRoute } from './llm/choice-router.mjs';
 
 export { assertLoopback, providerProfiles, resolveEndpoint };
 
@@ -379,17 +380,23 @@ export async function* streamReply({
   env = process.env,
   profile = 'supervisor',
   persona = '',
+  onDecision = () => {},
 }) {
   const config = resolveEndpoint(provider, model, env);
+  const routerMode = env.LOCAL_ROUTER || 'off';
+  const minimum = Number(env.LOCAL_ROUTER_MIN_PROBABILITY ?? 1);
+  const margin = Number(env.LOCAL_ROUTER_MIN_MARGIN ?? 1);
+  const reverseChoices = env.LOCAL_ROUTER_REVERSE === '1';
   const reasoningFilter = new ReasoningFilter();
   const executedCalls = new Map();
   const summaries = new Map();
   const titles = new Map();
   const isAnthropic = provider === 'anthropic';
-  const requestTools = profile === 'summary' ? [] : profile === 'voice' ? voiceToolsFor(env) : supervisorTools;
+  const textOnly = ['summary', 'conversation', 'clarification'].includes(profile);
+  const requestTools = textOnly ? [] : profile === 'voice' ? voiceToolsFor(env) : supervisorTools;
   const anthropicTools = requestTools.map(tool => ({ name: tool.function.name, description: tool.function.description, input_schema: tool.function.parameters }));
   const toolSchemas = new Map(requestTools.map(tool => [tool.function.name, tool.function.parameters]));
-  const instructions = themedInstructions(profile === 'summary' ? summaryInstructions : profile === 'voice' ? voiceInstructionsFor(env) : supervisorInstructions, persona);
+  const instructions = themedInstructions(profile === 'summary' ? summaryInstructions : profile === 'clarification' ? 'Ask one short clarifying question about the latest request. Do not claim to have performed an action.' : profile === 'conversation' ? 'Answer the user naturally and briefly; expand when asked. You cannot use tools or perform actions. Never claim live work facts or actions without evidence.' : profile === 'voice' ? voiceInstructionsFor(env) : supervisorInstructions, persona);
   const contextTokens = provider === 'local' ? localContextTokens(env) : null;
   let workingMessages = prepareMessages(messages, provider === 'local'
     ? { maxMessages: Infinity, maxChars: Infinity, maxTextChars: Infinity }
@@ -413,7 +420,7 @@ export async function* streamReply({
     });
   }
 
-  const maxToolRounds = profile === 'summary' ? 0 : provider === 'local' ? 3 : 8;
+  const maxToolRounds = textOnly ? 0 : provider === 'local' ? 3 : 8;
   for (let round = 0; round <= maxToolRounds; round++) {
     if (signal?.aborted) return;
     if (provider === 'local' && summaries.size && (stopTools || round === maxToolRounds)) {
@@ -421,6 +428,32 @@ export async function* streamReply({
       return;
     }
     const finalRound = stopTools || round === maxToolRounds;
+    let choicePlan;
+    if (provider === 'local' && !textOnly && round === 0 && ['choice', 'scored', 'shadow'].includes(routerMode)) {
+      const started = performance.now();
+      let decision;
+      try {
+        decision = await chooseLocalRoute({ config, tools: requestTools, messages: workingMessages, contextTokens,
+          signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(60000)]) : AbortSignal.timeout(60000), scored: routerMode !== 'choice', reverse: reverseChoices });
+      } catch {
+        if (signal?.aborted) return;
+        onDecision({ mode: routerMode, accepted: false, reason: 'adapter-unavailable', wallMs: performance.now() - started });
+      }
+      if (decision) {
+        const { choice, metadata } = decision;
+        const accepted = routerMode !== 'shadow' && choice.kind !== 'fallback' && (routerMode === 'choice' ||
+          (Number.isFinite(minimum) && minimum >= 0 && minimum <= 1 && Number.isFinite(margin) && margin >= 0 && margin <= 1 && metadata.probability >= minimum && metadata.margin >= margin));
+        onDecision({ ...metadata, mode: routerMode, accepted, reason: accepted ? 'selected' : routerMode === 'shadow' ? 'shadow' : 'abstained' });
+        if (accepted) {
+          if (choice.kind !== 'call') {
+            yield* streamReply({ provider, model, messages: workingMessages, signal, requestId, env, persona, profile: choice.kind === 'clarify' ? 'clarification' : 'conversation' });
+            return;
+          }
+          if (profile === 'voice' && !voiceToolsFor(env).some(tool => tool.function.name === choice.name)) throw new Error('Choice tool is no longer available. No action was executed.');
+          choicePlan = { calls: [{ name: choice.name, arguments: choice.args }] };
+        }
+      }
+    }
     let roundInstructions = finalRound && profile !== 'summary'
       ? `${instructions} Tool budget reached. Answer now using the tool results. State what succeeded and what remains unfinished; do not claim unconfirmed actions or request more tools.`
       : instructions;
@@ -455,7 +488,7 @@ export async function* streamReply({
       }
     }
 
-    const response = await fetch(config.url, {
+    const response = choicePlan ? null : await fetch(config.url, {
       method: 'POST',
       redirect: 'error',
       headers: config.headers,
@@ -463,7 +496,7 @@ export async function* streamReply({
       signal: fetchSignal,
     });
 
-    if (!response.ok) {
+    if (response && !response.ok) {
       throw new Error(`${provider} API error (${response.status} ${response.statusText})`);
     }
 
@@ -473,7 +506,12 @@ export async function* streamReply({
     let finishReason = null;
     let streamCompleted = false;
 
-    if (isAnthropic) {
+    if (choicePlan) {
+      roundText = JSON.stringify(choicePlan);
+      finishReason = 'stop';
+      streamCompleted = true;
+      stopTools = true;
+    } else if (isAnthropic) {
       let currentTool = null;
       for await (const line of readSSELines(response, fetchSignal)) {
         if (signal?.aborted) return;
@@ -671,7 +709,7 @@ export async function* streamReply({
     }));
     if (signal?.aborted) return;
     if (provider === 'local') {
-      stopTools = toolExecutions >= 6 || toolExecutions === executionsBefore;
+      stopTools = Boolean(choicePlan) || toolExecutions >= 6 || toolExecutions === executionsBefore;
       if (localIntent === 'read' && completedCalls.every(({ call, args, result }) =>
         result?.error || (call.name === 'find_work_tools' ? result?.tools?.length === 0
           : call.name !== 'list_work' || args.query?.trim() || result?.tasks?.length === 0 || result?.tasks?.every(task => task.result !== undefined)))) stopTools = true;

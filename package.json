@@ -83,6 +83,7 @@
       "src/**/*.mjs",
       "dist/**/*",
       "scripts/models.mjs",
+      "scripts/qwen-mtp.mjs",
       "scripts/start.mjs",
       "scripts/desktop-launch.cjs",
       "scripts/kokoro_worker.py",

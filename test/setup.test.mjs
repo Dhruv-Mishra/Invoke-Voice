@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { deflateRawSync } from 'node:zlib';
 import { createSetup } from '../src/setup.mjs';
 import { ASSETS, LEGACY_LING_ASSETS, CRISPASR_AVX2_ASSET, QWEN_ASSET, TASK_SEARCH_ASSETS, assetReady, ensureAsset, localSetupAssets, localSttProvider, stackPaths, trustedDownloadUrl, withSetupLock } from '../scripts/models.mjs';
-import { QWEN_MTP_HEAD, buildQwenMtp, parseGgufHeader } from '../scripts/qwen-mtp.mjs';
+import { QWEN_MTP_HEAD, buildQwenMtp, parseGgufHeader, streamQwenMtp } from '../scripts/qwen-mtp.mjs';
 import { approvedPythonProbe, createLocalSetup, isolatedEnvironment, runSetupCommand } from '../src/local-setup.mjs';
 import { startSupervisor } from '../src/server.mjs';
 import { createRuntimeConfig } from '../src/runtime-config.mjs';
@@ -435,21 +435,22 @@ test('Whisper setup installs only selected models and verifies INT8 dependencies
   assert.equal(snapshot.components.find(component => component.id === 'whisper').ready, true);
 });
 
-test('opt-in Qwen setup verifies its pinned model, builds MTP before chat, and leaves Gemma selection untouched', windowsSetup, async context => {
+test('opt-in Qwen setup builds only the MTP model, never provisions the separate original, and leaves Gemma selection untouched', windowsSetup, async context => {
   const order = [];
   const { setup, provisioned, env, paths } = localFixture(context, { env: { LOCAL_LLM_PROFILE: 'qwen' }, buildMtp: async mtpPaths => { order.push(['mtp', [...provisioned], mtpPaths.ling]); } });
   const before = setup.snapshot().components;
-  assert.equal(before.find(component => component.id === 'ling').label, QWEN_ASSET.label);
-  assert.equal(before.find(component => component.id === 'qwenMtp').ready, false);
+  assert.match(before.find(component => component.id === 'ling').label, /^Qwen3\.6 .* with MTP accelerator \(about 24 GB\)$/);
+  assert.equal(before.find(component => component.id === 'ling').ready, false);
+  assert.equal(before.some(component => component.id === 'qwenMtp'), false);
   assert.equal(path.basename(paths.ling), QWEN_ASSET.name);
   assert.equal(path.basename(paths.lingMtp), QWEN_ASSET.name.replace('.gguf', '-MTP.gguf'));
   setup.start({ consent: true });
   const snapshot = await setup.settled();
   assert.equal(snapshot.status, 'ready', snapshot.message);
-  assert.deepEqual(order, [['mtp', ['ling', 'llama'], env.QWEN_MODEL_PATH]]);
+  assert.deepEqual(order, [['mtp', ['llama'], env.QWEN_MODEL_PATH]]);
   assert.equal(env.LOCAL_LLM_PATH, undefined);
   const offDisabled = localFixture(context, { env: { LOCAL_LLM_PROFILE: 'qwen', QWEN_MTP: 'off' }, buildMtp: async () => { throw new Error('MTP disabled'); } });
-  assert.equal(offDisabled.setup.snapshot().components.some(component => component.id === 'qwenMtp'), false);
+  assert.equal(offDisabled.setup.snapshot().components.find(component => component.id === 'ling').label, QWEN_ASSET.label);
   const gemma = localFixture(context);
   assert.equal(gemma.setup.snapshot().components.some(component => component.id === 'qwenMtp'), false);
   assert.notEqual(gemma.setup.snapshot().components.find(component => component.id === 'ling').label, QWEN_ASSET.label);
@@ -490,6 +491,16 @@ test('Qwen MTP graft adds exactly the pinned nextn layer and rejects incompatibl
     writeFileSync(source, incompatible);
     await assert.rejects(buildQwenMtp({ source, head, target: path.join(directory, 'rejected.gguf') }), /not a compatible Qwen3.6-35B-A3B GGUF/);
   }
+  const original = model();
+  const asset = { label: 'Fixture Qwen', size: original.length, sha256: createHash('sha256').update(original).digest('hex'), sourceUrl: 'https://huggingface.co/fixture/resolve/main/qwen.gguf' };
+  const streamed = path.join(directory, 'streamed.gguf');
+  const serve = bytes => async () => new Response(new ReadableStream({ start(controller) { for (let offset = 0; offset < bytes.length; offset += 7) controller.enqueue(bytes.subarray(offset, offset + 7)); controller.close(); } }));
+  await streamQwenMtp({ head, target: streamed, asset, fetchImpl: serve(original) });
+  assert.deepEqual(readFileSync(streamed), output, 'streaming the original through the graft must equal the file-based build');
+  const tampered = Buffer.from(original);
+  tampered[tampered.length - 1] ^= 1;
+  await assert.rejects(streamQwenMtp({ head, target: path.join(directory, 'tampered.gguf'), asset, fetchImpl: serve(tampered) }), /integrity check failed/);
+  assert.equal(existsSync(path.join(directory, 'tampered.gguf')) || existsSync(path.join(directory, 'tampered.gguf.partial')), false);
 });
 
 test('recognizer changes preserve chat and require consent before optional model downloads', windowsSetup, async context => {

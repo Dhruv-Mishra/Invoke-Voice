@@ -369,8 +369,9 @@ async function main() {
     const qwenPaths = stackPaths({ ...process.env, LOCAL_LLM_PROFILE: 'qwen' });
     const report = event => { if (!event.progress) console.log(event.message); };
     await withSetupLock(qwenPaths, async () => {
-      await ensureAsset(qwenPaths, QWEN_ASSET, { report });
-      if (process.env.QWEN_MTP !== 'off') await (await import('./qwen-mtp.mjs')).ensureQwenMtp(qwenPaths, { report });
+      const { ensureQwenMtp, qwenMtpReady } = await import('./qwen-mtp.mjs');
+      if (process.env.QWEN_MTP !== 'off') await ensureQwenMtp(qwenPaths, { report });
+      else if (!qwenMtpReady(qwenPaths)) await ensureAsset(qwenPaths, QWEN_ASSET, { report });
     });
     console.log('Qwen installed; select it in Settings > Local model.');
     return;

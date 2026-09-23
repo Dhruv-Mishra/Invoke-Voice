@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { stripVTControlCharacters } from 'node:util';
 import { ASSETS, LEGACY_LING_ASSETS, assetReady, ensureAsset, localLlmAsset, localLlmProfile, localSetupAssets, localSttProvider, qwenMtpEnabled, readJson, setupError, stackPaths, withSetupLock, writeJson } from '../scripts/models.mjs';
-import { QWEN_MTP_HEAD, ensureQwenMtp, qwenMtpReady } from '../scripts/qwen-mtp.mjs';
+import { ensureQwenMtp, qwenMtpReady } from '../scripts/qwen-mtp.mjs';
 import { createSetup } from './setup.mjs';
 import { closeLocalVoice, isLocalVoiceWarm, localConfiguration, onLocalVoiceRuntimeExit, warmLocalVoice } from './local-voice.mjs';
 import { verifyKokoroPack, verifyWhisperPack } from './kokoro-pack.mjs';
@@ -161,9 +161,11 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
   let chatMessage = 'Local chat runtime is not ready. Start setup to initialize it.';
   let voiceReady = false;
   let voiceMessage = 'Local voice pipeline is not ready. Start setup to initialize it.';
+  // The grafted Qwen file holds the complete model, so the original download is not kept.
+  const qwenFromGraft = () => qwen && (mtp || qwenMtpReady(paths));
+  const chatAssetReady = asset => qwen && asset.id === 'ling' && qwenFromGraft() ? qwenMtpReady(paths) : assetReady(paths, asset);
 
-  const inspect = () => [...selectedAssets().map(asset => ({ id: asset.id, label: asset.label, sourceUrl: asset.repo ? `https://huggingface.co/${asset.repo}` : asset.sourceUrl.replace(/\/releases\/download\/([^/]+)\/.*$/, '/releases/tag/$1'), ready: assetReady(paths, asset) })),
-    ...(mtp ? [{ id: QWEN_MTP_HEAD.id, label: QWEN_MTP_HEAD.label, sourceUrl: `https://huggingface.co/${QWEN_MTP_HEAD.repo}`, ready: qwenMtpReady(paths) }] : []),
+  const inspect = () => [...selectedAssets().map(asset => ({ id: asset.id, label: qwen && mtp && asset.id === 'ling' ? `${asset.label} with MTP accelerator (about 24 GB)` : asset.label, sourceUrl: asset.repo ? `https://huggingface.co/${asset.repo}` : asset.sourceUrl.replace(/\/releases\/download\/([^/]+)\/.*$/, '/releases/tag/$1'), ready: chatAssetReady(asset) })),
     { id: 'kokoro', label: paths.pythonBase ? 'Kokoro (approved Python; runtime download skipped)' : 'Kokoro Python environment', sourceUrl: 'https://pypi.org/project/kokoro/0.9.4/', ready: pythonReady(paths) },
     ...(localSttProvider(env) === 'whisper' ? [{ id: 'whisper', label: 'faster-whisper 1.2.1 (CPU INT8)', sourceUrl: 'https://pypi.org/project/faster-whisper/1.2.1/', ready: pythonReady(paths) && whisperReady() }] : [])];
 
@@ -285,10 +287,10 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
       let preparedPack;
       const compressedPack = async () => preparedPack ??= await resolveVoicePack({ sourceDir: compressedPackDir, paths, env, report, signal, run: (executable, args, options) => run(executable, args, { ...options, env: commandEnv, redactEnv: env, cwd: paths.home }) });
       mkdirSync(paths.home, { recursive: true });
-      for (const asset of assets.filter(asset => CHAT_ASSET_IDS.has(asset.id))) {
+      for (const asset of assets.filter(asset => CHAT_ASSET_IDS.has(asset.id) && !(asset.id === 'ling' && qwenFromGraft()))) {
         await provision(paths, asset, { report, signal });
       }
-      if (mtp) await buildMtp(paths, { report, signal });
+      if (mtp) await buildMtp(paths, { report, signal, provision });
       applyChatPaths();
       await activateChat({ report, signal });
       writeJson(completionFile, { version: 1, pathInputs, paths: Object.fromEntries(assets.map(asset => [asset.id, paths[asset.id]])) });
@@ -464,7 +466,7 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
       setup.invalidate(voiceMessage);
       if (inspect().every(component => component.ready)) setup.resume();
     },
-    resume() { if (saved?.version === 1 && assets.filter(asset => CHAT_ASSET_IDS.has(asset.id)).every(asset => assetReady(paths, asset) || (asset.id === 'ling' && upgradeManagedModel)) && (!mtp || qwenMtpReady(paths))) setup.resume(); },
+    resume() { if (saved?.version === 1 && assets.filter(asset => CHAT_ASSET_IDS.has(asset.id)).every(asset => chatAssetReady(asset) || (asset.id === 'ling' && upgradeManagedModel))) setup.resume(); },
     invalidate(message) {
       chatReady = false;
       voiceReady = false;

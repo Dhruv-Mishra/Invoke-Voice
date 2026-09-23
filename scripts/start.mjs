@@ -126,9 +126,10 @@ export function localLlmArguments(paths, serverUrl, env = process.env) {
 // Measured on CPU: threads-batch also drives MTP verification batches, so it stays near physical cores; no-mmap avoids a second resident copy of repacked MoE weights.
 function qwenLlmArguments(paths, serverUrl, env) {
   const defaults = qwenThreadDefaults();
-  const mtp = qwenMtpEnabled(env) && qwenMtpReady(paths);
+  const grafted = qwenMtpReady(paths);
+  const mtp = qwenMtpEnabled(env) && grafted;
   return [
-    '-m', mtp ? paths.lingMtp : paths.ling,
+    '-m', grafted ? paths.lingMtp : paths.ling,
     '--host', serverUrl.hostname,
     '--port', serverUrl.port || '8081',
     '--alias', env.LOCAL_LLM_MODEL || 'ling-local',
@@ -156,8 +157,8 @@ function qwenLlmArguments(paths, serverUrl, env) {
 export async function ensureLocalLLM(options = {}) {
   const env = options.env || process.env;
   const paths = stackPaths(env);
-  const modelPath = paths.ling;
   const qwen = localLlmProfile(env) === 'qwen';
+  const modelPath = qwen && qwenMtpReady(paths) ? paths.lingMtp : paths.ling;
   const initialUrl = env.LOCAL_LLM_URL;
   let allocatedPort = null;
   if (options.privatePort) {

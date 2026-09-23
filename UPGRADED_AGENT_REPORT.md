@@ -22,7 +22,7 @@ All numbers come from one workstation and synthetic inputs. They show relative c
 | Decode speed in the suite | 25.7 tok/s | **33.9 tok/s (+32%)** | 22.1 tok/s |
 | Voice: end of speech to first audio (median, 6 turns) | 5.34 s | **4.54 s (−15%)** | 4.68 s |
 | Process memory (working set) | ~2.7 GB | ~2.7 GB | ~24.2 GB |
-| Disk | 3.35 GB | 3.35 GB | 23.4 GB source + 24.0 GB MTP copy |
+| Disk | 3.35 GB | 3.35 GB | 23.95 GB (one merged model + MTP file) |
 
 Key results:
 
@@ -156,14 +156,14 @@ Median of six turns, measured from the end of synthetic speech:
 
 | | Gemma | Qwen |
 |---|---|---|
-| Model file | 3.35 GB | 23.42 GB (source) + 23.95 GB (MTP copy) |
+| Model file | 3.35 GB | 23.95 GB (single file: 23.42 GB HauhauCS weights + 0.53 GB MTP layer) |
 | Extra download for MTP | — | 528.9 MB (only the MTP head is fetched by HTTP range request) |
 | Working set | 2.65 GB | 24.2 GB (33.6 GB with mmap) |
 | Load to healthy server | 2.4 s | 13.5 s |
 | Setup memory warning | below 16 GB | below 32 GB |
 | Context / slots | 4096 / 1 | 8192 / 1 |
 
-Qwen needs about nine times the RAM of Gemma and about 47 GB of free disk space for the source file plus the MTP copy. It is off by default for that reason.
+Qwen needs about nine times the RAM of Gemma and about 24 GB of disk for its single merged model file. It is off by default for that reason.
 
 ### Vulkan partial GPU offload (opt-in)
 
@@ -203,7 +203,8 @@ flowchart LR
 
 **MTP graft** (`scripts/qwen-mtp.mjs`)
 - The HauhauCS file has no MTP head. Setup downloads only the pinned `blk.40` MTP tensors (528,857,088 bytes, SHA-256 `4c55971b…`) from `unsloth/Qwen3.6-35B-A3B-MTP-GGUF` using an HTTP range request, verifies them, and writes a new GGUF with 41 blocks and `nextn_predict_layers=1`.
-- It first checks that the source is a 40-block `qwen35moe` model with the expected dimensions and no existing MTP head. It also checks free disk space, streams the copy, and records a receipt tied to the source and target sizes and modification times. The downloaded head is deleted after the build.
+- It first checks that the source is a 40-block `qwen35moe` model with the expected dimensions and no existing MTP head. Without a local copy, it streams the pinned HauhauCS download straight into the merged file while hashing it, so the original never lands on disk. With a verified local copy it builds from that file, then deletes a managed original; a user-supplied copy is left alone and is no longer needed. The receipt covers only the merged file, and the downloaded head is deleted after the build.
+- The unsloth repository also ships full base weights with the MTP layer (about 22 GB), but those are the stock Qwen3.6 checkpoint rather than the selected HauhauCS fine-tune, so only its MTP layer is used.
 - The launcher uses `--spec-type draft-mtp --spec-draft-n-max 2` when the graft is ready and `QWEN_MTP` is not `off`. Otherwise it runs the plain model.
 - `npm run models -- qwen` runs the same steps from the command line.
 
@@ -220,7 +221,7 @@ flowchart LR
 - **Synthetic evaluation.** The 54 Jev cases use synthetic tool callbacks and synthetic speech. Real microphones, noise, accents, private work data and long conversations were not tested.
 - **One machine.** Qwen's decode speed depends on memory bandwidth. A laptop with two-channel memory will likely decode Qwen noticeably slower than this four-channel workstation. That is an estimate, not a measurement.
 - **Uncensored weights.** The HauhauCS "Uncensored Aggressive" fine-tune removes refusal behavior. The app's consent gates, read-only scopes and tool validation still apply to every tool call, and Qwen passed the prompt-injection cases here. Content safety for free-form answers still depends on the user.
-- **Resources.** Qwen needs about 24 GB of RAM, about 47 GB of disk space, and a 20–30 s first load.
+- **Resources.** Qwen needs about 24 GB of RAM, about 24 GB of disk space, and a 20–30 s first load.
 - **Run-to-run variation.** The suite was run once per configuration. Gemma's baseline and upgraded runs had the same total score, but two different cases failed in each.
 - **Early prefill and Vulkan** are measured features with small or negative gains on this hardware. They are documented as such rather than presented as speed-ups.
 
@@ -228,7 +229,7 @@ flowchart LR
 
 1. Put `Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-Q4_K_P.gguf` in `LocalVoiceStack/LLMs`, set `QWEN_MODEL_PATH`, or let setup download it.
 2. In **Settings > Keys and config > Local model**, choose **Qwen3.6 35B-A3B MoE (opt-in)** and confirm the memory and disk dialog (**Keep Gemma** cancels). Alternatively, set `LOCAL_LLM_PROFILE=qwen`.
-3. Run local setup, or run `npm run models -- qwen`, to verify the model and build the MTP copy.
+3. Run local setup, or run `npm run models -- qwen`, to build the single MTP-accelerated model file. A local copy from step 1 can be deleted afterwards.
 4. Restart the app.
 
 Optional settings: `QWEN_MTP=off`, `QWEN_DRAFT_TOKENS`, `QWEN_THREADS`, `QWEN_THREADS_BATCH`, `QWEN_CONTEXT` and `LLAMA_BACKEND=vulkan`.

@@ -1,12 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { QWEN_ASSET, assetReady, readJson, request, setupError, writeJson } from './models.mjs';
+import { QWEN_ASSET, assetReady, ensureAsset, readJson, request, setupError, writeJson } from './models.mjs';
 
 // Pinned multi-token-prediction (nextn) layer from the base Qwen3.6-35B-A3B MTP GGUF. Only this byte range is downloaded.
 export const QWEN_MTP_HEAD = Object.freeze({
   id: 'qwenMtp',
-  label: 'Qwen3.6 MTP accelerator (0.5 GB download, builds a 24 GB model copy)',
+  label: 'Qwen3.6 MTP accelerator layer (0.5 GB)',
   repo: 'unsloth/Qwen3.6-35B-A3B-MTP-GGUF',
   sourceUrl: 'https://huggingface.co/unsloth/Qwen3.6-35B-A3B-MTP-GGUF/resolve/5bc3e238d916f48a861bac2f8a1990a0e9b7e98d/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf',
   offset: 22324805920,
@@ -25,7 +25,7 @@ export const QWEN_MTP_HEAD = Object.freeze({
 });
 
 const SCALAR_BYTES = { 0: 1, 1: 1, 2: 2, 3: 2, 4: 4, 5: 4, 6: 4, 7: 1, 10: 8, 11: 8, 12: 8 };
-const RECEIPT_VERSION = 1;
+const RECEIPT_VERSION = 2;
 
 function readHeaderBytes(file) {
   const fd = fs.openSync(file, 'r');
@@ -134,14 +134,21 @@ function stat(file) {
   try { const value = fs.statSync(file); return value.isFile() ? { size: value.size, mtimeMs: value.mtimeMs } : null; } catch { return null; }
 }
 
+// The grafted file contains every source tensor byte-for-byte, so it stays valid after the source is removed.
 export function qwenMtpReady(paths) {
   const receipt = readJson(receiptFile(paths));
-  const source = stat(paths.ling);
   const target = stat(paths.lingMtp);
-  const same = (left, right) => typeof left === 'string' && (process.platform === 'win32' ? path.resolve(left).toLowerCase() === path.resolve(right).toLowerCase() : path.resolve(left) === path.resolve(right));
-  return receipt?.version === RECEIPT_VERSION && receipt.head === QWEN_MTP_HEAD.sha256 && same(receipt.source?.path, paths.ling) &&
-    source?.size === receipt.source.size && source.mtimeMs === receipt.source.mtimeMs &&
+  return [1, RECEIPT_VERSION].includes(receipt?.version) && receipt.head === QWEN_MTP_HEAD.sha256 &&
     target?.size === receipt.target?.size && target.mtimeMs === receipt.target.mtimeMs;
+}
+
+function managed(paths, file) {
+  const relative = path.relative(path.resolve(paths.modelDir), path.resolve(file));
+  return relative && !relative.startsWith('..') && !path.isAbsolute(relative);
+}
+
+function removeManagedSource(paths) {
+  if (managed(paths, paths.ling) && path.resolve(paths.ling) !== path.resolve(paths.lingMtp)) fs.rmSync(paths.ling, { force: true });
 }
 
 async function downloadHead(file, { report, signal, fetchImpl }) {
@@ -168,57 +175,105 @@ async function downloadHead(file, { report, signal, fetchImpl }) {
   } finally { fs.rmSync(partial, { force: true }); }
 }
 
-export async function buildQwenMtp({ source, head, target, report = () => {}, signal }) {
-  const header = readHeaderBytes(source);
-  const sourceSize = fs.statSync(source).size;
-  const { bytes, dataSize, padding } = graftedHeader(header, sourceSize);
-  const total = bytes.length + dataSize + padding + QWEN_MTP_HEAD.size;
+function graftWriter(target, total, message, report) {
   const directory = path.dirname(target);
   fs.mkdirSync(directory, { recursive: true });
   const free = fs.statfsSync(directory);
-  if (free.bavail * free.bsize < total + 1024 ** 3) throw setupError(`Building the Qwen MTP model needs about ${Math.ceil(total / 1024 ** 3)} GB of free disk space in ${directory}.`);
+  if (free.bavail * free.bsize < total + 1024 ** 3) throw setupError(`The Qwen model needs about ${Math.ceil(total / 1024 ** 3)} GB of free disk space in ${directory}.`);
   const partial = `${target}.partial`;
   const output = fs.openSync(partial, 'w');
-  const chunk = Buffer.alloc(16 * 1024 * 1024);
   let written = 0;
   let lastReport = 0;
-  const write = buffer => {
-    fs.writeSync(output, buffer, 0, buffer.length, written);
-    written += buffer.length;
-    if (Date.now() - lastReport > 250) { lastReport = Date.now(); report({ stage: QWEN_MTP_HEAD.id, message: 'Building the MTP-accelerated Qwen model.', progress: { received: written, total } }); }
+  return {
+    write(buffer) {
+      fs.writeSync(output, buffer, 0, buffer.length, written);
+      written += buffer.length;
+      if (Date.now() - lastReport > 250) { lastReport = Date.now(); report({ stage: QWEN_MTP_HEAD.id, message, progress: { received: written, total } }); }
+    },
+    finish() {
+      fs.fsyncSync(output);
+      fs.closeSync(output);
+      if (stat(partial)?.size !== total) { fs.rmSync(partial, { force: true }); throw setupError('The Qwen MTP model build produced an unexpected size.'); }
+      fs.renameSync(partial, target);
+      return total;
+    },
+    abort() { try { fs.closeSync(output); } catch {} fs.rmSync(partial, { force: true }); },
   };
-  const copy = (file, start, length) => {
-    const input = fs.openSync(file, 'r');
-    try {
-      for (let offset = 0; offset < length;) {
-        signal?.throwIfAborted();
-        const count = fs.readSync(input, chunk, 0, Math.min(chunk.length, length - offset), start + offset);
-        if (count <= 0) throw setupError('The Qwen source ended unexpectedly while building the MTP model.');
-        write(chunk.subarray(0, count));
-        offset += count;
-      }
-    } finally { fs.closeSync(input); }
-  };
-  try {
-    write(bytes);
-    copy(source, header.dataStart, dataSize);
-    write(Buffer.alloc(padding));
-    copy(head, 0, QWEN_MTP_HEAD.size);
-    fs.fsyncSync(output);
-  } catch (error) {
-    fs.closeSync(output);
-    fs.rmSync(partial, { force: true });
-    throw error;
-  }
-  fs.closeSync(output);
-  if (stat(partial)?.size !== total) { fs.rmSync(partial, { force: true }); throw setupError('The MTP model build produced an unexpected size.'); }
-  fs.renameSync(partial, target);
-  return total;
 }
 
-export async function ensureQwenMtp(paths, { report = () => {}, signal, fetchImpl = fetch } = {}) {
-  if (qwenMtpReady(paths)) return paths.lingMtp;
-  if (!assetReady(paths, QWEN_ASSET, paths.ling)) throw setupError('Verify the Qwen model before building its MTP accelerator.');
+function copyFile(file, start, length, write, signal) {
+  const chunk = Buffer.alloc(16 * 1024 * 1024);
+  const input = fs.openSync(file, 'r');
+  try {
+    for (let offset = 0; offset < length;) {
+      signal?.throwIfAborted();
+      const count = fs.readSync(input, chunk, 0, Math.min(chunk.length, length - offset), start + offset);
+      if (count <= 0) throw setupError('A Qwen source file ended unexpectedly while building the MTP model.');
+      write(chunk.subarray(0, count));
+      offset += count;
+    }
+  } finally { fs.closeSync(input); }
+}
+
+export async function buildQwenMtp({ source, head, target, report = () => {}, signal }) {
+  const header = readHeaderBytes(source);
+  const { bytes, dataSize, padding } = graftedHeader(header, fs.statSync(source).size);
+  const writer = graftWriter(target, bytes.length + dataSize + padding + QWEN_MTP_HEAD.size, 'Building the MTP-accelerated Qwen model.', report);
+  try {
+    writer.write(bytes);
+    copyFile(source, header.dataStart, dataSize, writer.write, signal);
+    writer.write(Buffer.alloc(padding));
+    copyFile(head, 0, QWEN_MTP_HEAD.size, writer.write, signal);
+  } catch (error) { writer.abort(); throw error; }
+  return writer.finish();
+}
+
+// Downloads the pinned source straight into the grafted layout, so the 23 GB original never lands on disk.
+export async function streamQwenMtp({ head, target, report = () => {}, signal, fetchImpl = fetch, asset = QWEN_ASSET }) {
+  const response = await request(asset.sourceUrl, { fetchImpl, signal });
+  if (!response.body) throw setupError('The Qwen download returned no data. Retry later.');
+  const hash = createHash('sha256');
+  const pending = [];
+  let pendingBytes = 0;
+  let received = 0;
+  let writer;
+  let header;
+  let tail;
+  try {
+    for await (const chunk of response.body) {
+      signal?.throwIfAborted();
+      const start = received;
+      received += chunk.length;
+      if (received > asset.size) throw setupError('The Qwen download exceeded its pinned length.');
+      hash.update(chunk);
+      if (!writer) {
+        pending.push(chunk);
+        pendingBytes += chunk.length;
+        try { header = parseGgufHeader(Buffer.concat(pending)); } catch (error) {
+          if (error.code !== 'SHORT' || pendingBytes > 256 * 1024 * 1024) throw error;
+          continue;
+        }
+        const grafted = graftedHeader(header, asset.size);
+        tail = grafted.padding;
+        writer = graftWriter(target, grafted.bytes.length + grafted.dataSize + grafted.padding + QWEN_MTP_HEAD.size, 'Downloading Qwen3.6 and building its MTP-accelerated model.', report);
+        writer.write(grafted.bytes);
+        const buffered = Buffer.concat(pending);
+        pending.length = 0;
+        if (buffered.length > header.dataStart) writer.write(buffered.subarray(header.dataStart));
+        continue;
+      }
+      const skip = Math.max(0, header.dataStart - start);
+      if (skip < chunk.length) writer.write(skip ? chunk.subarray(skip) : chunk);
+    }
+    if (!writer || received !== asset.size || hash.digest('hex') !== asset.sha256) throw setupError(`${asset.label}: download integrity check failed. Retry to download a clean copy.`);
+    writer.write(Buffer.alloc(tail));
+    copyFile(head, 0, QWEN_MTP_HEAD.size, writer.write, signal);
+  } catch (error) { writer?.abort(); throw error; }
+  return writer.finish();
+}
+
+export async function ensureQwenMtp(paths, { report = () => {}, signal, fetchImpl = fetch, provision = ensureAsset } = {}) {
+  if (qwenMtpReady(paths)) { removeManagedSource(paths); return paths.lingMtp; }
   const head = path.join(paths.modelDir, 'qwen3.6-mtp-head.bin');
   report({ stage: QWEN_MTP_HEAD.id, message: 'Preparing the Qwen MTP accelerator layer.' });
   const cached = stat(head)?.size === QWEN_MTP_HEAD.size && createHash('sha256').update(fs.readFileSync(head)).digest('hex') === QWEN_MTP_HEAD.sha256;
@@ -226,8 +281,16 @@ export async function ensureQwenMtp(paths, { report = () => {}, signal, fetchImp
     fs.mkdirSync(paths.modelDir, { recursive: true });
     await downloadHead(head, { report, signal, fetchImpl });
   }
-  await buildQwenMtp({ source: paths.ling, head, target: paths.lingMtp, report, signal });
-  writeJson(receiptFile(paths), { version: RECEIPT_VERSION, head: QWEN_MTP_HEAD.sha256, source: { path: paths.ling, ...stat(paths.ling) }, target: { path: paths.lingMtp, ...stat(paths.lingMtp) } });
+  const verified = assetReady(paths, QWEN_ASSET, paths.ling);
+  if (stat(paths.ling) && (verified || !managed(paths, paths.ling))) {
+    if (!verified) await provision(paths, QWEN_ASSET, { report, signal, fetchImpl });
+    await buildQwenMtp({ source: paths.ling, head, target: paths.lingMtp, report, signal });
+  } else {
+    removeManagedSource(paths);
+    await streamQwenMtp({ head, target: paths.lingMtp, report, signal, fetchImpl });
+  }
+  writeJson(receiptFile(paths), { version: RECEIPT_VERSION, head: QWEN_MTP_HEAD.sha256, source: QWEN_ASSET.sha256, target: { path: paths.lingMtp, ...stat(paths.lingMtp) } });
   fs.rmSync(head, { force: true });
+  removeManagedSource(paths);
   return paths.lingMtp;
 }

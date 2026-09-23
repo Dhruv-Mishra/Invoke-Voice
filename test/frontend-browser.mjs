@@ -484,7 +484,7 @@ try {
   assert.equal(setupWrites, 0, 'routing changes must not install or restart local models');
   await pointerClick('[data-for="config-local-llm-profile"] button[value="qwen"]');
   await waitFor(() => document.getElementById('app-dialog').open);
-  assert.equal(await evaluate(() => /24 GB of RAM[\s\S]*47 GB of disk/.test(document.getElementById('app-dialog-message').textContent)), true);
+  assert.equal(await evaluate(() => /24 GB of RAM[\s\S]*24 GB of disk/.test(document.getElementById('app-dialog-message').textContent)), true);
   await settle();
   await screenshot('qwen-confirm');
   await click('[data-app-dialog-cancel]');

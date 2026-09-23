@@ -100,10 +100,10 @@ function getKokoroRuntime(config, env, signal) {
 }
 
 async function startSttRuntime(config, env, signal) {
-  const whisper = config.sttProvider === 'whisper';
-  const name = whisper ? 'Whisper' : 'CrispASR';
-  const executable = whisper ? config.pythonBin : config.crispasrBin;
-  const args = whisper ? ['-I', '-u', whisperWorker, '--model', config.whisperModelDir, '--threads', env.WHISPER_THREADS || env.LOCAL_THREADS || localThreadDefault(8), '--language', env.WHISPER_LANGUAGE || 'en', '--silence-ms', env.WHISPER_END_SILENCE_MS || '1400', '--predecode-ms', env.WHISPER_PREDECODE_MS || '480'] : localSttArguments(config, env);
+  const worker = config.sttProvider !== 'moonshine';
+  const name = config.sttProvider === 'parakeet' ? 'Parakeet' : worker ? 'Whisper' : 'CrispASR';
+  const executable = worker ? config.pythonBin : config.crispasrBin;
+  const args = worker ? ['-I', '-u', whisperWorker, '--engine', config.sttProvider, '--model', config.sttProvider === 'parakeet' ? config.parakeetModelDir : config.whisperModelDir, '--threads', env.WHISPER_THREADS || env.LOCAL_THREADS || localThreadDefault(8), '--language', env.WHISPER_LANGUAGE || 'en', '--silence-ms', env.WHISPER_END_SILENCE_MS || '1400', '--predecode-ms', env.WHISPER_PREDECODE_MS || '480'] : localSttArguments(config, env);
   const process = spawn(executable, args, { windowsHide: true, env: { ...env, HF_HUB_OFFLINE: '1', HF_HUB_DISABLE_TELEMETRY: '1' }, stdio: ['pipe', 'pipe', 'pipe'] });
   sttProcess = process;
   desktopLaunch.trackChild(process);
@@ -121,13 +121,13 @@ async function startSttRuntime(config, env, signal) {
         try { event = JSON.parse(line); } catch { return; }
         if (event.type === 'ready') {
           transcription.off('line', onLine);
-          finish(['int8', 'int8_float32'].includes(event.compute_type) ? null : new Error(`Whisper did not initialize INT8 inference (${event.compute_type}).`));
-        } else if (event.type === 'error') finish(new Error(event.message || 'Whisper startup failed'));
+          finish(['int8', 'int8_float32'].includes(event.compute_type) ? null : new Error(`${name} did not initialize INT8 inference (${event.compute_type}).`));
+        } else if (event.type === 'error') finish(new Error(event.message || `${name} startup failed`));
       };
-      if (whisper) transcription.on('line', onLine);
+      if (worker) transcription.on('line', onLine);
       process.stderr.on('data', chunk => {
         diagnostic = (diagnostic + chunk.toString()).slice(-1000);
-        if (!whisper && diagnostic.includes('reading raw s16le 16kHz mono PCM from stdin')) finish();
+        if (!worker && diagnostic.includes('reading raw s16le 16kHz mono PCM from stdin')) finish();
       });
       process.once('error', error => finish(new Error(`${name} failed: ${error.message}`)));
       process.once('exit', code => finish(new Error(`${name} stopped during startup (${code}): ${diagnostic}`)));
@@ -207,22 +207,25 @@ export function localConfiguration(env = process.env) {
   const paths = stackPaths(env);
   const sttProvider = localSttProvider(env);
   const whisperModelDir = paths.whisperDir;
+  const parakeetModelDir = paths.parakeetDir;
   const crispasrBin = paths.crispasr;
   const requestedMoonshineModel = env.MOONSHINE_MODEL ? path.resolve(env.MOONSHINE_MODEL) : defaultMoonshineModel;
   const unsupportedQ8 = path.basename(requestedMoonshineModel).toLowerCase() === 'moonshine-streaming-small-q8_0.gguf';
   const moonshineModel = env.MOONSHINE_EFFECTIVE_MODEL || (existsSync(paths.moonshine) ? paths.moonshine : requestedMoonshineModel);
-  const sttLabel = sttProvider === 'whisper' ? 'Whisper Small INT8' : /^moonshine-streaming-tiny-/i.test(path.basename(moonshineModel)) ? 'Moonshine Tiny streaming' : /^moonshine-streaming-small-/i.test(path.basename(moonshineModel)) ? 'Moonshine Small streaming' : 'Moonshine custom streaming';
+  const sttLabel = sttProvider === 'parakeet' ? 'Parakeet TDT 0.6B INT8' : sttProvider === 'whisper' ? 'Whisper Small INT8' : /^moonshine-streaming-tiny-/i.test(path.basename(moonshineModel)) ? 'Moonshine Tiny streaming' : /^moonshine-streaming-small-/i.test(path.basename(moonshineModel)) ? 'Moonshine Small streaming' : 'Moonshine custom streaming';
   const sttWarning = sttProvider === 'moonshine' && unsupportedQ8 && moonshineModel !== requestedMoonshineModel ? 'Small Q8_0 crashes CrispASR 0.8.32; using canonical Tiny Q4_K.' : null;
   const siblingTokenizer = path.join(path.dirname(moonshineModel), 'tokenizer.bin');
   const moonshineTokenizer = env.MOONSHINE_TOKENIZER || (existsSync(siblingTokenizer) ? siblingTokenizer : paths.tokenizer);
   const vadModel = paths.vad;
-  const sttConfigured = sttProvider === 'whisper'
-    ? [paths.whisperModel, paths.whisperConfig, paths.whisperTokenizer, paths.whisperVocabulary].every(existsSync) && env.WHISPER_READY === '1'
-    : [crispasrBin, moonshineModel, moonshineTokenizer, vadModel].every(existsSync);
+  const sttConfigured = sttProvider === 'parakeet'
+    ? [paths.parakeetEncoder, paths.parakeetDecoder, paths.parakeetPreprocessor, paths.parakeetVocabulary].every(existsSync) && env.WHISPER_READY === '1'
+    : sttProvider === 'whisper'
+      ? [paths.whisperModel, paths.whisperConfig, paths.whisperTokenizer, paths.whisperVocabulary].every(existsSync) && env.WHISPER_READY === '1'
+      : [crispasrBin, moonshineModel, moonshineTokenizer, vadModel].every(existsSync);
   const managedPython = existsSync(path.join(paths.venv, 'complete.json')) && existsSync(paths.python) ? paths.python : null;
   const pythonBin = env.PYTHON_BIN && env.PYTHON_BIN !== 'python' ? path.resolve(env.SUPERVISOR_CONFIG_DIR || fileURLToPath(new URL('../', import.meta.url)), env.PYTHON_BIN) : managedPython || (existsSync(bundledPython) ? bundledPython : 'python');
   const ttsConfigured = existsSync(pythonBin) || env.KOKORO_READY === '1';
-  return { configured: sttConfigured && ttsConfigured, sttConfigured, ttsConfigured, sttProvider, sttLabel, whisperModelDir, pythonBin, crispasrBin, requestedMoonshineModel, moonshineModel, moonshineTokenizer, sttWarning, vadModel, model: env.LOCAL_LLM_MODEL || 'ling-local', ttsModel: env.KOKORO_REPO || 'hexgrad/Kokoro-82M', ttsVoice: env.KOKORO_VOICE || 'af_heart', sttStreamingArchitecture: sttProvider === 'whisper' ? 'faster-whisper Small INT8 utterance transcription' : 'CrispASR rolling-window streaming' };
+  return { configured: sttConfigured && ttsConfigured, sttConfigured, ttsConfigured, sttProvider, sttLabel, whisperModelDir, parakeetModelDir, pythonBin, crispasrBin, requestedMoonshineModel, moonshineModel, moonshineTokenizer, sttWarning, vadModel, model: env.LOCAL_LLM_MODEL || 'ling-local', ttsModel: env.KOKORO_REPO || 'hexgrad/Kokoro-82M', ttsVoice: env.KOKORO_VOICE || 'af_heart', sttStreamingArchitecture: sttProvider === 'parakeet' ? 'Parakeet TDT INT8 ONNX utterance transcription' : sttProvider === 'whisper' ? 'faster-whisper Small INT8 utterance transcription' : 'CrispASR rolling-window streaming' };
 }
 
 export function localSttArguments(config, env = process.env) {
@@ -289,7 +292,7 @@ export function createPcmWriter(stream, onError, { maxBytes = 32000 * 8, stallMs
 }
 
 export function createSttWriter(stream, provider, onError) {
-  const whisper = provider === 'whisper';
+  const whisper = provider !== 'moonshine';
   const writer = createPcmWriter(stream, onError, whisper ? { maxBytes: 32000 * 8 * 2 } : undefined);
   const packet = event => writer.write(Buffer.from(`${JSON.stringify(event)}\n`));
   return {
@@ -300,26 +303,35 @@ export function createSttWriter(stream, provider, onError) {
   };
 }
 
-export function drainVoiceText(value, final = false) {
+function voiceCut(text, final, spoken) {
+  const limit = spoken ? Math.min(160, Math.max(56, spoken)) : 56;
+  let clause = -1;
+  for (const match of text.matchAll(final ? /([.!?]+|[;,:])(?:\s+|$)/g : /([.!?]+|[;,:])\s+/g)) {
+    const end = match.index + match[0].length;
+    if (end > limit) break;
+    if (end < 24) continue;
+    if (!spoken || /[.!?]/.test(match[1])) return end;
+    clause = end;
+  }
+  if (text.length < limit) return -1;
+  if (clause > 0) return clause;
+  const space = text.lastIndexOf(' ', limit);
+  return space >= 24 ? space : text.indexOf(' ', limit);
+}
+
+// The first chunk starts audio quickly; later chunks prefer whole sentences, bounded by the speech already queued.
+export function drainVoiceText(value, final = false, spoken = 0) {
   let remainder = String(value || '').trimStart();
   const chunks = [];
   while (remainder) {
-    let cut = -1;
-    const boundaries = remainder.matchAll(final ? /[.!?;,](?:\s+|$)/g : /[.!?;,]\s+/g);
-    for (const match of boundaries) {
-      const end = match.index + match[0].length;
-      if (end >= 24 && end <= 56) { cut = end; break; }
-    }
-    if (cut < 0 && remainder.length >= 56) {
-      cut = remainder.lastIndexOf(' ', 56);
-      if (cut < 24) cut = remainder.indexOf(' ', 56);
-    }
+    const cut = voiceCut(remainder, final, spoken);
     if (cut < 0) {
       if (final) chunks.push(remainder.trim());
       break;
     }
     const chunk = remainder.slice(0, cut).trim();
     if (chunk) chunks.push(chunk);
+    spoken += chunk.length;
     remainder = remainder.slice(cut).trimStart();
   }
   return { chunks, remainder: final ? '' : remainder };
@@ -476,11 +488,15 @@ export async function createLocalVoice({ send, callTool, provider = 'local', stt
     messages.splice(0, Math.max(0, messages.length - 12));
     let transcriptText = '';
     let speechBuffer = '';
+    let spokenChars = 0;
     responses.set(responseId, { token, generationDone: false, ended: false, audioSent: false, synthesisFailed: false });
     const flushSpeech = final => {
-      const drained = drainVoiceText(speechBuffer, final);
+      const drained = drainVoiceText(speechBuffer, final, spokenChars);
       speechBuffer = drained.remainder;
-      for (const chunk of drained.chunks) phrase(chunk, token, responseId);
+      for (const chunk of drained.chunks) {
+        spokenChars += chunk.length;
+        phrase(chunk, token, responseId);
+      }
     };
     send({ type: 'state', state: 'thinking' });
     try {

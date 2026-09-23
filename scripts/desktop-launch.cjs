@@ -80,6 +80,7 @@ const externalSources = new Set([
   'https://huggingface.co/unsloth/Qwen3.6-35B-A3B-MTP-GGUF',
   'https://huggingface.co/cstr/moonshine-streaming-tiny-GGUF',
   'https://huggingface.co/Systran/faster-whisper-small',
+  'https://huggingface.co/istupakov/parakeet-tdt-0.6b-v2-onnx',
   'https://huggingface.co/ggml-org/whisper-vad',
   'https://huggingface.co/hexgrad/Kokoro-82M',
   'https://github.com/CrispStrobe/CrispASR/releases/tag/v0.8.32',

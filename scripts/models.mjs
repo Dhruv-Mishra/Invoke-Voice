@@ -32,6 +32,12 @@ export const ASSETS = Object.freeze([
     ['whisperTokenizer', 'tokenizer.json'],
     ['whisperVocabulary', 'vocabulary.txt'],
   ].map(([id, name]) => hf(id, `Whisper Small ${name}`, 'Systran/faster-whisper-small', '536b0662742c02347bc0e980a01041f333bce120', name)),
+  ...[
+    ['parakeetEncoder', 'encoder-model.int8.onnx'],
+    ['parakeetDecoder', 'decoder_joint-model.int8.onnx'],
+    ['parakeetPreprocessor', 'nemo128.onnx'],
+    ['parakeetVocabulary', 'vocab.txt'],
+  ].map(([id, name]) => hf(id, `Parakeet TDT 0.6B v2 ${name}`, 'istupakov/parakeet-tdt-0.6b-v2-onnx', '0bbb45a3365852604aef28b538a8f066f4ccaa85', name)),
 ]);
 
 export const CRISPASR_AVX2_ASSET = { id: 'crispasr', label: 'CrispASR 0.8.32 CPU AVX2 (opt-in)', name: 'crispasr-windows-x86_64-cpu.zip', executable: 'crispasr.exe', runtimeDirectory: 'crispasr-avx2', size: 8261759, sha256: 'ac8b6caf4dd448d00c5050907275bce4d154747110c37943aa4f69ee7fac9541', sourceUrl: 'https://github.com/CrispStrobe/CrispASR/releases/download/v0.8.32/crispasr-windows-x86_64-cpu.zip' };
@@ -50,9 +56,14 @@ export function setupError(message) {
 }
 
 export function localSttProvider(env = process.env) {
-  const provider = env.LOCAL_STT_PROVIDER || 'whisper';
-  if (!['whisper', 'moonshine'].includes(provider)) throw setupError('LOCAL_STT_PROVIDER must be whisper or moonshine.');
+  const provider = env.LOCAL_STT_PROVIDER || 'parakeet';
+  if (!['parakeet', 'whisper', 'moonshine'].includes(provider)) throw setupError('LOCAL_STT_PROVIDER must be parakeet, whisper or moonshine.');
   return provider;
+}
+
+// Parakeet shares the Whisper worker, Silero VAD and its Python packages.
+export function usesSpeechWorker(env = process.env) {
+  return localSttProvider(env) !== 'moonshine';
 }
 
 export function localLlmProfile(env = process.env) {
@@ -68,10 +79,11 @@ export function qwenMtpEnabled(env = process.env) {
 }
 
 export function localSetupAssets(env = process.env) {
-  const whisper = localSttProvider(env) === 'whisper';
-  return ASSETS.filter(asset => whisper
-    ? !['moonshine', 'tokenizer', 'vad', 'crispasr'].includes(asset.id)
-    : !asset.id.startsWith('whisper')).map(asset => asset.id === 'ling' ? localLlmAsset(env) : asset.id === 'llama' && env.LLAMA_BACKEND === 'vulkan' ? LLAMA_VULKAN_ASSET : asset);
+  const provider = localSttProvider(env);
+  const recognizer = asset => asset.id.startsWith('whisper') ? provider === 'whisper'
+    : asset.id.startsWith('parakeet') ? provider === 'parakeet'
+      : !['moonshine', 'tokenizer', 'vad', 'crispasr'].includes(asset.id) || provider === 'moonshine';
+  return ASSETS.filter(recognizer).map(asset => asset.id === 'ling' ? localLlmAsset(env) : asset.id === 'llama' && env.LLAMA_BACKEND === 'vulkan' ? LLAMA_VULKAN_ASSET : asset);
 }
 
 export function readJson(file) {
@@ -107,6 +119,7 @@ export function stackPaths(env = process.env, appRoot = root) {
   const base = env.SUPERVISOR_CONFIG_DIR || appRoot;
   const configured = value => value ? path.resolve(base, value) : null;
   const whisperDir = configured(env.WHISPER_MODEL_DIR) || path.join(modelDir, 'whisper-small');
+  const parakeetDir = configured(env.PARAKEET_MODEL_DIR) || path.join(modelDir, 'parakeet-tdt-0.6b-v2');
   const pythonBase = env.PYTHON_BIN && env.PYTHON_BIN !== 'python' ? configured(env.PYTHON_BIN) : null;
   const venv = path.join(runtimeDir, pythonBase ? `kokoro-approved-${createHash('sha256').update(pythonBase).digest('hex').slice(0, 20)}` : 'kokoro-venv');
   const select = (...candidates) => candidates.find(candidate => candidate && fileStat(candidate));
@@ -122,6 +135,8 @@ export function stackPaths(env = process.env, appRoot = root) {
     home, modelDir, runtimeDir, crispasrCpu, llamaBackend, receiptDir: path.join(home, 'setup-receipts'),
     whisperDir,
     ...Object.fromEntries(ASSETS.filter(asset => asset.id.startsWith('whisper')).map(asset => [asset.id, path.join(whisperDir, asset.name)])),
+    parakeetDir,
+    ...Object.fromEntries(ASSETS.filter(asset => asset.id.startsWith('parakeet')).map(asset => [asset.id, path.join(parakeetDir, asset.name)])),
     ...Object.fromEntries(TASK_SEARCH_ASSETS.map(asset => [asset.id, path.join(modelDir, 'task-search-minilm', asset.name)])),
     ling: localLlmProfile(env) === 'qwen'
       ? select(configured(env.QWEN_MODEL_PATH), path.join(localStack, 'LLMs', QWEN_ASSET.name), path.join(modelDir, QWEN_ASSET.name)) || path.join(modelDir, QWEN_ASSET.name)
@@ -359,8 +374,8 @@ export async function ensureAsset(paths, asset, { report = () => {}, signal, fet
 
 async function main() {
   const target = process.argv[2];
-  if (!['all', 'ling', 'gemma', 'qwen', 'whisper', 'moonshine', 'runtimes', 'task-search'].includes(target)) {
-    console.log('Usage: npm run models -- all|ling|gemma|qwen|whisper|moonshine|runtimes|task-search\nAll installs the selected local recognizer (Whisper by default). qwen verifies or downloads the opt-in Qwen3.6 model and builds its MTP accelerator unless QWEN_MTP=off. Full voice setup remains in Settings.');
+  if (!['all', 'ling', 'gemma', 'qwen', 'parakeet', 'whisper', 'moonshine', 'runtimes', 'task-search'].includes(target)) {
+    console.log('Usage: npm run models -- all|ling|gemma|qwen|parakeet|whisper|moonshine|runtimes|task-search\nAll installs the selected local recognizer (Parakeet by default). qwen verifies or downloads the opt-in Qwen3.6 model and builds its MTP accelerator unless QWEN_MTP=off. Full voice setup remains in Settings.');
     return;
   }
   if (target === 'runtimes' && (process.platform !== 'win32' || process.arch !== 'x64')) throw setupError('Prebuilt runtimes support Windows x64 only.');
@@ -383,7 +398,7 @@ async function main() {
     return;
   }
   const candidates = ['all', 'runtimes'].includes(target) ? localSetupAssets() : ASSETS;
-  const selected = target === 'task-search' ? TASK_SEARCH_ASSETS : candidates.filter(asset => target === 'runtimes' ? Boolean(asset.executable) && !(asset.id === 'uv' && paths.pythonBase) : target === 'all' ? ['ling', 'moonshine', 'tokenizer', 'vad'].includes(asset.id) || asset.id.startsWith('whisper') : target === 'ling' ? asset.id === 'ling' : target === 'whisper' ? asset.id.startsWith('whisper') : ['moonshine', 'tokenizer', 'vad', 'crispasr'].includes(asset.id));
+  const selected = target === 'task-search' ? TASK_SEARCH_ASSETS : candidates.filter(asset => target === 'runtimes' ? Boolean(asset.executable) && !(asset.id === 'uv' && paths.pythonBase) : target === 'all' ? ['ling', 'moonshine', 'tokenizer', 'vad'].includes(asset.id) || asset.id.startsWith('whisper') || asset.id.startsWith('parakeet') : target === 'ling' ? asset.id === 'ling' : ['whisper', 'parakeet'].includes(target) ? asset.id.startsWith(target) : ['moonshine', 'tokenizer', 'vad', 'crispasr'].includes(asset.id));
   await withSetupLock(paths, async () => {
     for (const asset of selected) await ensureAsset(paths, asset, { report: event => { if (!event.progress) console.log(event.message); } });
   });

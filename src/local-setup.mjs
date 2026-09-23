@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { stripVTControlCharacters } from 'node:util';
-import { ASSETS, LEGACY_LING_ASSETS, assetReady, ensureAsset, localLlmAsset, localLlmProfile, localSetupAssets, localSttProvider, qwenMtpEnabled, readJson, setupError, stackPaths, withSetupLock, writeJson } from '../scripts/models.mjs';
+import { ASSETS, LEGACY_LING_ASSETS, assetReady, ensureAsset, localLlmAsset, localLlmProfile, localSetupAssets, localSttProvider, qwenMtpEnabled, readJson, setupError, stackPaths, usesSpeechWorker, withSetupLock, writeJson } from '../scripts/models.mjs';
 import { ensureQwenMtp, qwenMtpReady } from '../scripts/qwen-mtp.mjs';
 import { createSetup } from './setup.mjs';
 import { closeLocalVoice, isLocalVoiceWarm, localConfiguration, onLocalVoiceRuntimeExit, warmLocalVoice } from './local-voice.mjs';
@@ -139,7 +139,7 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
   const assets = ASSETS.map(asset => asset.id === 'ling' ? localLlmAsset(env) : asset);
   const selectedAssets = () => localSetupAssets(env).filter(asset => asset.id !== 'uv' || !paths.pythonBase);
   const whisperReady = () => pythonReady(paths, 'whisper-complete.json', whisperReceiptVersion);
-  const sttLabel = () => localSttProvider(env) === 'whisper' ? 'Whisper Small INT8' : 'Moonshine Tiny streaming';
+  const sttLabel = () => ({ parakeet: 'Parakeet TDT 0.6B INT8', whisper: 'Whisper Small INT8' })[localSttProvider(env)] || 'Moonshine Tiny streaming';
   const completionFile = path.join(paths.home, 'local-setup.json');
   const saved = readJson(completionFile);
   const pathInputs = Object.fromEntries(['LOCAL_LLM_PATH', 'MOONSHINE_MODEL', 'WHISPER_MODEL_DIR', 'LLAMA_SERVER_BIN', 'CRISPASR_BIN', 'VAD_MODEL', 'PYTHON_BIN', ...(qwen ? ['LOCAL_LLM_PROFILE', 'QWEN_MODEL_PATH', 'QWEN_MTP'] : []), ...(env.LLAMA_BACKEND === 'vulkan' ? ['LLAMA_BACKEND'] : [])].map(key => [key, env[key] || '']));
@@ -167,7 +167,7 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
 
   const inspect = () => [...selectedAssets().map(asset => ({ id: asset.id, label: qwen && mtp && asset.id === 'ling' ? `${asset.label} with MTP accelerator (about 24 GB)` : asset.label, sourceUrl: asset.repo ? `https://huggingface.co/${asset.repo}` : asset.sourceUrl.replace(/\/releases\/download\/([^/]+)\/.*$/, '/releases/tag/$1'), ready: chatAssetReady(asset) })),
     { id: 'kokoro', label: paths.pythonBase ? 'Kokoro (approved Python; runtime download skipped)' : 'Kokoro Python environment', sourceUrl: 'https://pypi.org/project/kokoro/0.9.4/', ready: pythonReady(paths) },
-    ...(localSttProvider(env) === 'whisper' ? [{ id: 'whisper', label: 'faster-whisper 1.2.1 (CPU INT8)', sourceUrl: 'https://pypi.org/project/faster-whisper/1.2.1/', ready: pythonReady(paths) && whisperReady() }] : [])];
+    ...(usesSpeechWorker(env) ? [{ id: 'whisper', label: 'faster-whisper 1.2.1 + ONNX Runtime (CPU INT8)', sourceUrl: 'https://pypi.org/project/faster-whisper/1.2.1/', ready: pythonReady(paths) && whisperReady() }] : [])];
 
   const applyChatPaths = () => {
     Object.assign(env, {
@@ -181,6 +181,7 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
       MOONSHINE_EFFECTIVE_MODEL: paths.moonshine,
       MOONSHINE_TOKENIZER: paths.tokenizer,
       WHISPER_MODEL_DIR: path.dirname(paths.whisperModel),
+      PARAKEET_MODEL_DIR: path.dirname(paths.parakeetEncoder),
       WHISPER_READY: whisperReady() ? '1' : '0',
       CRISPASR_BIN: paths.crispasr,
       VAD_MODEL: paths.vad,
@@ -365,7 +366,7 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
           throw error;
         }
       }
-      if (localSttProvider(env) === 'whisper' && !whisperReady()) {
+      if (usesSpeechWorker(env) && !whisperReady()) {
         const installer = paths.pythonBase ? paths.python : paths.uv;
         const args = paths.pythonBase
           ? ['-I', '-m', 'pip', '--isolated', '--disable-pip-version-check', '--no-input', '--cache-dir', commandEnv.PIP_CACHE_DIR, '--use-feature=truststore', 'install']
@@ -425,6 +426,7 @@ export function createLocalSetup({ env = process.env, activateLLM, run = runSetu
         if (error.message.includes('Kokoro')) runtime = 'Kokoro';
         else if (error.message.includes('CrispASR')) runtime = 'CrispASR';
         else if (error.message.includes('Whisper')) runtime = 'Whisper';
+        else if (error.message.includes('Parakeet')) runtime = 'Parakeet';
         else if (error.message.includes('language runtime') || error.message.includes('llama')) runtime = 'llama.cpp';
         active = false;
         voiceReady = false;

@@ -36,6 +36,16 @@ def bounded_number(value, lower, upper):
         return 1.0
 
 
+# Kokoro pads every phrase with ~0.3 s of leading and ~0.45 s of trailing silence; keep natural pauses only.
+def trim_silence(samples, sentence_end, rate=24000):
+    voiced = np.flatnonzero(np.abs(samples) > 1e-3)
+    if not voiced.size:
+        return samples[:0]
+    start = max(0, voiced[0] - int(0.02 * rate))
+    end = min(samples.size, voiced[-1] + 1 + int((0.3 if sentence_end else 0.12) * rate))
+    return samples[start:end]
+
+
 for line in sys.stdin:
     if not line.strip():
         continue
@@ -52,10 +62,13 @@ for line in sys.stdin:
         pitch = bounded_number(request.get("pitch", 1), 0.85, 1.15)
         with contextlib.redirect_stdout(sys.stderr):
             chunks = pipeline(str(request.get("text", ""))[:500], voice=selected_voice, speed=speed)
-            for _, _, audio in chunks:
+            for graphemes, _, audio in chunks:
                 if audio is None:
                     continue
                 samples = audio.detach().cpu().numpy() if isinstance(audio, torch.Tensor) else np.asarray(audio)
+                samples = trim_silence(samples, str(graphemes).rstrip(' \t\n"\')\u201d\u2019').endswith(('.', '!', '?')))
+                if not samples.size:
+                    continue
                 if pitch != 1.0 and samples.size > 1:
                     samples = np.interp(np.arange(0, samples.size - 1, pitch), np.arange(samples.size), samples)
                 pcm = (np.clip(samples, -1, 1) * 32767).astype("<i2").tobytes()

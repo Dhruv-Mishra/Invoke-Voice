@@ -22,15 +22,19 @@ function fixture(context) {
   return { directory, paths: stackPaths({ LOCALAPPDATA: directory }, path.join(directory, 'app')) };
 }
 
-test('local STT defaults to Whisper and Moonshine remains opt-in', () => {
-  assert.equal(localSttProvider({}), 'whisper');
+test('local STT defaults to Parakeet while Whisper and Moonshine remain selectable', () => {
+  assert.equal(localSttProvider({}), 'parakeet');
+  assert.equal(localSttProvider({ LOCAL_STT_PROVIDER: 'whisper' }), 'whisper');
   assert.equal(localSttProvider({ LOCAL_STT_PROVIDER: 'moonshine' }), 'moonshine');
   assert.throws(() => localSttProvider({ LOCAL_STT_PROVIDER: 'browser' }), /LOCAL_STT_PROVIDER/);
   const defaults = localSetupAssets({}).map(asset => asset.id);
-  assert.ok(defaults.includes('whisperModel'));
-  assert.equal(defaults.includes('moonshine'), false);
+  for (const id of ['parakeetEncoder', 'parakeetDecoder', 'parakeetPreprocessor', 'parakeetVocabulary']) assert.ok(defaults.includes(id));
+  assert.equal(defaults.some(id => id.startsWith('whisper') || ['moonshine', 'crispasr'].includes(id)), false);
+  const whisper = localSetupAssets({ LOCAL_STT_PROVIDER: 'whisper' }).map(asset => asset.id);
+  assert.ok(whisper.includes('whisperModel'));
+  assert.equal(whisper.some(id => id.startsWith('parakeet') || id === 'moonshine'), false);
   const moonshine = localSetupAssets({ LOCAL_STT_PROVIDER: 'moonshine' }).map(asset => asset.id);
-  assert.equal(moonshine.some(id => id.startsWith('whisper')), false);
+  assert.equal(moonshine.some(id => id.startsWith('whisper') || id.startsWith('parakeet')), false);
   for (const id of ['moonshine', 'tokenizer', 'vad', 'crispasr']) assert.ok(moonshine.includes(id));
   assert.equal(ASSETS[1].name, 'moonshine-streaming-tiny-q4_k.gguf');
   assert.equal(ASSETS[1].revision, ASSETS[2].revision);
@@ -146,10 +150,10 @@ test('saved managed Tiny selection overrides older model environment after resta
   assert.equal(readFileSync(oldModel, 'utf8'), 'existing custom model');
 });
 
-test('Whisper model assets are pinned, verified and reusable offline', async context => {
+test('Whisper and Parakeet model assets are pinned, verified and reusable offline', async context => {
   const { paths } = fixture(context);
-  for (const asset of ASSETS.filter(asset => asset.id.startsWith('whisper'))) {
-    assert.ok(paths[asset.id].startsWith(paths.whisperDir + path.sep));
+  for (const asset of ASSETS.filter(asset => asset.id.startsWith('whisper') || asset.id.startsWith('parakeet'))) {
+    assert.ok(paths[asset.id].startsWith((asset.id.startsWith('parakeet') ? paths.parakeetDir : paths.whisperDir) + path.sep));
     assert.match(asset.sourceUrl, /\/resolve\/[a-f0-9]{40}\//);
     const content = Buffer.from(`synthetic-${asset.id}`);
     await ensureAsset(paths, asset, { fetchImpl: async url => url.includes('/api/models/')
@@ -276,7 +280,7 @@ function localFixture(context, options = {}) {
     env,
     provision: async (paths, asset) => {
       provisioned.push(asset.id);
-      if (asset.id !== 'uv') paths[asset.id] = asset.id.startsWith('whisper') ? path.join(directory, 'whisper-small', asset.name) : path.join(directory, asset.id);
+      if (asset.id !== 'uv') paths[asset.id] = asset.id.startsWith('whisper') ? path.join(directory, 'whisper-small', asset.name) : asset.id.startsWith('parakeet') ? path.join(directory, 'parakeet', asset.name) : path.join(directory, asset.id);
       mkdirSync(path.dirname(paths[asset.id]), { recursive: true });
       writeFileSync(paths[asset.id], 'fixture');
     },
@@ -298,7 +302,7 @@ function localFixture(context, options = {}) {
     ...setupOptions,
   });
   context.after(() => setup.close());
-  return { setup, paths, commands, provisioned, children, env };
+  return { setup, paths, commands, provisioned, children, env, directory };
 }
 
 test('voice pack download resumes, rejects corrupt sources, and reuses verified archives offline', async context => {
@@ -432,6 +436,22 @@ test('Whisper setup installs only selected models and verifies INT8 dependencies
   assert.ok(commands.some(command => command.args.includes(fileURLToPath(new URL('../requirements-whisper.txt', import.meta.url)))));
   assert.ok(commands.some(command => command.args.some(arg => arg.includes('get_supported_compute_types'))));
   assert.equal(env.WHISPER_READY, '1');
+  assert.equal(snapshot.components.find(component => component.id === 'whisper').ready, true);
+});
+
+test('Parakeet setup installs only its ONNX models and reuses the Whisper worker dependencies', windowsSetup, async context => {
+  const { setup, provisioned, commands, env, directory } = localFixture(context, { env: { LOCAL_STT_PROVIDER: 'parakeet' } });
+  setup.start({ consent: true });
+  const snapshot = await setup.settled();
+  assert.equal(snapshot.status, 'ready', snapshot.message);
+  for (const id of ['parakeetEncoder', 'parakeetDecoder', 'parakeetPreprocessor', 'parakeetVocabulary']) assert.ok(provisioned.includes(id));
+  assert.equal(provisioned.some(id => id.startsWith('whisper') || ['moonshine', 'crispasr'].includes(id)), false);
+  assert.ok(commands.some(command => command.args.includes(fileURLToPath(new URL('../requirements-whisper.txt', import.meta.url)))));
+  assert.equal(env.WHISPER_READY, '1');
+  assert.equal(env.PARAKEET_MODEL_DIR, path.join(directory, 'parakeet'));
+  const voice = localConfiguration(env);
+  assert.equal(voice.sttConfigured, true);
+  assert.equal(voice.sttLabel, 'Parakeet TDT 0.6B INT8');
   assert.equal(snapshot.components.find(component => component.id === 'whisper').ready, true);
 });
 
@@ -1400,13 +1420,13 @@ test('setup API is same-origin, consent-gated and returns 202 without waiting fo
   } finally { release(); await app.close(); }
 });
 
-test('speech settings expose Whisper by default and persist Moonshine opt-in without a restart', context => {
+test('speech settings expose Parakeet by default and persist Moonshine opt-in without a restart', context => {
   const { directory } = fixture(context);
   const env = {};
   const config = createRuntimeConfig({ dataDir: directory, env });
   const field = config.snapshot().fields.find(field => field.key === 'LOCAL_STT_PROVIDER');
-  assert.equal(field.value, 'whisper');
-  assert.deepEqual(field.options.map(option => option.value), ['whisper', 'moonshine']);
+  assert.equal(field.value, 'parakeet');
+  assert.deepEqual(field.options.map(option => option.value), ['parakeet', 'whisper', 'moonshine']);
   assert.equal(field.restartRequired, false);
   config.update({ values: { LOCAL_STT_PROVIDER: 'moonshine' } });
   assert.equal(env.LOCAL_STT_PROVIDER, 'moonshine');

@@ -270,5 +270,47 @@ class SchedulerTest(unittest.TestCase):
         self.assertTrue(self.scheduler.stopped.is_set())
 
 
+class ParakeetDecodeTest(unittest.TestCase):
+    def test_tdt_greedy_decode_emits_tokens_skips_durations_and_keeps_blank_state(self):
+        import numpy as np
+        vocabulary = [' Hello', ',', ' world', '<blk>']
+        # (frame, previous token) -> (token, duration)
+        script = {(0, 3): (0, 0), (0, 0): (1, 2), (2, 1): (3, 0), (3, 1): (2, 3)}
+        seen = []
+
+        class Session:
+            def __init__(self, result):
+                self.result = result
+
+            def run(self, _, feeds):
+                return self.result(feeds)
+
+        def joint(feeds):
+            frame = int(feeds['encoder_outputs'][0, 0, 0])
+            previous = int(feeds['targets'][0, 0])
+            seen.append((frame, previous, float(feeds['input_states_1'][0, 0, 0])))
+            token, duration = script[(frame, previous)]
+            logits = np.zeros(len(vocabulary) + 5, dtype=np.float32)
+            logits[token] = 1
+            logits[len(vocabulary) + duration] = 1
+            state = np.full((2, 1, 4), len(seen), dtype=np.float32)
+            return logits.reshape(1, 1, 1, -1), None, state, state
+
+        model = worker.ParakeetModel.__new__(worker.ParakeetModel)
+        model.np = np
+        model.vocabulary = vocabulary
+        model.blank = 3
+        model.state_shape = (2, 1, 4)
+        model.preprocessor = Session(lambda feeds: (feeds['waveforms'], np.array([6])))
+        model.encoder = Session(lambda feeds: (np.arange(6, dtype=np.float32).reshape(1, 1, 6), np.array([6])))
+        model.joint = Session(joint)
+        self.assertEqual(model.transcribe(np.zeros(16000, dtype=np.float32), threading.Event()), 'Hello, world')
+        self.assertEqual([step[:2] for step in seen], [(0, 3), (0, 0), (2, 1), (3, 1)])
+        self.assertEqual([step[2] for step in seen], [0, 1, 2, 2])
+        cancelled = threading.Event()
+        cancelled.set()
+        self.assertEqual(model.transcribe(np.zeros(16000, dtype=np.float32), cancelled), '')
+
+
 if __name__ == '__main__':
     unittest.main()

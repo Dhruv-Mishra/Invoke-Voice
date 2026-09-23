@@ -88,7 +88,7 @@ Installing Agency does not start Teams MCP. Invoke explicitly runs `agency mcp -
 Local setup is opt-in and provisions:
 
 - Gemma 4 E2B IT QAT Q4_0 through llama.cpp for chat and tool calls, or the opt-in Qwen3.6 35B-A3B mixture-of-experts model.
-- Whisper Small CPU INT8 by default; Moonshine Streaming Tiny is opt-in.
+- NVIDIA Parakeet TDT 0.6B v2 (English, INT8 ONNX) by default; multilingual Whisper Small INT8 and Moonshine Streaming Tiny are opt-in.
 - Kokoro for speech synthesis in an isolated Python 3.12 environment.
 
 Downloads are pinned and hash-verified. Working chat remains available if speech setup fails. Detailed model, mirror, and release-pack behavior is documented in [docs/operations.md](docs/operations.md#voice-routes).

@@ -284,6 +284,9 @@ class Pipeline:
         assert voice == 'af_heart'
         if text == 'themed': assert speed == 1.08
         if text == 'invalid': assert speed == 1
+        if text.startswith('Padded'):
+            yield text, None, np.concatenate([np.zeros(7200), np.full(2400, 0.5), np.zeros(12000)]).astype(np.float32)
+            return
         yield None, None, np.linspace(-0.5, 0.5, 240, dtype=np.float32)
 kokoro.KPipeline = Pipeline
 kokoro.KModel = object
@@ -293,21 +296,26 @@ os.environ['KOKORO_VOICE'] = 'af_heart'
 sys.stdin = io.StringIO('\\n'.join(json.dumps(item) for item in [
     {'id': 'default', 'text': 'default'},
     {'id': 'theme', 'text': 'themed', 'voice': '../../untrusted', 'speed': 1.08, 'pitch': 0.94},
-    {'id': 'invalid', 'text': 'invalid', 'speed': 'bad', 'pitch': 'nan'}
+    {'id': 'invalid', 'text': 'invalid', 'speed': 'bad', 'pitch': 'nan'},
+    {'id': 'sentence', 'text': 'Padded sentence.'},
+    {'id': 'clause', 'text': 'Padded clause,'}
 ]))
 runpy.run_path(sys.argv[1], run_name='__main__')
 `;
   const result = childProcess.spawnSync(executable, ['-c', script, fileURLToPath(new URL('../scripts/kokoro_worker.py', import.meta.url))], { encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
   const events = result.stdout.trim().split('\n').map(line => JSON.parse(line));
-  assert.equal(events.filter(event => event.type === 'done').length, 3);
+  assert.equal(events.filter(event => event.type === 'done').length, 5);
   assert.equal(events.some(event => event.type === 'error'), false);
   const audio = events.filter(event => event.type === 'audio');
-  assert.equal(audio.length, 3);
+  assert.equal(audio.length, 5);
   assert.ok(audio.every(event => event.sampleRate === 24000));
   assert.equal(Buffer.from(audio[0].data, 'base64').length, 480);
   assert.ok(Buffer.from(audio[1].data, 'base64').length > 480);
   assert.equal(audio[0].data, audio[2].data);
+  // 20 ms lead-in, then 300 ms after a sentence or 120 ms after a clause.
+  assert.equal(Buffer.from(audio[3].data, 'base64').length, (480 + 2400 + 7200) * 2);
+  assert.equal(Buffer.from(audio[4].data, 'base64').length, (480 + 2400 + 2880) * 2);
 });
 
 test('PCM preserves accepted false writes, queued audio and commit order across drains', () => {
@@ -339,7 +347,7 @@ test('PCM preserves accepted false writes, queued audio and commit order across 
 });
 
 test('Whisper writes bounded JSON audio and explicit commits while Moonshine retains PCM streaming', () => {
-  for (const provider of ['whisper', 'moonshine']) {
+  for (const provider of ['whisper', 'parakeet', 'moonshine']) {
     const chunks = [];
     const stream = new Writable({ write(chunk, encoding, done) { chunks.push(Buffer.from(chunk)); done(); } });
     const errors = [];
@@ -348,7 +356,7 @@ test('Whisper writes bounded JSON audio and explicit commits while Moonshine ret
     writer.begin();
     writer.write(audio);
     writer.commit();
-    if (provider === 'whisper') {
+    if (provider !== 'moonshine') {
       assert.deepEqual(Buffer.concat(chunks).toString().trim().split('\n').map(line => JSON.parse(line)), [
         { type: 'begin' }, { type: 'audio', data: audio.toString('base64') }, { type: 'commit' },
       ]);
@@ -565,6 +573,15 @@ test('streams complete voice text once across stable synthesis chunks', () => {
   const version = drainVoiceText('Version 1.');
   assert.deepEqual(version.chunks, []);
   assert.deepEqual(drainVoiceText(`${version.remainder}2 is current.`, true).chunks, ['Version 1.2 is current.']);
+  const sentence = 'After that, the worker reran the parser tests, and all of them passed. Next';
+  const later = drainVoiceText(sentence, false, 100);
+  assert.deepEqual(later.chunks, ['After that, the worker reran the parser tests, and all of them passed.']);
+  assert.equal(later.remainder, 'Next');
+  assert.deepEqual(drainVoiceText(sentence, false, 30).chunks, ['After that, the worker reran the parser tests,', 'and all of them passed.']);
+  const runOn = `${'word '.repeat(40)}end`;
+  const bounded = drainVoiceText(runOn, false, 400);
+  assert.ok(bounded.chunks.length === 1 && bounded.chunks[0].length <= 160);
+  assert.equal(`${bounded.chunks[0]} ${bounded.remainder}`, runOn);
   assert.equal(isVoiceResponsePlayable({ audioSent: true, synthesisFailed: false }), true);
   assert.equal(isVoiceResponsePlayable({ audioSent: true, synthesisFailed: true }), false);
 });
@@ -911,10 +928,10 @@ test('Kokoro cold initialization tolerates slow loading, reuses warm workers and
 });
 
 test('local and hybrid voice execute tools before playback and retain real answers across turns', { timeout: 10000 }, async context => {
-  for (const [provider, recognizer] of [['local', 'moonshine'], ['openai', 'moonshine'], ['local', 'whisper'], ['openai', 'whisper']]) await context.test(`${provider}/${recognizer}`, async context => {
-    const whisper = recognizer === 'whisper';
+  for (const [provider, recognizer] of [['local', 'moonshine'], ['openai', 'moonshine'], ['local', 'whisper'], ['openai', 'whisper'], ['local', 'parakeet']]) await context.test(`${provider}/${recognizer}`, async context => {
+    const whisper = recognizer !== 'moonshine';
     const modelDir = mkdtempSync(path.join(os.tmpdir(), 'voice-whisper-session-'));
-    for (const name of ['config.json', 'model.bin', 'tokenizer.json', 'vocabulary.txt']) writeFileSync(path.join(modelDir, name), 'fixture');
+    for (const name of ['config.json', 'model.bin', 'tokenizer.json', 'vocabulary.txt', 'encoder-model.int8.onnx', 'decoder_joint-model.int8.onnx', 'nemo128.onnx', 'vocab.txt']) writeFileSync(path.join(modelDir, name), 'fixture');
     context.after(() => rmSync(modelDir, { recursive: true, force: true }));
     const requests = [];
     const events = [];
@@ -993,7 +1010,7 @@ test('local and hybrid voice execute tools before playback and retain real answe
     const url = `http://127.0.0.1:${server.address().port}/v1`;
     const env = {
       LOCAL_LLM_URL: url, OPENAI_BASE_URL: url, OPENAI_API_KEY: 'fixture',
-      LOCAL_STT_PROVIDER: recognizer, WHISPER_MODEL_DIR: modelDir, WHISPER_READY: '1',
+      LOCAL_STT_PROVIDER: recognizer, WHISPER_MODEL_DIR: modelDir, PARAKEET_MODEL_DIR: modelDir, WHISPER_READY: '1',
       CRISPASR_BIN: process.execPath, PYTHON_BIN: process.execPath,
       MOONSHINE_MODEL: process.execPath, MOONSHINE_TOKENIZER: process.execPath, VAD_MODEL: process.execPath,
       VOICE_TEST_ENV: 'passed-to-crisp',
@@ -1015,6 +1032,8 @@ test('local and hybrid voice execute tools before playback and retain real answe
     assert.equal(processes.find(runtime => runtime.child === stt).options.env.VOICE_TEST_ENV, 'passed-to-crisp');
     const sttArgs = processes.find(runtime => runtime.child === stt).args;
     if (whisper) {
+      assert.equal(sttArgs[sttArgs.indexOf('--engine') + 1], recognizer);
+      assert.equal(sttArgs[sttArgs.indexOf('--model') + 1], modelDir);
       assert.equal(sttArgs[sttArgs.indexOf('--predecode-ms') + 1], provider === 'openai' ? '0' : '480');
       assert.equal(sttArgs[sttArgs.indexOf('--language') + 1], provider === 'openai' ? 'auto' : 'en');
     }

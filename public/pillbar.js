@@ -49,7 +49,7 @@ export function refreshPillbars(root = document) {
       button.title = option.textContent;
       if (select.dataset.providerIcons !== undefined) {
         const glyph = document.createElement('i');
-        glyph.dataset.lucide = ['local', 'whisper', 'moonshine'].includes(option.value) ? 'folder' : 'app-window';
+        glyph.dataset.lucide = ['local', 'parakeet', 'whisper', 'moonshine'].includes(option.value) ? 'folder' : 'app-window';
         glyph.setAttribute('aria-hidden', 'true');
         button.append(glyph);
       }

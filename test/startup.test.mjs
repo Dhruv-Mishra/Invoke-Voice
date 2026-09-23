@@ -12,7 +12,7 @@ import { voiceTools } from '../src/supervisor/contract.mjs';
 import { createRuntimeConfig, localThreadDefault } from '../src/runtime-config.mjs';
 import { voiceInstructions } from '../src/llm.mjs';
 import { tools } from '../src/supervisor/contract.mjs';
-import { createVoiceToolCaller, startSupervisor } from '../src/server.mjs';
+import { createModelToolCaller, createVoiceToolCaller, startSupervisor } from '../src/server.mjs';
 import { Supervisor } from '../src/supervisor.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -138,6 +138,73 @@ test('voice tool bridge ends calls locally and delegates supervisor tools', asyn
   assert.deepEqual(await direct('search_work', { query: 'Review time', source: 'email' }), { source: 'workiq', data: 'Evidence' });
   assert.match((await direct('search_work', { query: 'Review time' })).error, /source/);
   assert.deepEqual(directCalls, [{ name: 'search_work', args: { query: 'Review time', source: 'email' } }]);
+});
+
+test('typed tool bridge shares consent-gated direct reads without exposing voice controls', async () => {
+  const env = { VOICE_DIRECT_MCP_ACCESS: 'read-only', AGENCY_WORK_DATA_ACCESS: 'read-only' };
+  const calls = [];
+  const callTool = createModelToolCaller({ callTool: () => assert.fail('Direct reads must not create a task') }, {
+    env,
+    directWorkTools: { call: async (name, args) => { calls.push({ name, args }); return { source: 'workiq', data: 'Evidence' }; } },
+  });
+  const args = { query: 'Latest Teams messages about the review', source: 'teams' };
+  assert.deepEqual(await callTool('search_work', args), { source: 'workiq', data: 'Evidence' });
+  assert.match((await callTool('end_call', {})).error, /Unknown tool/);
+  assert.match((await callTool('start_work', { objective: 'Read Teams', model: 'gpt-4' })).error, /Unknown argument/);
+  for (const key of ['VOICE_DIRECT_MCP_ACCESS', 'AGENCY_WORK_DATA_ACCESS']) {
+    env[key] = 'disabled';
+    assert.match((await callTool('search_work', args)).error, /Unknown tool/);
+    env[key] = 'read-only';
+  }
+  assert.deepEqual(calls, [{ name: 'search_work', args }]);
+});
+
+test('typed chat endpoint uses approved Teams retrieval without creating a task and respects both consent settings', async context => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'voice-chat-direct-'));
+  const overrides = { LOCAL_LLM_URL: 'http://127.0.0.1:1/v1', LOCAL_ROUTER: 'off', VOICE_DIRECT_MCP_ACCESS: 'read-only', AGENCY_WORK_DATA_ACCESS: 'read-only' };
+  const saved = Object.fromEntries(Object.keys(overrides).map(key => [key, process.env[key]]));
+  Object.assign(process.env, overrides);
+  const calls = [];
+  const app = await startSupervisor({ dataDir, port: 0, prewarm: false, agencyMcp: {
+    snapshot: () => [], close: async () => {},
+    callTool: async (server, name, args) => { calls.push({ server, name, args }); return { structuredContent: { text: 'Synthetic Teams evidence.' } }; },
+  } });
+  context.after(async () => {
+    await app.close();
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+  const request = globalThis.fetch;
+  let generations = 0;
+  context.mock.method(globalThis, 'fetch', async (url, options) => {
+    if (!String(url).startsWith(overrides.LOCAL_LLM_URL)) return request(url, options);
+    const body = JSON.parse(options.body);
+    const catalog = body.messages[0].content;
+    assert.doesNotMatch(catalog, /end_call/);
+    generations++;
+    const enabled = process.env.VOICE_DIRECT_MCP_ACCESS === 'read-only' && process.env.AGENCY_WORK_DATA_ACCESS === 'read-only';
+    const summary = body.response_format.json_schema.schema.properties?.answer;
+    if (!summary) assert.equal(catalog.includes('search_work'), enabled);
+    const content = !summary && enabled
+      ? { calls: [{ name: 'search_work', arguments: { query: 'Latest PDF encryption messages', source: 'teams' } }] }
+      : { answer: 'Synthetic response.' };
+    return new Response(`data: ${JSON.stringify({ choices: [{ delta: { content: JSON.stringify(content) }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`);
+  });
+  for (const disabled of [null, 'VOICE_DIRECT_MCP_ACCESS', 'AGENCY_WORK_DATA_ACCESS']) {
+    if (disabled) process.env[disabled] = 'disabled';
+    const response = await request(`${app.url}/api/chat`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: app.url }, body: JSON.stringify({ provider: 'local', messages: [{ role: 'user', content: 'Check latest Teams messages on PDF encryption.' }] }) });
+    assert.equal(response.status, 200);
+    const result = await response.text();
+    assert.doesNotMatch(result, /"type":"error"/);
+    assert.match(result, /Synthetic response/);
+    if (disabled) process.env[disabled] = 'read-only';
+  }
+  assert.equal(generations, 4);
+  assert.deepEqual(calls, [{ server: 'workiq', name: 'retrieve', args: { query: ['Latest PDF encryption messages'], strategy: 'grounding', capabilities: [{ name: 'TeamsMessages' }] } }]);
+  assert.deepEqual(new Supervisor({ dataDir, bridge: {} }).snapshot().tasks, []);
 });
 
 test('voice transport preserves push-to-talk begin, audio and release order', async context => {

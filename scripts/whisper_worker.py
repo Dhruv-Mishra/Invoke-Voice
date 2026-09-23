@@ -217,7 +217,7 @@ def run():
     parser = argparse.ArgumentParser()
     parser.add_argument('--model', required=True)
     parser.add_argument('--threads', type=int, default=8)
-    parser.add_argument('--language', default='auto')
+    parser.add_argument('--language', default='en')
     parser.add_argument('--silence-ms', type=int, default=1400)
     parser.add_argument('--predecode-ms', type=int, default=480)
     args = parser.parse_args()

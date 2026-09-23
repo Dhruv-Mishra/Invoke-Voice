@@ -120,7 +120,7 @@ test('choice adapter rejects collisions, context overflow, incomplete stops and 
   await assert.rejects(chooseLocalRoute(options), /Incomplete/);
 });
 
-test('choice cancellation and consent revocation prevent stale dispatch', async context => {
+for (const profile of ['voice', 'supervisor']) test(`${profile} choice cancellation and consent revocation prevent stale dispatch`, async context => {
   let env;
   let controller;
   let revoke;
@@ -137,7 +137,7 @@ test('choice cancellation and consent revocation prevent stale dispatch', async 
     env = { LOCAL_LLM_URL: 'http://127.0.0.1:1/v1', LOCAL_ROUTER: 'choice', VOICE_DIRECT_MCP_ACCESS: 'read-only', AGENCY_WORK_DATA_ACCESS: 'read-only' };
     controller = new AbortController();
     const consume = async () => {
-      for await (const event of streamReply({ provider: 'local', profile: 'voice', env, signal: controller.signal, messages: [{ role: 'user', content: 'Search my emails.' }], callTool: async () => assert.fail('Stale dispatch') })) assert.fail(JSON.stringify(event));
+      for await (const event of streamReply({ provider: 'local', profile, env, signal: controller.signal, messages: [{ role: 'user', content: 'Search my emails.' }], callTool: async () => assert.fail('Stale dispatch') })) assert.fail(JSON.stringify(event));
     };
     if (revoke) await assert.rejects(consume(), /no longer available/);
     else await consume();
@@ -194,6 +194,12 @@ test('choice catalog preserves free text, excludes named targets and keeps overf
   assert.equal(choices.some(choice => choice.args?.taskId), false);
   assert.equal(compileChoices(tools, 'x'.repeat(1001)).some(choice => choice.name === 'search_work'), false);
   assert.equal(compileChoices(tools.filter(tool => tool.function.name !== 'end_call'), utterance).some(choice => choice.name === 'end_call'), false);
+  const retry = compileChoices(tools, 'Can you try again?', [utterance]);
+  const searches = retry.filter(choice => choice.name === 'search_work');
+  assert.equal(searches.length, 6);
+  for (const search of searches) assert.deepEqual(JSON.parse(search.args.query), { priorRequests: [utterance], currentRequest: 'Can you try again?' });
+  assert.ok(retry.filter(choice => choice.name === 'start_work').every(choice => choice.args.objective === 'Can you try again?'));
+  assert.equal(compileChoices(tools, 'Try again.', ['x'.repeat(1000)]).some(choice => choice.name === 'search_work'), false);
 });
 
 function localSSE(delta, local = true) {
@@ -976,7 +982,7 @@ test('local and hybrid voice execute tools before playback and retain real answe
       CRISPASR_BIN: process.execPath, PYTHON_BIN: process.execPath,
       MOONSHINE_MODEL: process.execPath, MOONSHINE_TOKENIZER: process.execPath, VAD_MODEL: process.execPath,
       VOICE_TEST_ENV: 'passed-to-crisp',
-      ...(provider === 'openai' ? { WHISPER_PREDECODE_MS: '0' } : {}),
+      ...(provider === 'openai' ? { WHISPER_PREDECODE_MS: '0', WHISPER_LANGUAGE: 'auto' } : {}),
     };
     session = await createLocalVoice({
       provider, allowCloud: provider !== 'local', env,
@@ -993,7 +999,10 @@ test('local and hybrid voice execute tools before playback and retain real answe
     });
     assert.equal(processes.find(runtime => runtime.child === stt).options.env.VOICE_TEST_ENV, 'passed-to-crisp');
     const sttArgs = processes.find(runtime => runtime.child === stt).args;
-    if (whisper) assert.equal(sttArgs[sttArgs.indexOf('--predecode-ms') + 1], provider === 'openai' ? '0' : '480');
+    if (whisper) {
+      assert.equal(sttArgs[sttArgs.indexOf('--predecode-ms') + 1], provider === 'openai' ? '0' : '480');
+      assert.equal(sttArgs[sttArgs.indexOf('--language') + 1], provider === 'openai' ? 'auto' : 'en');
+    }
     else assert.equal(sttArgs.includes('--predecode-ms'), false);
     const firstAudio = Buffer.from([1, 2, 3, 4]);
     const secondAudio = Buffer.from([5, 6, 7, 8]);
@@ -1302,7 +1311,7 @@ test('local structured turns execute validated batches and never speak wire synt
   assert.match(JSON.stringify(requests[2].messages), /Parser|running/);
 });
 
-test('local direct search preserves grounding citations and summarizes without another routing turn', async context => {
+for (const profile of ['voice', 'supervisor']) test(`local ${profile} direct search preserves grounding citations and summarizes without another routing turn`, async context => {
   const requests = [];
   const calls = [];
   const grounding = { source: 'workiq', data: { markdown: 'Review at 10 AM. [^source-1]', sources: [{ id: 'source-1', url: 'https://example.test/review' }] } };
@@ -1313,7 +1322,7 @@ test('local direct search preserves grounding citations and summarizes without a
       : { content: 'The review is at 10 AM.' }));
   });
   const events = [];
-  for await (const event of streamReply({ provider: 'local', profile: 'voice',
+  for await (const event of streamReply({ provider: 'local', profile,
     env: { LOCAL_LLM_URL: 'http://127.0.0.1:1/v1', VOICE_DIRECT_MCP_ACCESS: 'read-only', AGENCY_WORK_DATA_ACCESS: 'read-only', LLAMA_REASONING_BUDGET: '128' },
     messages: [{ role: 'user', content: 'Search email for the review time.' }],
     callTool: async (name, args) => { calls.push({ name, args }); return grounding; },

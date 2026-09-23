@@ -116,9 +116,15 @@ The manual HTTP API and Tool Lab retain advanced options. LLM text/voice catalog
 
 Local envelopes contain either `calls` or `answer`. Read-only first batches cannot escalate to mutation; action batches may read results. This scope is derived from the model's selected calls, not an independent authorization classifier. Completed status reads return bounded outcomes directly, avoiding a second status call.
 
-## Direct Voice Work Tools
+## Direct Work Tools
 
-Direct access is off by default. Enable both **Settings > Integrations > Private work sources > Read-only** and **Direct voice work tools > Read-only** to let a new voice call read M365 through WorkIQ, or public Microsoft Learn, without creating an Agency task. The same dynamic contract serves local, hybrid, OpenAI Realtime and Gemini Live voice. Disabling either setting removes the feature from subsequent voice sessions; an active session retains its launch-time contract, but every direct invocation rechecks consent.
+Direct access is off by default. Enable both **Settings > Integrations > Private work sources > Read-only** and **Direct work tools > Read-only** to let typed chat and voice calls read M365 through WorkIQ, or public Microsoft Learn, without creating an Agency task. The saved key remains `VOICE_DIRECT_MCP_ACCESS` for compatibility. The same dynamic contract serves typed chat and local, hybrid, OpenAI Realtime and Gemini Live voice; ending a call remains voice-only. Disabling either setting removes the feature from subsequent chat turns and voice sessions; an active voice session retains its launch-time contract, but every direct invocation rechecks consent.
+
+`list_work` searches only Invoke task history, never Teams or other M365 data. Empty local tasks are not evidence of empty or inaccessible Teams messages. With direct access disabled, external questions need `start_work` with `readOnly:true`. Raw-scored routing can still choose the wrong tool, and adding access is not an accuracy guarantee. Whisper defaults to English (`WHISPER_LANGUAGE=en`); explicit Automatic or other language selections remain supported and require a restart.
+
+Raw-scored direct searches forward the current request and prior user requests in a structured query when conversation context exists, preserving the subject for follow-ups such as retrying. Only user text is carried, not assistant claims or tool results. The complete query must fit the existing 1,000-character limit; otherwise direct search is not a fast candidate and the regular planner remains available. This adds no model generation and does not change routing thresholds or mutation arguments.
+
+Raw-scored is not reliable for contextual task-status follow-ups. A September 22 Gemma QAT synthetic reproduction returned the completed task result for five of five status follow-ups in Regular mode, versus two of five in Raw-scored; both Raw-scored successes came from its existing Regular fallback. Accepted fast choices included notification mutations and VS Code notes instead of task reads. Empty or saved notification receipts do not establish a task result. Prompt-description and user-only-history experiments did not reliably fix this without regressions and were discarded. Use Regular for task conversations; a selective fallback policy would trade additional planning latency on affected turns for reliability. This small development check is not a general accuracy or latency guarantee and did not read private work content.
 
 The model receives three compact definitions: `search_work`, `find_work_tools` and `call_work_tool`. `search_work` accepts a bounded query and source (`all`, `email`, `teams`, `calendar`, `files`, `people`), invokes WorkIQ `retrieve` with a query array, `strategy:grounding` and the matching capability filter, and avoids a schema-discovery model turn. Grounding searches indexed M365; it deliberately excludes federated external connectors and agent delegation. Structured grounding/citations are returned once, rather than duplicating text and structured content. Provider compaction can still truncate large results; a small response does not prove exhaustive coverage.
 
@@ -140,7 +146,7 @@ Coding and research prompts, including follow-ups, share a concise-reply default
 
 Invoke launches Agency with a task-local `--profile-only` profile. This excludes ambient global Copilot MCP sources, whose server names may be incompatible with the installed CLI, without editing the user's MCP configuration. Coding sessions retain explicitly configured Invoke MCPs and repository `.github/mcp.json` or `.mcp.json`; research retains its restricted read profile. Personal/global MCPs and implicit profile plugins are not automatically inherited.
 
-Delegated read-only questions use Agency; opt-in direct voice reads bypass that worker. Public Microsoft Learn access is available by default. To enable M365 reads:
+Delegated read-only questions use Agency; opt-in direct chat and voice reads bypass that worker. Public Microsoft Learn access is available by default. To enable M365 reads:
 
 1. Install and sign in to [Agency](https://aka.ms/agency) with your work account.
 2. Open **Settings > Integrations > Private work sources**, choose **Read-only**, then **Save access**. This is Invoke's saved research permission (`AGENCY_WORK_DATA_ACCESS=read-only`), not an Agency setting or a Microsoft 365 tenant authorization grant.
@@ -181,7 +187,7 @@ npm run agency:check
 
 ## Calendar
 
-**Open Outlook** opens `https://outlook.office.com/calendar/` in the default browser, including from Electron. Outlook and Teams share the signed-in Microsoft 365 work calendar. **Check today** dispatches `start_work` with `backend: agency` and `readOnly: true`, using WorkIQ exact calendar reads by default and the work-account timezone. The result stays in normal task details and can be followed up in the same session. With consent off, the button opens the exact consent control and makes no calendar request. Typed chat delegates similarly; opt-in direct voice may search meetings or discover an exact calendar read. There is no background polling. Tool availability does not prove tenant authorization, indexed meeting search is not an exhaustive schedule, and failed access is not an empty calendar.
+**Open Outlook** opens `https://outlook.office.com/calendar/` in the default browser, including from Electron. Outlook and Teams share the signed-in Microsoft 365 work calendar. **Check today** dispatches `start_work` with `backend: agency` and `readOnly: true`, using WorkIQ exact calendar reads by default and the work-account timezone. The result stays in normal task details and can be followed up in the same session. With consent off, the button opens the exact consent control and makes no calendar request. Chat and voice delegate similarly unless direct work tools are enabled; opt-in direct access may search meetings or discover an exact calendar read. There is no background polling. Tool availability does not prove tenant authorization, indexed meeting search is not an exhaustive schedule, and failed access is not an empty calendar.
 
 ## Calls And Notifications
 

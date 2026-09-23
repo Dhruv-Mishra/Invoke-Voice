@@ -1,7 +1,8 @@
 import { validateToolArgs } from '../supervisor/contract.mjs';
 import { assertLoopback } from './provider-config.mjs';
 
-export function compileChoices(tools, utterance) {
+export function compileChoices(tools, utterance, priorRequests = []) {
+  const searchQuery = priorRequests.length ? JSON.stringify({ priorRequests, currentRequest: utterance }) : utterance;
   const choices = [
     { kind: 'answer', description: 'Conversation or explanation; no tools needed.' },
     { kind: 'clarify', description: 'The request is ambiguous or its target is missing; ask for clarification.' },
@@ -19,8 +20,8 @@ export function compileChoices(tools, utterance) {
         else for (const value of tool.parameters.properties.value.enum) add(tool, { action, value }, `${tool.description} ${action}: ${value}`);
       }
     }
-    if (tool.name === 'search_work' && utterance.length <= 1000) {
-      for (const source of tool.parameters.properties.source.enum) add(tool, { query: utterance, source }, `${tool.description} Source: ${source}. Forward the complete standalone question unchanged; no unresolved pronouns.`);
+    if (tool.name === 'search_work' && searchQuery.length <= 1000) {
+      for (const source of tool.parameters.properties.source.enum) add(tool, { query: searchQuery, source }, `${tool.description} Source: ${source}. Current request with prior user requests as context.`);
     }
     if (tool.name === 'start_work') {
       for (const readOnly of [true, false]) add(tool, { objective: utterance, readOnly }, `${tool.description} ${readOnly ? 'Research an external question read-only; prefer search_work for M365 when available.' : 'Start a new coding task, changes allowed.'} Forward the complete standalone objective unchanged.`);
@@ -34,7 +35,8 @@ export function compileChoices(tools, utterance) {
 export async function chooseLocalRoute({ config, tools, messages, signal, contextTokens, scored = false, reverse = false }) {
   const started = performance.now();
   const utterance = messages.findLast(message => message.role === 'user')?.content || '';
-  const choices = compileChoices(tools, utterance);
+  const priorRequests = messages.filter(message => message.role === 'user').slice(0, -1).map(message => message.content);
+  const choices = compileChoices(tools, utterance, priorRequests);
   if (reverse) choices.reverse();
   const labels = choices.map((_, index) => String.fromCharCode(65 + index));
   const origin = new URL(config.url).origin;
@@ -47,7 +49,7 @@ export async function chooseLocalRoute({ config, tools, messages, signal, contex
   };
   const catalog = choices.map((choice, index) => {
     if (choice.kind !== 'call') return `${labels[index]} = ${choice.kind}: ${choice.description}`;
-    const args = Object.fromEntries(Object.entries(choice.args).map(([key, value]) => [key, ['objective', 'prompt', 'query'].includes(key) ? '<entire latest user message>' : value]));
+    const args = Object.fromEntries(Object.entries(choice.args).map(([key, value]) => [key, key === 'query' && priorRequests.length ? '<prior user requests as context and entire latest user message>' : ['objective', 'prompt', 'query'].includes(key) ? '<entire latest user message>' : value]));
     return `${labels[index]} = ${choice.name}(${JSON.stringify(args)})`;
   }).join('\n');
   const descriptions = tools.map(({ function: tool }) => `${tool.name}: ${tool.description}`).join('\n');

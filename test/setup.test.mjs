@@ -41,6 +41,28 @@ test('local STT defaults to Whisper and Moonshine remains opt-in', () => {
   assert.equal(args[args.indexOf('--stream-final-on-silence-ms') + 1], '1400');
 });
 
+test('Whisper language defaults to English and preserves explicit and saved choices on startup', context => {
+  const { directory } = fixture(context);
+  const language = config => config.snapshot().fields.find(field => field.key === 'WHISPER_LANGUAGE');
+  for (const configured of [undefined, '', 'auto', 'hi', 'en']) {
+    const env = configured === undefined ? {} : { WHISPER_LANGUAGE: configured };
+    const config = createRuntimeConfig({ dataDir: directory, env });
+    assert.equal(language(config).value, configured || 'en');
+    assert.equal(language(config).pendingRestart, false);
+  }
+  const config = createRuntimeConfig({ dataDir: directory, env: {} });
+  config.update({ values: { WHISPER_LANGUAGE: 'en' } });
+  assert.equal(language(config).pendingRestart, false);
+  for (const selected of ['auto', 'hi', 'en']) {
+    config.update({ values: { WHISPER_LANGUAGE: selected } });
+    const env = { WHISPER_LANGUAGE: 'fr' };
+    const restarted = createRuntimeConfig({ dataDir: directory, env });
+    assert.equal(env.WHISPER_LANGUAGE, selected);
+    assert.equal(language(restarted).value, selected);
+    assert.equal(language(restarted).pendingRestart, false);
+  }
+});
+
 test('saving unchanged defaults never requires restart and reverting a change clears it', context => {
   const { directory } = fixture(context);
   const config = createRuntimeConfig({ dataDir: directory, env: {} });

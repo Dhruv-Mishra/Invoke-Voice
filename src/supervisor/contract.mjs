@@ -30,10 +30,13 @@ export const directWorkTools = [
   definition('find_work_tools', 'Find approved read-only tools for a work source before calling one.', { source: choice('', directSources), query: text('Capability keywords') }, ['source']),
   definition('call_work_tool', 'Call one tool returned by find_work_tools.', { source: choice('', directSources), name: text(), arguments: { type: 'object', additionalProperties: true } }, ['source', 'name', 'arguments']),
 ];
-export function voiceToolsFor(env = process.env) {
+export function modelToolsFor(env = process.env, baseTools = modelTools) {
   return env.VOICE_DIRECT_MCP_ACCESS === 'read-only' && env.AGENCY_WORK_DATA_ACCESS === 'read-only'
-    ? [...voiceTools, ...directWorkTools]
-    : voiceTools;
+    ? [...baseTools, ...directWorkTools]
+    : baseTools;
+}
+export function voiceToolsFor(env = process.env) {
+  return modelToolsFor(env, voiceTools);
 }
 export function validateToolArgs(args, schema) {
   if (!schema) return 'Unknown tool.';

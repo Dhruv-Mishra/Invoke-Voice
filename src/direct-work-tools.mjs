@@ -13,7 +13,7 @@ const searchCapabilities = { all: null, email: 'Email', teams: 'TeamsMessages', 
 export function createDirectWorkTools(agencyMcp, env = process.env) {
   const access = () => env.VOICE_DIRECT_MCP_ACCESS === 'read-only' && env.AGENCY_WORK_DATA_ACCESS === 'read-only';
   const allowed = source => {
-    if (!access()) throw new Error('Direct voice work tools are disabled. Enable Private work sources and Direct voice work tools in Settings.');
+    if (!access()) throw new Error('Direct work tools are disabled. Enable Private work sources and Direct work tools in Settings.');
     const server = sources[source];
     const names = server && agencyReadPolicy(env).tools[`voice-${server}`];
     if (!server || !names) throw new Error('Unknown direct work source.');

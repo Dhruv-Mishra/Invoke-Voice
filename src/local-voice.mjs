@@ -103,7 +103,7 @@ async function startSttRuntime(config, env, signal) {
   const whisper = config.sttProvider === 'whisper';
   const name = whisper ? 'Whisper' : 'CrispASR';
   const executable = whisper ? config.pythonBin : config.crispasrBin;
-  const args = whisper ? ['-I', '-u', whisperWorker, '--model', config.whisperModelDir, '--threads', env.WHISPER_THREADS || env.LOCAL_THREADS || localThreadDefault(8), '--language', env.WHISPER_LANGUAGE || 'auto', '--silence-ms', env.WHISPER_END_SILENCE_MS || '1400', '--predecode-ms', env.WHISPER_PREDECODE_MS || '480'] : localSttArguments(config, env);
+  const args = whisper ? ['-I', '-u', whisperWorker, '--model', config.whisperModelDir, '--threads', env.WHISPER_THREADS || env.LOCAL_THREADS || localThreadDefault(8), '--language', env.WHISPER_LANGUAGE || 'en', '--silence-ms', env.WHISPER_END_SILENCE_MS || '1400', '--predecode-ms', env.WHISPER_PREDECODE_MS || '480'] : localSttArguments(config, env);
   const process = spawn(executable, args, { windowsHide: true, env: { ...env, HF_HUB_OFFLINE: '1', HF_HUB_DISABLE_TELEMETRY: '1' }, stdio: ['pipe', 'pipe', 'pipe'] });
   sttProcess = process;
   desktopLaunch.trackChild(process);

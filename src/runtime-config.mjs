@@ -12,7 +12,7 @@ const fields = Object.freeze([
   { key: 'DEFAULT_VOICE_MODE', label: 'Default voice mode', group: 'Defaults', type: 'select', defaultValue: 'local', options: [['local', 'Local'], ['gemini-live', 'Gemini Live'], ['openai-realtime', 'OpenAI Realtime']] },
   { key: 'LOCAL_STT_PROVIDER', label: 'Local speech recognition', group: 'Local speech', type: 'select', defaultValue: 'whisper', options: [['whisper', 'Whisper Small (INT8)'], ['moonshine', 'Moonshine Tiny (opt-in)']] },
   { key: 'MOONSHINE_MODEL', label: 'Moonshine model path (blank uses managed Tiny)', group: 'Local speech', type: 'text', restartRequired: true },
-  { key: 'WHISPER_LANGUAGE', label: 'Whisper spoken language', group: 'Local speech', type: 'select', defaultValue: 'auto', options: [['auto', 'Automatic'], ['en', 'English'], ['hi', 'Hindi'], ['es', 'Spanish'], ['fr', 'French'], ['de', 'German'], ['ja', 'Japanese'], ['zh', 'Chinese']], restartRequired: true },
+  { key: 'WHISPER_LANGUAGE', label: 'Whisper spoken language', group: 'Local speech', type: 'select', defaultValue: 'en', options: [['auto', 'Automatic'], ['en', 'English'], ['hi', 'Hindi'], ['es', 'Spanish'], ['fr', 'French'], ['de', 'German'], ['ja', 'Japanese'], ['zh', 'Chinese']], restartRequired: true },
   { key: 'WHISPER_END_SILENCE_MS', label: 'Whisper pause before reply (ms)', group: 'Local speech', type: 'number', defaultValue: '1400', min: 200, max: 3000, restartRequired: true },
   { key: 'WHISPER_PREDECODE_MS', label: 'Whisper early decoding', group: 'Local speech', type: 'select', defaultValue: '480', options: [['480', 'On'], ['0', 'Off']], restartRequired: true },
   { key: 'END_SILENCE_MS', label: 'Moonshine pause before reply (ms)', group: 'Local speech', type: 'number', defaultValue: '1400', min: 600, max: 3000, restartRequired: true },
@@ -36,7 +36,7 @@ const fields = Object.freeze([
   { key: 'COPILOT_CLI', label: 'Copilot CLI executable', group: 'Coding tools', type: 'text', defaultValue: process.platform === 'win32' ? 'copilot.exe' : 'copilot' },
   { key: 'AGENCY_CLI', label: 'Agency executable', group: 'Coding tools', type: 'text', defaultValue: process.platform === 'win32' ? 'agency.exe' : 'agency' },
   { key: 'AGENCY_WORK_DATA_ACCESS', label: 'Private work sources', description: 'Invoke research permission for WorkIQ, Teams, Outlook calendar and people; not an Agency setting. Uses cloud services; questions and answers are saved and may be spoken. Work-account access is still required.', group: 'Coding tools', type: 'select', defaultValue: 'disabled', options: [['disabled', 'Off'], ['read-only', 'Read-only']] },
-  { key: 'VOICE_DIRECT_MCP_ACCESS', label: 'Direct voice work tools', description: 'Let voice calls use approved read-only work tools without an Agency task. Requires Private work sources; tool definitions load only when needed.', group: 'Coding tools', type: 'select', defaultValue: 'disabled', options: [['disabled', 'Off'], ['read-only', 'Read-only']] },
+  { key: 'VOICE_DIRECT_MCP_ACCESS', label: 'Direct work tools', description: 'Let chat and voice calls use approved read-only work tools without an Agency task. Requires Private work sources; tool definitions load only when needed.', group: 'Coding tools', type: 'select', defaultValue: 'disabled', options: [['disabled', 'Off'], ['read-only', 'Read-only']] },
   { key: 'AGENCY_M365_TOOLS', label: 'Microsoft 365 tools', description: 'WorkIQ covers M365 search and exact reads. Expanded also enables dedicated Teams, calendar and people tools. Does not grant access.', group: 'Coding tools', type: 'select', defaultValue: 'workiq', options: [['workiq', 'WorkIQ'], ['expanded', 'Expanded']] },
   { key: 'COPILOT_REASONING', label: 'Copilot reasoning effort', group: 'Coding tools', type: 'select', defaultValue: 'medium', options: [['low', 'Low'], ['medium', 'Medium'], ['high', 'High']] },
   { key: 'LOCAL_ROUTER', label: 'Local routing', description: 'Raw-scored is experimental and can select incorrect actions.', group: 'Local performance', type: 'select', defaultValue: 'scored', options: [['off', 'Regular'], ['scored', 'Raw-scored (experimental)']] },
@@ -142,7 +142,7 @@ export function createRuntimeConfig({ dataDir, env = process.env } = {}) {
     env.LOCAL_ROUTER_MIN_PROBABILITY ??= '0';
     env.LOCAL_ROUTER_MIN_MARGIN ??= '0';
   }
-  const startupEnvironment = { ...env, WHISPER_LANGUAGE: env.WHISPER_LANGUAGE || 'auto', WHISPER_THREADS: env.WHISPER_THREADS || env.LOCAL_THREADS || localThreadDefault(8), CRISPASR_THREADS: env.CRISPASR_THREADS || env.LOCAL_THREADS || localThreadDefault(12), PYTHON_BIN: stackPaths(env).pythonBase || '' };
+  const startupEnvironment = { ...env, WHISPER_LANGUAGE: env.WHISPER_LANGUAGE || 'en', WHISPER_THREADS: env.WHISPER_THREADS || env.LOCAL_THREADS || localThreadDefault(8), CRISPASR_THREADS: env.CRISPASR_THREADS || env.LOCAL_THREADS || localThreadDefault(12), PYTHON_BIN: stackPaths(env).pythonBase || '' };
   startupValues = Object.fromEntries(fields.filter(field => field.restartRequired).map(field => [field.key, startupEnvironment[field.key] || field.defaultValue || '']));
   return {
     snapshot,

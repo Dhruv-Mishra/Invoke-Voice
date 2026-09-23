@@ -341,7 +341,7 @@ async function benchWhisper(env, selectedSample, preparedSamples = new Map()) {
   const predecodeMs = env.WHISPER_PREDECODE_MS || '480';
   const repeats = Number(env.BENCH_STT_REPEATS || '1');
   if (!Number.isInteger(repeats) || repeats < 1 || repeats > 5) throw new Error('BENCH_STT_REPEATS must be an integer from 1 to 5.');
-  const args = ['-I', '-u', fileURLToPath(new URL('./whisper_worker.py', import.meta.url)), '--model', config.whisperModelDir, '--language', env.WHISPER_LANGUAGE || 'auto', '--threads', env.WHISPER_THREADS || '8', '--silence-ms', env.WHISPER_END_SILENCE_MS || '1400', '--predecode-ms', predecodeMs];
+  const args = ['-I', '-u', fileURLToPath(new URL('./whisper_worker.py', import.meta.url)), '--model', config.whisperModelDir, '--language', env.WHISPER_LANGUAGE || 'en', '--threads', env.WHISPER_THREADS || '8', '--silence-ms', env.WHISPER_END_SILENCE_MS || '1400', '--predecode-ms', predecodeMs];
   const child = childProcess(config.pythonBin, args, { ...env, HF_HUB_OFFLINE: '1', HF_HUB_DISABLE_TELEMETRY: '1' });
   const reader = createInterface({ input: child.stdout });
   const results = [];

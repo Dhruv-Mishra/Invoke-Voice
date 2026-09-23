@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { Supervisor, tools } from './supervisor.mjs';
-import { voiceToolsFor, validateToolArgs } from './supervisor/contract.mjs';
+import { modelToolsFor, voiceToolsFor, validateToolArgs } from './supervisor/contract.mjs';
 import { createVSCodeBridge } from './vscode-bridge.mjs';
 import { providerProfiles, streamReply } from './llm.mjs';
 import { createRealtimeVoice, DEFAULT_GEMINI_LIVE_MODEL } from './realtime.mjs';
@@ -23,8 +23,13 @@ const publicDir = path.join(root, 'public');
 const frontendDir = path.join(root, 'dist');
 
 export function createVoiceToolCaller(supervisor, send, { directWorkTools, env = process.env } = {}) {
+  return createModelToolCaller(supervisor, { send, directWorkTools, env, voice: true });
+}
+
+export function createModelToolCaller(supervisor, { send, directWorkTools, env = process.env, voice = false } = {}) {
   return (name, args, context) => {
-    const error = validateToolArgs(args, voiceToolsFor(env).find(tool => tool.function.name === name)?.function.parameters);
+    const catalog = voice ? voiceToolsFor(env) : modelToolsFor(env);
+    const error = validateToolArgs(args, catalog.find(tool => tool.function.name === name)?.function.parameters);
     if (error) return { error };
     if (name === 'end_call') {
       send({ type: 'end_call' });
@@ -249,7 +254,7 @@ export async function startSupervisor(options = {}) {
         response.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' });
         response.flushHeaders();
         try {
-          for await (const event of streamReply({ provider: input.provider, model: input.model, messages: input.messages, ...sessionThemeOptions(input), requestId: input.requestId || randomUUID(), signal: controller.signal, callTool: supervisor.callTool.bind(supervisor) })) sse(response, event);
+          for await (const event of streamReply({ provider: input.provider, model: input.model, messages: input.messages, ...sessionThemeOptions(input), requestId: input.requestId || randomUUID(), signal: controller.signal, callTool: createModelToolCaller(supervisor, { directWorkTools }) })) sse(response, event);
         } catch (error) { if (!controller.signal.aborted) sse(response, { type: 'error', message: error.message }); }
         finally {
           cleanupChat();

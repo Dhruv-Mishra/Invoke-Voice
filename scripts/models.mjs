@@ -11,6 +11,10 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const hf = (id, label, repo, revision, name) => ({ id, label, repo, revision, name, sourceUrl: `https://huggingface.co/${repo}/resolve/${revision}/${name}` });
 export const GEMMA_ASSET = Object.freeze(hf('ling', 'Gemma 4 E2B IT QAT Q4_0', 'google/gemma-4-E2B-it-qat-q4_0-gguf', '675cff42a74c774d6cb76f76d8eacb49b48c9b93', 'gemma-4-E2B_q4_0-it.gguf'));
 export const LEGACY_LING_ASSETS = Object.freeze(['Compact', 'Quality'].map(variant => hf('ling', `Ling ${variant}`, 'SC117/Ling-3.0-tiny-abliterated-APEX-GGUF', 'b923d16fcf28261f12be9ece2b520ed442403f70', `Ling-3.0-tiny-abliterated-APEX-I-${variant}.gguf`)));
+export const QWEN_ASSET = Object.freeze({
+  ...hf('ling', 'Qwen3.6 35B-A3B MoE Q4_K_P (opt-in)', 'HauhauCS/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive', 'f12a584fecbeb5f20001130d8ecd66c9327ae685', 'Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-Q4_K_P.gguf'),
+  size: 23424536704, sha256: '8d344a4336d8ea7da0cbfc12792d1471e568be7abe8930c52260698bfd01d731',
+});
 export const ASSETS = Object.freeze([
   GEMMA_ASSET,
   hf('moonshine', 'Moonshine Tiny Q4_K', 'cstr/moonshine-streaming-tiny-GGUF', '34ac435a44ab618d426a72346987b68ce07bbf44', 'moonshine-streaming-tiny-q4_k.gguf'),
@@ -31,6 +35,7 @@ export const ASSETS = Object.freeze([
 ]);
 
 export const CRISPASR_AVX2_ASSET = { id: 'crispasr', label: 'CrispASR 0.8.32 CPU AVX2 (opt-in)', name: 'crispasr-windows-x86_64-cpu.zip', executable: 'crispasr.exe', runtimeDirectory: 'crispasr-avx2', size: 8261759, sha256: 'ac8b6caf4dd448d00c5050907275bce4d154747110c37943aa4f69ee7fac9541', sourceUrl: 'https://github.com/CrispStrobe/CrispASR/releases/download/v0.8.32/crispasr-windows-x86_64-cpu.zip' };
+export const LLAMA_VULKAN_ASSET = Object.freeze({ id: 'llama', label: 'llama.cpp b10970 Vulkan GPU offload (opt-in)', name: 'llama-b10970-bin-win-vulkan-x64.zip', executable: 'llama-server.exe', runtimeDirectory: 'llama-vulkan', size: 31675940, sha256: 'f17091a433feb686d9e17378a8a2fc53a1437d64c1bf302ab6fb3072b4afcf0d', sourceUrl: 'https://github.com/ggml-org/llama.cpp/releases/download/b10970/llama-b10970-bin-win-vulkan-x64.zip' });
 
 export const TASK_SEARCH_MODEL_KEY = 'Xenova/all-MiniLM-L6-v2@751bff37182d3f1213fa05d7196b954e230abad9:q8:mean:256:v1';
 export const TASK_SEARCH_ASSETS = Object.freeze([
@@ -50,11 +55,23 @@ export function localSttProvider(env = process.env) {
   return provider;
 }
 
+export function localLlmProfile(env = process.env) {
+  return env.LOCAL_LLM_PROFILE === 'qwen' ? 'qwen' : 'gemma';
+}
+
+export function localLlmAsset(env = process.env) {
+  return localLlmProfile(env) === 'qwen' ? QWEN_ASSET : GEMMA_ASSET;
+}
+
+export function qwenMtpEnabled(env = process.env) {
+  return localLlmProfile(env) === 'qwen' && env.QWEN_MTP !== 'off';
+}
+
 export function localSetupAssets(env = process.env) {
   const whisper = localSttProvider(env) === 'whisper';
   return ASSETS.filter(asset => whisper
     ? !['moonshine', 'tokenizer', 'vad', 'crispasr'].includes(asset.id)
-    : !asset.id.startsWith('whisper'));
+    : !asset.id.startsWith('whisper')).map(asset => asset.id === 'ling' ? localLlmAsset(env) : asset.id === 'llama' && env.LLAMA_BACKEND === 'vulkan' ? LLAMA_VULKAN_ASSET : asset);
 }
 
 export function readJson(file) {
@@ -96,20 +113,24 @@ export function stackPaths(env = process.env, appRoot = root) {
   const localStack = path.resolve(appRoot, '../LocalVoiceStack');
   const requestedMoonshine = configured(env.MOONSHINE_MODEL);
   const crispasrCpu = env.CRISPASR_CPU || 'legacy';
+  const llamaBackend = env.LLAMA_BACKEND === 'vulkan' ? 'vulkan' : 'cpu';
   if (!['legacy', 'avx2'].includes(crispasrCpu)) throw setupError('CRISPASR_CPU must be legacy or avx2. Use avx2 only on a CPU with AVX2, FMA and F16C support.');
   const q4Name = ASSETS[1].name;
   const compatibleMoonshine = requestedMoonshine && path.basename(requestedMoonshine).toLowerCase() !== 'moonshine-streaming-small-q8_0.gguf' ? requestedMoonshine : null;
   const moonshine = select(compatibleMoonshine, requestedMoonshine && path.join(path.dirname(requestedMoonshine), q4Name), path.join(localStack, 'STT_Models', q4Name), path.join(modelDir, q4Name)) || path.join(modelDir, q4Name);
   return {
-    home, modelDir, runtimeDir, crispasrCpu, receiptDir: path.join(home, 'setup-receipts'),
+    home, modelDir, runtimeDir, crispasrCpu, llamaBackend, receiptDir: path.join(home, 'setup-receipts'),
     whisperDir,
     ...Object.fromEntries(ASSETS.filter(asset => asset.id.startsWith('whisper')).map(asset => [asset.id, path.join(whisperDir, asset.name)])),
     ...Object.fromEntries(TASK_SEARCH_ASSETS.map(asset => [asset.id, path.join(modelDir, 'task-search-minilm', asset.name)])),
-    ling: select(configured(env.LOCAL_LLM_PATH), path.join(localStack, 'LLMs', ASSETS[0].name), path.join(modelDir, ASSETS[0].name)) || path.join(modelDir, ASSETS[0].name),
+    ling: localLlmProfile(env) === 'qwen'
+      ? select(configured(env.QWEN_MODEL_PATH), path.join(localStack, 'LLMs', QWEN_ASSET.name), path.join(modelDir, QWEN_ASSET.name)) || path.join(modelDir, QWEN_ASSET.name)
+      : select(configured(env.LOCAL_LLM_PATH), path.join(localStack, 'LLMs', ASSETS[0].name), path.join(modelDir, ASSETS[0].name)) || path.join(modelDir, ASSETS[0].name),
+    lingMtp: path.join(modelDir, QWEN_ASSET.name.replace(/\.gguf$/i, '-MTP.gguf')),
     moonshine,
     tokenizer: select(path.join(path.dirname(moonshine), 'tokenizer.bin'), path.join(modelDir, 'tokenizer.bin')) || path.join(modelDir, 'tokenizer.bin'),
     vad: select(configured(env.VAD_MODEL), path.join(modelDir, ASSETS[3].name)) || path.join(modelDir, ASSETS[3].name),
-    llama: select(configured(env.LLAMA_SERVER_BIN)) || path.join(runtimeDir, 'llama', 'llama-server.exe'),
+    llama: select(configured(env.LLAMA_SERVER_BIN)) || path.join(runtimeDir, llamaBackend === 'vulkan' ? LLAMA_VULKAN_ASSET.runtimeDirectory : 'llama', 'llama-server.exe'),
     crispasr: select(configured(env.CRISPASR_BIN)) || (crispasrCpu === 'avx2' ? path.join(runtimeDir, 'crispasr-avx2', 'crispasr.exe') : select(path.join(runtimeDir, 'crispasr.exe')) || path.join(runtimeDir, 'crispasr', 'crispasr.exe')),
     uv: path.join(runtimeDir, 'uv', 'uv.exe'),
     pythonBase, venv,
@@ -129,6 +150,7 @@ function receiptPath(paths, asset, destination) {
 
 export function assetReady(paths, asset, destination = paths[asset.id]) {
   if (asset.id === 'crispasr' && paths.crispasrCpu === 'avx2') asset = CRISPASR_AVX2_ASSET;
+  if (asset.id === 'llama' && paths.llamaBackend === 'vulkan') asset = LLAMA_VULKAN_ASSET;
   const receipt = readJson(receiptPath(paths, asset, destination));
   if (receipt?.sourceUrl !== asset.sourceUrl || !receipt.files?.length) return false;
   const expected = path.resolve(destination);
@@ -176,10 +198,10 @@ export function trustedDownloadUrl(value) {
   } catch { return false; }
 }
 
-async function request(url, { fetchImpl, signal }) {
+export async function request(url, { fetchImpl = fetch, signal, headers = {} }) {
   for (let redirects = 0; redirects < 8; redirects += 1) {
     if (!trustedDownloadUrl(url)) throw setupError('Download was redirected outside the trusted sources. Retry after checking the release source.');
-    const response = await fetchImpl(url, { redirect: 'manual', headers: { 'User-Agent': 'VoiceSupervisor-Setup/0.1' }, signal: AbortSignal.any([signal || new AbortController().signal, AbortSignal.timeout(30 * 60 * 1000)]) });
+    const response = await fetchImpl(url, { redirect: 'manual', headers: { 'User-Agent': 'VoiceSupervisor-Setup/0.1', ...headers }, signal: AbortSignal.any([signal || new AbortController().signal, AbortSignal.timeout(30 * 60 * 1000)]) });
     if ([301, 302, 303, 307, 308].includes(response.status)) {
       const location = response.headers.get('location');
       await response.body?.cancel();
@@ -210,16 +232,24 @@ function hasher(meta) {
   return hash;
 }
 
-async function verify(file, meta, signal) {
+async function verify(file, meta, signal, onProgress = () => {}) {
   if (fileStat(file)?.size !== meta.size) return false;
   const hash = hasher(meta);
-  for await (const chunk of fs.createReadStream(file)) { signal?.throwIfAborted(); hash.update(chunk); }
+  let received = 0;
+  let lastReport = 0;
+  for await (const chunk of fs.createReadStream(file, { highWaterMark: 4 * 1024 * 1024 })) {
+    signal?.throwIfAborted();
+    hash.update(chunk);
+    received += chunk.length;
+    if (Date.now() - lastReport > 500) { lastReport = Date.now(); onProgress({ received, total: meta.size }); }
+  }
   return hash.digest('hex') === (meta.sha256 || meta.gitSha1);
 }
 
 export async function ensureAsset(paths, asset, { report = () => {}, signal, fetchImpl = fetch } = {}) {
-  if (!ASSETS.includes(asset) && !TASK_SEARCH_ASSETS.includes(asset) && asset !== GEMMA_ASSET) throw setupError('Unknown setup component.');
+  if (!ASSETS.includes(asset) && !TASK_SEARCH_ASSETS.includes(asset) && ![GEMMA_ASSET, QWEN_ASSET, LLAMA_VULKAN_ASSET].includes(asset)) throw setupError('Unknown setup component.');
   if (asset.id === 'crispasr' && paths.crispasrCpu === 'avx2') asset = CRISPASR_AVX2_ASSET;
+  if (asset.id === 'llama' && paths.llamaBackend === 'vulkan') asset = LLAMA_VULKAN_ASSET;
   const destination = paths[asset.id];
   if (assetReady(paths, asset, destination)) return destination;
   const options = { signal, fetchImpl };
@@ -228,7 +258,7 @@ export async function ensureAsset(paths, asset, { report = () => {}, signal, fet
   const meta = cachedDigest ? { size: cachedDigest.size, [receipt.digest.length === 64 ? 'sha256' : 'gitSha1']: receipt.digest } : await metadata(asset, options);
   const downloadPath = asset.executable ? path.join(paths.runtimeDir, 'archives', asset.name) : destination;
   report({ stage: asset.id, message: `Checking ${asset.label}.` });
-  if (!await verify(downloadPath, meta, signal)) {
+  if (!await verify(downloadPath, meta, signal, progress => meta.size > 1024 ** 3 && report({ stage: asset.id, message: `Verifying ${asset.label}.`, progress }))) {
     if (!asset.executable && fileStat(downloadPath) && !downloadPath.startsWith(`${paths.modelDir}${path.sep}`)) {
       throw setupError(`${asset.label}: the configured file did not match the pinned model. Keep it unchanged and correct your local path before retrying.`);
     }
@@ -329,12 +359,22 @@ export async function ensureAsset(paths, asset, { report = () => {}, signal, fet
 
 async function main() {
   const target = process.argv[2];
-  if (!['all', 'ling', 'gemma', 'whisper', 'moonshine', 'runtimes', 'task-search'].includes(target)) {
-    console.log('Usage: npm run models -- all|ling|gemma|whisper|moonshine|runtimes|task-search\nAll installs the selected local recognizer (Whisper by default). Full voice setup remains in Settings.');
+  if (!['all', 'ling', 'gemma', 'qwen', 'whisper', 'moonshine', 'runtimes', 'task-search'].includes(target)) {
+    console.log('Usage: npm run models -- all|ling|gemma|qwen|whisper|moonshine|runtimes|task-search\nAll installs the selected local recognizer (Whisper by default). qwen verifies or downloads the opt-in Qwen3.6 model and builds its MTP accelerator unless QWEN_MTP=off. Full voice setup remains in Settings.');
     return;
   }
   if (target === 'runtimes' && (process.platform !== 'win32' || process.arch !== 'x64')) throw setupError('Prebuilt runtimes support Windows x64 only.');
   const paths = stackPaths();
+  if (target === 'qwen') {
+    const qwenPaths = stackPaths({ ...process.env, LOCAL_LLM_PROFILE: 'qwen' });
+    const report = event => { if (!event.progress) console.log(event.message); };
+    await withSetupLock(qwenPaths, async () => {
+      await ensureAsset(qwenPaths, QWEN_ASSET, { report });
+      if (process.env.QWEN_MTP !== 'off') await (await import('./qwen-mtp.mjs')).ensureQwenMtp(qwenPaths, { report });
+    });
+    console.log('Qwen installed; select it in Settings > Local model.');
+    return;
+  }
   if (target === 'gemma') {
     paths.ling = path.join(paths.modelDir, GEMMA_ASSET.name);
     await withSetupLock(paths, () => ensureAsset(paths, GEMMA_ASSET, { report: event => { if (!event.progress) console.log(event.message); } }));

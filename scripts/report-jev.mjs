@@ -58,6 +58,8 @@ function summarize(rows) {
     textStageMs: distribution(rows.map(row => row.rounds.filter(item => item.stage === 'text').reduce((sum, item) => sum + item.wallMs, 0))),
     acceptedTotalMs: distribution(accepted.map(row => row.wallMs)), fallbackTotalMs: distribution(rows.filter(row => row.decisions.some(decision => !decision.accepted)).map(row => row.wallMs)),
     generations: timings.length, promptTokens: sumTiming('prompt_n'), cachedTokens: sumTiming('cache_n'), decodedTokens: sumTiming('predicted_n'), prefillMs: sumTiming('prompt_ms'), decodeMs: sumTiming('predicted_ms'),
+    prefillTokensPerSecond: round(sumTiming('prompt_n') / sumTiming('prompt_ms') * 1000), decodeTokensPerSecond: round(sumTiming('predicted_n') / sumTiming('predicted_ms') * 1000),
+    draftAcceptance: sumTiming('draft_n') ? { drafted: sumTiming('draft_n'), accepted: sumTiming('draft_n_accepted'), rate: round(sumTiming('draft_n_accepted') / sumTiming('draft_n')) } : null,
     decisionMs: distribution(rows.flatMap(row => row.decisions.map(item => item.wallMs))),
     failures: rows.filter(row => !passed(row)).map(row => ({ name: row.name, evaluation: row.evaluation, spokenContract: row.spokenContract, error: row.error, selected: row.decisions[0]?.name, probability: row.decisions[0]?.probability })),
     categories: Object.fromEntries([...new Set(rows.map(row => row.category))].map(category => {

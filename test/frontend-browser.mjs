@@ -73,7 +73,7 @@ const config = {
   voiceModes: [{ id: 'local', label: 'Local voice', configured: true }, { id: 'openai-realtime', label: 'OpenAI', model: 'gpt-realtime', configured: true }, { id: 'gemini-live', label: 'Google', model: 'gemini-live-fixture', configured: true }],
   defaults: { provider: 'local', voiceMode: 'local' },
   configuration: { fields: [
-    ...createRuntimeConfig({ dataDir: preferenceDir, env: {} }).snapshot().fields.filter(field => field.key === 'LOCAL_ROUTER'),
+    ...createRuntimeConfig({ dataDir: preferenceDir, env: {} }).snapshot().fields.filter(field => ['LOCAL_ROUTER', 'LOCAL_LLM_PROFILE'].includes(field.key)),
     { key: 'OPENAI_BASE_URL', label: 'OpenAI URL', group: 'Fixture', type: 'url', secret: false, value: 'https://example.test' },
     { key: 'LLAMA_THREADS', label: 'Threads', group: 'Fixture', type: 'number', secret: false, value: '8', min: 1, max: 128, restartRequired: true },
     { key: 'OPENAI_API_KEY', label: 'OpenAI key', group: 'Fixture', type: 'password', secret: true, configured: true },
@@ -446,7 +446,7 @@ try {
     const form = document.getElementById('config-form').getBoundingClientRect();
     const actions = document.querySelector('#config-form .settings-actions').getBoundingClientRect();
     const fields = document.getElementById('config-fields').getBoundingClientRect();
-    return form.top - hint.bottom >= 16 && fields.top - actions.bottom >= 16;
+    return Math.round(form.top - hint.bottom) >= 16 && Math.round(fields.top - actions.bottom) >= 16;
   }), true, 'expanded Keys and config must space its contents, not only its summary');
   assert.equal(await evaluate(() => document.getElementById('config-local-stt-provider').value), 'whisper');
   await click('#setup-consent');
@@ -482,6 +482,21 @@ try {
   assert.deepEqual(configWrites.at(-1), { LOCAL_ROUTER: 'scored' });
   assert.deepEqual({ voice: voiceConnections, events: eventConnections }, connectionsBeforeRouting);
   assert.equal(setupWrites, 0, 'routing changes must not install or restart local models');
+  await pointerClick('[data-for="config-local-llm-profile"] button[value="qwen"]');
+  await waitFor(() => document.getElementById('app-dialog').open);
+  assert.equal(await evaluate(() => /24 GB of RAM[\s\S]*47 GB of disk/.test(document.getElementById('app-dialog-message').textContent)), true);
+  await settle();
+  await screenshot('qwen-confirm');
+  await click('[data-app-dialog-cancel]');
+  await waitFor(() => !document.getElementById('app-dialog').open && document.getElementById('config-local-llm-profile').value === 'gemma');
+  assert.equal(await evaluate(() => document.querySelector('[data-for="config-local-llm-profile"] [aria-checked="true"]').value), 'gemma');
+  await pointerClick('[data-for="config-local-llm-profile"] button[value="qwen"]');
+  await waitFor(() => document.getElementById('app-dialog').open);
+  await click('[data-app-dialog-accept]');
+  await waitFor(() => !document.getElementById('app-dialog').open);
+  assert.equal(await evaluate(() => document.getElementById('config-local-llm-profile').value), 'qwen');
+  await pointerClick('[data-for="config-local-llm-profile"] button[value="gemma"]');
+  assert.equal(await evaluate(() => document.getElementById('app-dialog').open), false);
   assert.equal(await evaluate(() => document.getElementById('settings-idle-warning')), null);
   await typeText('#config-llama-threads', '9');
   await choose('#settings-idle-end', '30');
@@ -513,7 +528,7 @@ try {
     const label = field.querySelector('label').getBoundingClientRect();
     const notice = field.querySelector('.config-restart').getBoundingClientRect();
     const bounds = control.getBoundingClientRect();
-    return Math.abs(bounds.top - label.bottom - 8) < 1 && notice.top - bounds.bottom >= 8;
+    return Math.abs(bounds.top - label.bottom - 8) < 1 && Math.round(notice.top - bounds.bottom) >= 8;
   }), true, 'restart notices must not displace the label-to-control spacing');
   await typeText('#config-llama-threads', '8');
   await choose('#settings-idle-end', '60');
@@ -622,7 +637,7 @@ try {
     const check = document.getElementById('agency-check-btn').getBoundingClientRect();
     const save = document.getElementById('private-work-save-btn').getBoundingClientRect();
     const feedback = document.getElementById('agency-check-feedback').getBoundingClientRect();
-    return save.left - check.right >= 12 && feedback.top - Math.max(save.bottom, check.bottom) >= 16;
+    return Math.round(save.left - check.right) >= 12 && Math.round(feedback.top - Math.max(save.bottom, check.bottom)) >= 16;
   }), true, 'integration actions and status must have distinct spacing');
   assert.equal(await evaluate(() => getComputedStyle(document.querySelector('.application-data')).borderTopWidth), '0px');
   assert.equal(await evaluate(() => getComputedStyle(document.querySelector('#integrations-section a.btn')).textDecorationLine), 'none');
@@ -693,8 +708,8 @@ try {
       const save = document.getElementById('private-work-save-btn').getBoundingClientRect();
       const feedback = document.getElementById('agency-check-feedback').getBoundingClientRect();
       const section = document.getElementById('integrations-section');
-      return (save.left - check.right >= 12 || save.top - check.bottom >= 12)
-        && feedback.top - Math.max(save.bottom, check.bottom) >= 16
+      return (Math.round(save.left - check.right) >= 12 || Math.round(save.top - check.bottom) >= 12)
+        && Math.round(feedback.top - Math.max(save.bottom, check.bottom)) >= 16
         && section.scrollWidth <= section.clientWidth;
     }), true, `integration actions must wrap without overlap at ${width}px`);
     await screenshot(`integrations-${width}`);

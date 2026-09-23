@@ -1513,6 +1513,15 @@ for (const [form, fields, feedback, saveButton] of [
   });
 }
 
+configFields.addEventListener('change', async event => {
+  const control = event.target;
+  if (control.dataset?.configKey !== 'LOCAL_LLM_PROFILE' || control.value !== 'qwen' || control.dataset.savedValue === 'qwen') return;
+  const confirmed = await showAppConfirm('Qwen3.6 35B-A3B is much stronger at following requests and using tools, but it is far heavier than the default Gemma model:\n\n- About 24 GB of RAM while running, compared with about 3 GB. At least 32 GB of system memory is recommended.\n- About 47 GB of disk space: a 23 GB model download plus a 24 GB copy with a speculative-decoding head for faster replies.\n- A slower first load of about 20 to 30 seconds.\n\nGemma stays installed so you can switch back. Save, run local setup and restart Invoke to use Qwen.', { heading: 'Use Qwen3.6 35B-A3B?', acceptLabel: 'Use Qwen', cancelLabel: 'Keep Gemma' });
+  if (confirmed || control.value !== 'qwen') return;
+  control.value = control.dataset.savedValue || 'gemma';
+  refreshPillbars();
+});
+
 function preferenceValues() {
   return {
     defaultAreaId: settingsDefaultArea.value || null,

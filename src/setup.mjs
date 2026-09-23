@@ -1,6 +1,6 @@
 import os from 'node:os';
 
-export function createSetup({ platform = process.platform, arch = process.arch, cacheDir, runtimeDir, inspect, install, activate, getCapabilities, now = Date.now, inspectHardware = () => ({ logicalCpus: os.availableParallelism(), memoryGiB: Number((os.totalmem() / 1024 ** 3).toFixed(1)) }) }) {
+export function createSetup({ platform = process.platform, arch = process.arch, cacheDir, runtimeDir, inspect, install, activate, getCapabilities, now = Date.now, minimumMemoryGiB = 16, inspectHardware = () => ({ logicalCpus: os.availableParallelism(), memoryGiB: Number((os.totalmem() / 1024 ** 3).toFixed(1)) }) }) {
   const supported = platform === 'win32' && arch === 'x64';
   let state = { status: 'idle', stage: 'consent', message: 'Local setup requires your permission. No downloads have started.' };
   let job;
@@ -13,8 +13,10 @@ export function createSetup({ platform = process.platform, arch = process.arch, 
     let warning = null;
     if (!supported) {
       warning = 'Automatic local AI setup requires Windows x64.';
-    } else if (logicalCpus < 4 || memoryGiB < 16) {
-      warning = 'Local AI models run best with at least 16 GB of system memory and 4 CPU cores. On lower-spec hardware, speech recognition and voice responses may be delayed.';
+    } else if (logicalCpus < 4 || memoryGiB < minimumMemoryGiB) {
+      warning = minimumMemoryGiB > 16
+        ? `The selected Qwen3.6 model needs about 24 GB of free memory; at least ${minimumMemoryGiB} GB of system memory and 4 CPU cores are recommended. Switch back to Gemma in Settings > Local model on smaller systems.`
+        : 'Local AI models run best with at least 16 GB of system memory and 4 CPU cores. On lower-spec hardware, speech recognition and voice responses may be delayed.';
     }
     return { logicalCpus, memoryGiB, warning };
   };

@@ -8,7 +8,8 @@ import { EventEmitter } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { deflateRawSync } from 'node:zlib';
 import { createSetup } from '../src/setup.mjs';
-import { ASSETS, LEGACY_LING_ASSETS, CRISPASR_AVX2_ASSET, TASK_SEARCH_ASSETS, assetReady, ensureAsset, localSetupAssets, localSttProvider, stackPaths, trustedDownloadUrl, withSetupLock } from '../scripts/models.mjs';
+import { ASSETS, LEGACY_LING_ASSETS, CRISPASR_AVX2_ASSET, QWEN_ASSET, TASK_SEARCH_ASSETS, assetReady, ensureAsset, localSetupAssets, localSttProvider, stackPaths, trustedDownloadUrl, withSetupLock } from '../scripts/models.mjs';
+import { QWEN_MTP_HEAD, buildQwenMtp, parseGgufHeader } from '../scripts/qwen-mtp.mjs';
 import { approvedPythonProbe, createLocalSetup, isolatedEnvironment, runSetupCommand } from '../src/local-setup.mjs';
 import { startSupervisor } from '../src/server.mjs';
 import { createRuntimeConfig } from '../src/runtime-config.mjs';
@@ -432,6 +433,63 @@ test('Whisper setup installs only selected models and verifies INT8 dependencies
   assert.ok(commands.some(command => command.args.some(arg => arg.includes('get_supported_compute_types'))));
   assert.equal(env.WHISPER_READY, '1');
   assert.equal(snapshot.components.find(component => component.id === 'whisper').ready, true);
+});
+
+test('opt-in Qwen setup verifies its pinned model, builds MTP before chat, and leaves Gemma selection untouched', windowsSetup, async context => {
+  const order = [];
+  const { setup, provisioned, env, paths } = localFixture(context, { env: { LOCAL_LLM_PROFILE: 'qwen' }, buildMtp: async mtpPaths => { order.push(['mtp', [...provisioned], mtpPaths.ling]); } });
+  const before = setup.snapshot().components;
+  assert.equal(before.find(component => component.id === 'ling').label, QWEN_ASSET.label);
+  assert.equal(before.find(component => component.id === 'qwenMtp').ready, false);
+  assert.equal(path.basename(paths.ling), QWEN_ASSET.name);
+  assert.equal(path.basename(paths.lingMtp), QWEN_ASSET.name.replace('.gguf', '-MTP.gguf'));
+  setup.start({ consent: true });
+  const snapshot = await setup.settled();
+  assert.equal(snapshot.status, 'ready', snapshot.message);
+  assert.deepEqual(order, [['mtp', ['ling', 'llama'], env.QWEN_MODEL_PATH]]);
+  assert.equal(env.LOCAL_LLM_PATH, undefined);
+  const offDisabled = localFixture(context, { env: { LOCAL_LLM_PROFILE: 'qwen', QWEN_MTP: 'off' }, buildMtp: async () => { throw new Error('MTP disabled'); } });
+  assert.equal(offDisabled.setup.snapshot().components.some(component => component.id === 'qwenMtp'), false);
+  const gemma = localFixture(context);
+  assert.equal(gemma.setup.snapshot().components.some(component => component.id === 'qwenMtp'), false);
+  assert.notEqual(gemma.setup.snapshot().components.find(component => component.id === 'ling').label, QWEN_ASSET.label);
+});
+
+test('Qwen MTP graft adds exactly the pinned nextn layer and rejects incompatible models', async context => {
+  const { directory } = fixture(context);
+  const string = value => { const bytes = Buffer.from(value); const length = Buffer.alloc(8); length.writeBigUInt64LE(BigInt(bytes.length)); return Buffer.concat([length, bytes]); };
+  const u32 = value => { const buffer = Buffer.alloc(4); buffer.writeUInt32LE(value); return buffer; };
+  const u64 = value => { const buffer = Buffer.alloc(8); buffer.writeBigUInt64LE(BigInt(value)); return buffer; };
+  const model = ({ architecture = 'qwen35moe', blocks = 40 } = {}) => {
+    const kv = [
+      [string('general.architecture'), u32(8), string(architecture)],
+      [string('qwen35moe.block_count'), u32(4), u32(blocks)],
+      [string('qwen35moe.embedding_length'), u32(4), u32(2048)],
+      [string('qwen35moe.expert_count'), u32(4), u32(256)],
+    ].map(parts => Buffer.concat(parts));
+    const tensor = Buffer.concat([string('blk.0.attn_norm.weight'), u32(1), u64(8), u32(0), u64(0)]);
+    const header = Buffer.concat([Buffer.from('GGUF'), u32(3), u64(1), u64(kv.length), ...kv, tensor]);
+    return Buffer.concat([header, Buffer.alloc(Math.ceil(header.length / 32) * 32 - header.length), Buffer.alloc(32, 7)]);
+  };
+  const source = path.join(directory, 'source.gguf');
+  const head = path.join(directory, 'head.bin');
+  const target = path.join(directory, 'target.gguf');
+  writeFileSync(source, model());
+  writeFileSync(head, Buffer.alloc(QWEN_MTP_HEAD.size, 3));
+  await buildQwenMtp({ source, head, target });
+  const output = readFileSync(target);
+  const parsed = parseGgufHeader(output);
+  assert.equal(parsed.kv.find(entry => entry.key === 'qwen35moe.block_count').value, 41);
+  assert.equal(parsed.kv.find(entry => entry.key === 'qwen35moe.nextn_predict_layers').value, 1);
+  assert.deepEqual(parsed.tensors.map(tensor => tensor.name), ['blk.0.attn_norm.weight', ...QWEN_MTP_HEAD.tensors.map(([name]) => `blk.40.${name}`)]);
+  assert.deepEqual(output.subarray(parsed.dataStart, parsed.dataStart + 32), Buffer.alloc(32, 7));
+  const mtpStart = parsed.dataStart + parsed.tensors[1].offset;
+  assert.equal(output.length, mtpStart + QWEN_MTP_HEAD.size);
+  assert.equal(output[mtpStart], 3);
+  for (const incompatible of [model({ architecture: 'gemma4' }), model({ blocks: 41 })]) {
+    writeFileSync(source, incompatible);
+    await assert.rejects(buildQwenMtp({ source, head, target: path.join(directory, 'rejected.gguf') }), /not a compatible Qwen3.6-35B-A3B GGUF/);
+  }
 });
 
 test('recognizer changes preserve chat and require consent before optional model downloads', windowsSetup, async context => {

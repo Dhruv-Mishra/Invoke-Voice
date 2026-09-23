@@ -201,6 +201,8 @@ class TranscriptionScheduler:
                         self.emit({'type': 'error', 'message': f'Whisper transcription failed: {job.error}', 'fatal': True})
                     else:
                         self.publish(job)
+                elif job.error is None and job.text:
+                    self.emit({'type': 'provisional', 'text': job.text, 'utterance_id': job.payload['utterance_id']})
                 self.condition.notify_all()
 
     def close(self):

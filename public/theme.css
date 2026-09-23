@@ -235,7 +235,7 @@ main.center-pane { overflow: hidden; }
 #cloud-consent-row { margin-top: var(--cp-space-4); }
 #route-config-dialog .dialog-actions { margin-top: 0; border-top: 0; }
 .app-dialog { max-width: 440px; }
-.app-dialog-message { color: var(--cp-text); line-height: var(--cp-leading-base); overflow-wrap: anywhere; }
+.app-dialog-message { color: var(--cp-text); line-height: var(--cp-leading-base); overflow-wrap: anywhere; white-space: pre-line; }
 #application-data-feedback { overflow-wrap: anywhere; }
 #application-data-clear { white-space: normal; text-align: left; }
 @media (max-width: 400px) {

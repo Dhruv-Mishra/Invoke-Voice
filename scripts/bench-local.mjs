@@ -24,7 +24,7 @@ const output = value => {
 const rounded = value => Math.round(value * 10) / 10;
 const owned = new Set();
 const cancellation = new AbortController();
-const deadline = AbortSignal.any([cancellation.signal, AbortSignal.timeout(15 * 60 * 1000)]);
+const deadline = AbortSignal.any([cancellation.signal, AbortSignal.timeout(Math.min(240, Math.max(1, Number(process.env.BENCH_DEADLINE_MINUTES) || 15)) * 60 * 1000)]);
 const llmCases = [
   { name: 'configured' },
   { name: 'baseline', threads: '12', context: '8192', parallel: '2', key: 'f16', value: 'f16' },

@@ -9,7 +9,7 @@ import path from 'node:path';
 import { syncBuiltinESMExports } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { PassThrough, Writable } from 'node:stream';
-import { compactToolResult, localInstructions, streamReply, voiceInstructions } from '../src/llm.mjs';
+import { compactToolResult, createAnswerStream, localInstructions, prefillLocalReply, streamReply, voiceInstructions } from '../src/llm.mjs';
 import { supervisorInstructions } from '../src/supervisor.mjs';
 import { voiceTools, voiceToolsFor } from '../src/supervisor/contract.mjs';
 import { closeLocalVoice, createLocalVoice, createPcmWriter, createSttWriter, drainVoiceText, isVoiceResponsePlayable, localSttArguments, onLocalVoiceRuntimeExit, warmLocalVoice } from '../src/local-voice.mjs';
@@ -47,6 +47,21 @@ test('choice adapter verifies boundary tokens and fails closed on missing scores
   assert.ok(Math.abs(result.metadata.probability - 0.7) < 0.0001);
   missing = true;
   await assert.rejects(chooseLocalRoute(options), /every allowed label/);
+});
+
+test('choice adapter passes the template user opener so raw completions checkpoint at user turns', async context => {
+  let completion;
+  context.mock.method(globalThis, 'fetch', async (url, init) => {
+    const body = JSON.parse(init.body);
+    const system = body.messages?.[0]?.role === 'system';
+    const prompt = system ? '<|im_start|>system\npolicy<|im_end|>\n<|im_start|>user\nRecent status?<|im_end|>\n<|im_start|>assistant\n' : `<|im_start|>user\n${body.messages?.[0]?.content}<|im_end|>\n`;
+    if (url.endsWith('/apply-template')) return Response.json({ prompt });
+    if (url.endsWith('/tokenize')) return Response.json({ tokens: [...body.content].map(character => character.charCodeAt(0)) });
+    completion = body;
+    return Response.json({ content: 'D', tokens: ['D'.charCodeAt(0)], stop_type: 'limit', completion_probabilities: [{ top_logprobs: [65, 66, 67, 68].map(id => ({ id, logprob: Math.log(id === 68 ? 0.7 : 0.1) })) }] });
+  });
+  await chooseLocalRoute({ config: { url: 'http://127.0.0.1:1/v1/chat/completions' }, tools: [voiceTools[0]], messages: [{ role: 'user', content: 'Recent status?' }], contextTokens: 4096, scored: true });
+  assert.deepEqual(completion.message_delimiters, [{ role: 'user', delimiter: '<|im_start|>user\n' }]);
 });
 
 test('choice routing uses the existing executor once and never replans after dispatch', async context => {
@@ -1295,7 +1310,7 @@ test('local structured turns execute validated batches and never speak wire synt
     callTool: async (name, args) => { calls.push({ name, args }); return { tasks: [{ taskId: 'private-id', title: 'Parser', state: 'running' }] }; },
   })) events.push(event);
   assert.deepEqual(calls, [{ name: 'list_work', args: {} }]);
-  assert.deepEqual(events.filter(event => event.type === 'text'), [{ type: 'text', text: 'The parser task is running.' }]);
+  assert.equal(events.filter(event => event.type === 'text').map(event => event.text).join(''), 'The parser task is running.');
   assert.equal(requests[0].tools, undefined);
   assert.equal(requests[0].response_format.type, 'json_schema');
   assert.equal(requests[0].chat_template_kwargs.enable_thinking, false);
@@ -1309,6 +1324,89 @@ test('local structured turns execute validated batches and never speak wire synt
   assert.equal(requests.length, 3);
   assert.doesNotMatch(JSON.stringify(requests[2].messages), /private-id|list_work|taskId|actions/);
   assert.match(JSON.stringify(requests[2].messages), /Parser|running/);
+});
+
+test('structured local answers stream decoded text before the envelope closes; tool envelopes never stream', async context => {
+  const decoder = createAnswerStream();
+  assert.deepEqual(['{"ans', 'wer" : "Caf', '\\u00e9 \\', '"quoted\\"\\n', '\\ud83d', '\\ude00 done', '"}'].map(chunk => decoder.push(chunk)), ['', 'Caf', 'é ', '"quoted"\n', '', '😀 done', '']);
+  assert.equal(createAnswerStream().push('{"calls":[{"name":"list_work"'), '');
+  const answer = 'Sure. The sky scatters blue light, and "sunsets" look red.';
+  let requests = 0;
+  let pendingTail;
+  context.mock.method(globalThis, 'fetch', async () => {
+    requests++;
+    const encoder = new TextEncoder();
+    const chunks = [...JSON.stringify({ answer })].map(content => `data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`);
+    return new Response(new ReadableStream({
+      async start(controller) {
+        for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+        await new Promise(resolve => { pendingTail = resolve; });
+        controller.enqueue(encoder.encode('data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'));
+        controller.close();
+      },
+    }));
+  });
+  const texts = [];
+  for await (const event of streamReply({ provider: 'local', profile: 'voice', env: { LOCAL_LLM_URL: 'http://127.0.0.1:1/v1' }, messages: [{ role: 'user', content: 'Why is the sky blue?' }] })) {
+    if (event.type !== 'text') continue;
+    texts.push(event.text);
+    if (texts.join('') === answer) pendingTail();
+  }
+  assert.equal(requests, 1);
+  assert.ok(texts.length > 1, 'answer text is published incrementally');
+  assert.equal(texts.join(''), answer);
+
+  context.mock.restoreAll();
+  const calls = [];
+  const events = [];
+  let round = 0;
+  context.mock.method(globalThis, 'fetch', async () => {
+    round++;
+    const content = JSON.stringify(round === 1 ? { calls: [{ name: 'list_work', arguments: {} }] } : { answer: 'The parser task is running.' });
+    return new Response([...content].map(piece => `data: ${JSON.stringify({ choices: [{ delta: { content: piece } }] })}\n\n`).join('') + 'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
+  });
+  for await (const event of streamReply({ provider: 'local', profile: 'voice', env: { LOCAL_LLM_URL: 'http://127.0.0.1:1/v1' }, messages: [{ role: 'user', content: 'Status?' }],
+    callTool: async name => { calls.push(name); return { tasks: [{ taskId: 'x', title: 'Parser', state: 'running' }] }; } })) events.push(event);
+  assert.deepEqual(calls, ['list_work']);
+  assert.equal(events.filter(event => event.type === 'text').map(event => event.text).join(''), 'The parser task is running.');
+  assert.ok(events.findIndex(event => event.type === 'tool') < events.findIndex(event => event.type === 'text'));
+});
+
+test('early local prefill renders the exact first-round voice request and respects routing and opt-out', async context => {
+  const bodies = [];
+  context.mock.method(globalThis, 'fetch', async (_url, options) => {
+    bodies.push(JSON.parse(options.body));
+    return bodies.at(-1).stream ? new Response(localSSE({ content: 'Hello.' })) : Response.json({ choices: [{ message: { role: 'assistant', content: '{' }, finish_reason: 'length' }] });
+  });
+  const env = { LOCAL_LLM_URL: 'http://127.0.0.1:1/v1', LOCAL_ROUTER: 'off' };
+  const messages = [{ role: 'user', content: 'Hi' }, { role: 'assistant', content: 'Hello.' }, { role: 'user', content: 'How are you?' }];
+  assert.equal(await prefillLocalReply({ messages, env, persona: 'Calm.' }), true);
+  for await (const _event of streamReply({ provider: 'local', profile: 'voice', env, messages, persona: 'Calm.' }));
+  assert.equal(bodies.length, 2);
+  const [prefill, real] = bodies;
+  assert.equal(prefill.stream, false);
+  assert.equal(prefill.max_tokens, 1);
+  assert.equal(real.stream, true);
+  for (const key of ['messages', 'response_format', 'chat_template_kwargs', 'model']) assert.deepEqual(prefill[key], real[key], key);
+  for (const skipped of [{ ...env, LOCAL_ROUTER: 'scored' }, { ...env, LOCAL_EARLY_PREFILL: 'off' }]) assert.equal(await prefillLocalReply({ messages, env: skipped }), false);
+  assert.equal(bodies.length, 2);
+});
+
+test('Qwen guidance extends only Qwen tool rounds and stays compact', async context => {
+  const tools = voiceToolsFor({});
+  const qwen = localInstructions(voiceInstructions, tools, { LOCAL_LLM_PROFILE: 'qwen' });
+  const gemma = localInstructions(voiceInstructions, tools, { LOCAL_LLM_PROFILE: 'gemma' });
+  assert.equal(gemma, localInstructions(voiceInstructions, tools));
+  assert.ok(qwen.startsWith(voiceInstructions) && qwen.includes('ask one short question instead of guessing'));
+  assert.ok(qwen.length - gemma.length < 600);
+  assert.equal(localInstructions('Answer.', [], { LOCAL_LLM_PROFILE: 'qwen' }), localInstructions('Answer.', []));
+  const bodies = [];
+  context.mock.method(globalThis, 'fetch', async (_url, options) => {
+    bodies.push(JSON.parse(options.body));
+    return new Response(localSSE({ content: '{"answer":"Hello."}' }));
+  });
+  for await (const _event of streamReply({ provider: 'local', profile: 'voice', env: { LOCAL_LLM_URL: 'http://127.0.0.1:1/v1', LOCAL_ROUTER: 'off', LOCAL_LLM_PROFILE: 'qwen' }, messages: [{ role: 'user', content: 'Hi' }] }));
+  assert.ok(bodies[0].messages[0].content.includes('ask one short question instead of guessing'));
 });
 
 for (const profile of ['voice', 'supervisor']) test(`local ${profile} direct search preserves grounding citations and summarizes without another routing turn`, async context => {

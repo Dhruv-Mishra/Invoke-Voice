@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
-import { streamReply } from './llm.mjs';
+import { prefillLocalReply, streamReply } from './llm.mjs';
 import { themeVoicePreset } from './theme-session.mjs';
 import { createCloudRecognizer, synthesizeSpeech, validateSpeechPipeline } from './speech-pipeline.mjs';
 import { localThreadDefault } from './runtime-config.mjs';
@@ -363,6 +363,7 @@ export async function createLocalVoice({ send, callTool, provider = 'local', stt
   let latestSpeechId;
   let recognizing = false;
   let pcmWriter;
+  let prefill;
   const phrases = [];
   const messages = [];
   const finalized = new Set();
@@ -562,6 +563,7 @@ export async function createLocalVoice({ send, callTool, provider = 'local', stt
         latestSpeechId = event.utterance_id;
         recognizing = true;
         lastSpeechAt = Date.now();
+        prefill?.abort();
         interrupt();
         send({ type: 'state', state: 'listening' });
       }
@@ -571,6 +573,13 @@ export async function createLocalVoice({ send, callTool, provider = 'local', stt
         if (!recognizing) pumpAnnouncements();
       }
       const text = String(event.text || '').trim();
+      if (event.type === 'provisional' && event.utterance_id === latestSpeechId && provider === 'local' && text && !generating) {
+        prefill?.abort();
+        prefill = new AbortController();
+        const upcoming = [...messages, { role: 'user', content: text }];
+        upcoming.splice(0, Math.max(0, upcoming.length - 12));
+        void prefillLocalReply({ model, messages: upcoming, env, persona, signal: AbortSignal.any([speechLifetime.signal, prefill.signal]) }).catch(() => {});
+      }
       if (event.type === 'final' && event.utterance_id === latestSpeechId) {
         recognizing = false;
       }

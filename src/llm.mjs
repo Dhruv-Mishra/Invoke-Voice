@@ -248,9 +248,13 @@ export function localRequestBody(body, requestTools, finalRound = false, intent,
   };
 }
 
-export function localInstructions(instructions, requestTools) {
+// Qwen follows longer guidance reliably; smaller models regressed on extra prompt text.
+const qwenGuidance = 'Copy the user\'s own names, dates, exclusions and "do not" constraints into tool arguments; never shorten them. Do every part of a multi-part request with values exactly as the user said. For a conditional request, read the needed status first, then act only if the condition holds; otherwise report it. If no tool can do what was asked, say so instead of delegating. If a task, setting or value is ambiguous, missing or not found, ask one short question instead of guessing.';
+
+export function localInstructions(instructions, requestTools, env = {}) {
   if (!requestTools.length) return `${instructions}\nReturn JSON: {"answer":"brief reply"}.`;
-  return `${instructions}\nReturn JSON: {"calls":[{"name":"tool_name","arguments":{}}]} to use tools, or {"answer":"brief reply"} for conversation. For general work status call list_work with {}. For a named task use its subject in query. Only use tools needed by the user's request. Available tools:\n${JSON.stringify(requestTools.map(tool => tool.function))}`;
+  const guidance = env.LOCAL_LLM_PROFILE === 'qwen' ? `\n${qwenGuidance}` : '';
+  return `${instructions}${guidance}\nReturn JSON: {"calls":[{"name":"tool_name","arguments":{}}]} to use tools, or {"answer":"brief reply"} for conversation. For general work status call list_work with {}. For a named task use its subject in query. Only use tools needed by the user's request. Available tools:\n${JSON.stringify(requestTools.map(tool => tool.function))}`;
 }
 
 function prepareMessages(messages = [], { maxMessages = 12, maxChars = 16000, maxTextChars = 16000 } = {}) {
@@ -281,8 +285,9 @@ function prepareMessages(messages = [], { maxMessages = 12, maxChars = 16000, ma
 }
 
 function localContextTokens(env) {
-  const context = Number(env.LLAMA_CONTEXT || 4096);
-  const parallel = Number(env.LLAMA_PARALLEL || 1);
+  const qwen = env.LOCAL_LLM_PROFILE === 'qwen';
+  const context = Number((qwen ? env.QWEN_CONTEXT : env.LLAMA_CONTEXT) || (qwen ? 8192 : 4096));
+  const parallel = qwen ? 1 : Number(env.LLAMA_PARALLEL || 1);
   if (!Number.isSafeInteger(context) || context <= 0 || !Number.isSafeInteger(parallel) || parallel <= 0) {
     throw new Error('LLAMA_CONTEXT and LLAMA_PARALLEL must be positive integers');
   }
@@ -373,6 +378,83 @@ async function* readSSELines(response, signal) {
   }
 }
 
+const textOnlyProfiles = new Set(['summary', 'conversation', 'clarification']);
+
+function profileTools(profile, env) {
+  return textOnlyProfiles.has(profile) ? [] : profile === 'voice' ? voiceToolsFor(env) : modelToolsFor(env);
+}
+
+function profileInstructions(profile, env, persona) {
+  return themedInstructions(profile === 'summary' ? summaryInstructions : profile === 'clarification' ? 'Ask one short clarifying question about the latest request. Do not claim to have performed an action.' : profile === 'conversation' ? 'Answer the user naturally and briefly; expand when asked. You cannot use tools or perform actions. Never claim live work facts or actions without evidence.' : profile === 'voice' ? voiceInstructionsFor(env) : supervisorInstructionsFor(env), persona);
+}
+
+const localMessageLimits = { maxMessages: Infinity, maxChars: Infinity, maxTextChars: Infinity };
+
+function localRoundBody(config, instructions, requestTools, workingMessages, finalRound, intent, env, overrides = {}) {
+  return localRequestBody({
+    model: config.model,
+    messages: [{ role: 'system', content: instructions }, ...workingMessages.filter(m => m.role !== 'system')],
+    stream: true,
+    max_tokens: 512,
+    tools: requestTools,
+    ...(finalRound ? { tool_choice: 'none' } : {}),
+    ...overrides,
+  }, requestTools, finalRound, intent, env);
+}
+
+// Decodes the free-text `answer` of a structured local envelope as it streams, so speech can start before the JSON closes.
+export function createAnswerStream() {
+  let raw = '';
+  let index = -1;
+  let closed = false;
+  let pending = '';
+  const escapes = { n: '\n', t: '\t', r: '\r', b: '\b', f: '\f', '/': '/', '\\': '\\', '"': '"' };
+  return {
+    push(chunk) {
+      raw += chunk;
+      if (index === -1) {
+        const match = raw.match(/^\s*\{\s*"answer"\s*:\s*"/);
+        if (match) index = match[0].length;
+        else if (!/^\s*(?:\{\s*(?:"(?:a(?:n(?:s(?:w(?:e(?:r(?:"\s*(?::\s*)?)?)?)?)?)?)?)?)?)?$/.test(raw)) index = -2;
+      }
+      if (index < 0 || closed) return '';
+      let out = pending;
+      pending = '';
+      while (index < raw.length) {
+        const character = raw[index];
+        if (character === '"') { closed = true; break; }
+        if (character !== '\\') { out += character; index += 1; continue; }
+        if (index + 1 >= raw.length) break;
+        if (raw[index + 1] === 'u') {
+          if (index + 6 > raw.length) break;
+          out += String.fromCharCode(Number.parseInt(raw.slice(index + 2, index + 6), 16));
+          index += 6;
+          continue;
+        }
+        out += escapes[raw[index + 1]] ?? raw[index + 1];
+        index += 2;
+      }
+      const last = out.charCodeAt(out.length - 1);
+      if (!closed && last >= 0xd800 && last <= 0xdbff) { pending = out.slice(-1); out = out.slice(0, -1); }
+      return out;
+    },
+  };
+}
+
+export async function prefillLocalReply({ model, messages = [], env = process.env, profile = 'voice', persona = '', signal }) {
+  if ((env.LOCAL_ROUTER || 'off') !== 'off' || env.LOCAL_EARLY_PREFILL === 'off') return false;
+  const config = resolveEndpoint('local', model, env);
+  const requestTools = profileTools(profile, env);
+  const instructions = localInstructions(profileInstructions(profile, env, persona), requestTools, env);
+  const workingMessages = fitLocalMessages(prepareMessages(messages, localMessageLimits), instructions, localContextTokens(env), []);
+  const response = await fetch(config.url, {
+    method: 'POST', redirect: 'error', headers: config.headers, signal,
+    body: JSON.stringify(localRoundBody(config, instructions, requestTools, workingMessages, false, undefined, env, { stream: false, max_tokens: 1 })),
+  });
+  await response.arrayBuffer();
+  return response.ok;
+}
+
 export async function* streamReply({
   provider = 'gemini',
   model,
@@ -395,15 +477,13 @@ export async function* streamReply({
   const summaries = new Map();
   const titles = new Map();
   const isAnthropic = provider === 'anthropic';
-  const textOnly = ['summary', 'conversation', 'clarification'].includes(profile);
-  const requestTools = textOnly ? [] : profile === 'voice' ? voiceToolsFor(env) : modelToolsFor(env);
+  const textOnly = textOnlyProfiles.has(profile);
+  const requestTools = profileTools(profile, env);
   const anthropicTools = requestTools.map(tool => ({ name: tool.function.name, description: tool.function.description, input_schema: tool.function.parameters }));
   const toolSchemas = new Map(requestTools.map(tool => [tool.function.name, tool.function.parameters]));
-  const instructions = themedInstructions(profile === 'summary' ? summaryInstructions : profile === 'clarification' ? 'Ask one short clarifying question about the latest request. Do not claim to have performed an action.' : profile === 'conversation' ? 'Answer the user naturally and briefly; expand when asked. You cannot use tools or perform actions. Never claim live work facts or actions without evidence.' : profile === 'voice' ? voiceInstructionsFor(env) : supervisorInstructionsFor(env), persona);
+  const instructions = profileInstructions(profile, env, persona);
   const contextTokens = provider === 'local' ? localContextTokens(env) : null;
-  let workingMessages = prepareMessages(messages, provider === 'local'
-    ? { maxMessages: Infinity, maxChars: Infinity, maxTextChars: Infinity }
-    : undefined);
+  let workingMessages = prepareMessages(messages, provider === 'local' ? localMessageLimits : undefined);
   let completed = false;
   let toolExecutions = 0;
   let readEpoch = 0;
@@ -461,7 +541,7 @@ export async function* streamReply({
       ? `${instructions} Tool budget reached. Answer now using the tool results. State what succeeded and what remains unfinished; do not claim unconfirmed actions or request more tools.`
       : instructions;
     if (provider === 'local') {
-      roundInstructions = localInstructions(roundInstructions, requestTools);
+      roundInstructions = localInstructions(roundInstructions, requestTools, env);
       workingMessages = fitLocalMessages(workingMessages, roundInstructions, contextTokens, []);
     }
     const fetchSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(60000)]) : AbortSignal.timeout(60000);
@@ -477,18 +557,17 @@ export async function* streamReply({
         tools: anthropicTools,
         ...(finalRound ? { tool_choice: { type: 'none' } } : {}),
       };
+    } else if (provider === 'local') {
+      body = localRoundBody(config, roundInstructions, requestTools, workingMessages, finalRound, localIntent, env);
     } else {
       body = {
         model: config.model,
         messages: [{ role: 'system', content: roundInstructions }, ...workingMessages.filter(m => m.role !== 'system')],
         stream: true,
-        max_tokens: provider === 'local' || profile === 'voice' ? 512 : 1024,
+        max_tokens: profile === 'voice' ? 512 : 1024,
         tools: requestTools,
         ...(finalRound ? { tool_choice: 'none' } : {}),
       };
-      if (provider === 'local') {
-        body = localRequestBody(body, requestTools, finalRound, localIntent, env);
-      }
     }
 
     const response = choicePlan ? null : await fetch(config.url, {
@@ -505,6 +584,8 @@ export async function* streamReply({
 
     const toolCalls = [];
     let roundText = '';
+    let streamedText = '';
+    const answerStream = provider === 'local' && !choicePlan && !workingMessages.some(message => message.role === 'tool') ? createAnswerStream() : null;
     let stopReason = null;
     let finishReason = null;
     let streamCompleted = false;
@@ -573,6 +654,11 @@ export async function* streamReply({
           const text = (provider === 'local' || provider === 'custom') ? reasoningFilter.process(delta.content) : delta.content;
           if (text) {
             roundText += text;
+            const answer = answerStream?.push(text);
+            if (answer) {
+              streamedText += answer;
+              yield { type: 'text', text: answer };
+            }
           }
         }
         if (delta?.tool_calls) {
@@ -591,6 +677,11 @@ export async function* streamReply({
         const remaining = reasoningFilter.flush();
         if (remaining) {
           roundText += remaining;
+          const answer = answerStream?.push(remaining);
+          if (answer) {
+            streamedText += answer;
+            yield { type: 'text', text: answer };
+          }
         }
       }
     }
@@ -618,7 +709,9 @@ export async function* streamReply({
         yield* summarize();
         return;
       }
-      if (roundText) yield { type: 'text', text: roundText };
+      if (streamedText && !roundText.startsWith(streamedText)) throw new Error('Local answer stream diverged from the completed response.');
+      const unsent = roundText.slice(streamedText.length);
+      if (unsent) yield { type: 'text', text: unsent };
       completed = true;
       break;
     }

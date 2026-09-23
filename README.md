@@ -87,7 +87,7 @@ Installing Agency does not start Teams MCP. Invoke explicitly runs `agency mcp -
 
 Local setup is opt-in and provisions:
 
-- Gemma 4 E2B IT QAT Q4_0 through llama.cpp for chat and tool calls.
+- Gemma 4 E2B IT QAT Q4_0 through llama.cpp for chat and tool calls, or the opt-in Qwen3.6 35B-A3B mixture-of-experts model.
 - Whisper Small CPU INT8 by default; Moonshine Streaming Tiny is opt-in.
 - Kokoro for speech synthesis in an isolated Python 3.12 environment.
 
@@ -97,7 +97,13 @@ Each desktop launch initializes the installed models in memory; it does not rein
 
 The Gemma text model is 3.35 GB. Previously consented, verified managed Ling Compact/Quality installations upgrade on startup; custom model paths and fresh-install consent are preserved. Previous files stay on disk. Gemma passed the expanded 21-case synthetic tool gate after API fixes, but is slower than Ling on the measured CPU. See the [comparison and limitations](docs/operations.md#local-acceptance-checks); this is not a guarantee across requests or hardware. The `ling-local` endpoint alias remains for compatibility.
 
-Local turns use llama.cpp JSON-schema generation: either a validated tool batch or an answer, never executable XML embedded in prose. Only completed answers are published. After tools, a separate tool-free summary receives bounded outcomes and titles without routing IDs or action names. This adds a local generation pass but prevents routing output from becoming speech. Thinking stays disabled; warm-up uses the same contract.
+Local turns use llama.cpp JSON-schema generation: either a validated tool batch or an answer, never executable XML embedded in prose. Answer text streams to captions and speech as soon as the grammar has committed to the answer branch; tool envelopes are never published. After tools, a separate tool-free summary receives bounded outcomes and titles without routing IDs or action names. This adds a local generation pass but prevents routing output from becoming speech. Thinking stays disabled; warm-up uses the same contract. With Whisper and Regular routing, **Early reply preparation** sends the provisional transcript to the local model while the end-of-speech pause is still being confirmed, so the prompt is already cached when the final transcript arrives.
+
+### Opt-in Qwen3.6 35B-A3B
+
+**Settings > Local model** switches the local model to [Qwen3.6-35B-A3B Uncensored Aggressive Q4_K_P](https://huggingface.co/HauhauCS/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive) (about 3B active parameters per token, 23.4 GB). Setup reuses a copy in `LocalVoiceStack/LLMs` or the Qwen path setting after verifying its pinned SHA-256, otherwise it downloads the pinned file. It needs about 24 GB of free RAM. With **Qwen multi-token prediction** on (default), setup downloads only the 0.5 GB MTP layer of the pinned [Qwen3.6 MTP GGUF](https://huggingface.co/unsloth/Qwen3.6-35B-A3B-MTP-GGUF) by byte range and builds a 24 GB accelerated copy; llama.cpp then drafts two tokens per step and verifies them, so output is unchanged. Qwen uses its own threads, context and draft settings, one slot, flash attention and no memory mapping. Selecting Qwen opens a confirmation that lists the memory and disk cost, and choosing Keep Gemma restores the previous selection. Qwen tool rounds also get a short extra prompt about keeping user constraints, finishing every part of a request, and asking when a target is unclear. `npm run models -- qwen` performs the same verification and build from the command line. See [the upgrade report](UPGRADED_AGENT_REPORT.md) for measured speed and accuracy.
+
+**Local LLM compute backend > Vulkan** downloads the pinned llama.cpp Vulkan build for GPU offload on NVIDIA, AMD or Intel GPUs; GPU layers `auto` lets llama.cpp fit what VRAM allows and keep the remaining MoE experts on the CPU. GPUs with little VRAM can be slower than the CPU path (a 4 GB T400 was), so measure before keeping it.
 
 Local text and voice allow at most three tool rounds and six executed calls per turn, followed by a tool-free answer. Hosted providers retain eight rounds. Independent calls run concurrently; invalid local batches fail before dispatch. Successful calls reuse receipts, including subject-to-ID retries; failures remain retryable. Read-only first batches cannot escalate to changes, while action batches may read results. This guard follows the model's selected calls, not independent authorization of user intent. Task tools accept a subject directly and clarify ambiguous matches. `delete_work` with `all:true` deletes task chats, stops owned work and keeps files; protected work is reported as a partial failure. Worker model/backend selection comes from Settings, not generated arguments.
 

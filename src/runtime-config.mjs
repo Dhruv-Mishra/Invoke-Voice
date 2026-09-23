@@ -7,6 +7,20 @@ export function localThreadDefault(cap, parallelism = availableParallelism()) {
   return String(Math.max(1, Math.min(cap, parallelism - 1)));
 }
 
+// Windows x64 desktops/laptops are almost always two-way SMT; llama.cpp decode scales with physical cores, not SMT siblings.
+export function physicalCoreEstimate(parallelism = availableParallelism()) {
+  return Math.max(1, Math.floor(parallelism / 2));
+}
+
+export function llamaThreadDefault(parallelism = availableParallelism()) {
+  return String(Math.min(16, physicalCoreEstimate(parallelism)));
+}
+
+export function qwenThreadDefaults(parallelism = availableParallelism()) {
+  const physical = physicalCoreEstimate(parallelism);
+  return { decode: String(Math.max(1, Math.min(12, physical))), batch: String(Math.max(1, Math.min(16, physical))) };
+}
+
 const fields = Object.freeze([
   { key: 'DEFAULT_PROVIDER', label: 'Default text provider', group: 'Defaults', type: 'select', defaultValue: 'local', options: [['local', 'Local'], ['openai', 'OpenAI'], ['gemini', 'Google']] },
   { key: 'DEFAULT_VOICE_MODE', label: 'Default voice mode', group: 'Defaults', type: 'select', defaultValue: 'local', options: [['local', 'Local'], ['gemini-live', 'Gemini Live'], ['openai-realtime', 'OpenAI Realtime']] },
@@ -23,6 +37,13 @@ const fields = Object.freeze([
   { key: 'OPENAI_MODEL', label: 'OpenAI text model', group: 'Models and endpoints', type: 'text', defaultValue: 'gpt-5.6-sol' },
   { key: 'LOCAL_LLM_MODEL', label: 'Local text model', group: 'Models and endpoints', type: 'text', defaultValue: 'ling-local' },
   { key: 'LOCAL_LLM_PATH', label: 'Local GGUF path (blank uses managed Gemma)', group: 'Models and endpoints', type: 'text', absolutePath: true, restartRequired: true },
+  { key: 'LOCAL_LLM_PROFILE', label: 'Local language model', description: 'Qwen3.6 35B-A3B is an opt-in mixture-of-experts model: much stronger tool use, about 24 GB of RAM, a 23 GB model file plus a 24 GB speculative-decoding copy, and slower first load. Run local setup after switching.', group: 'Local model', type: 'select', defaultValue: 'gemma', options: [['gemma', 'Gemma 4 E2B (default)'], ['qwen', 'Qwen3.6 35B-A3B MoE (opt-in)']], restartRequired: true },
+  { key: 'QWEN_MODEL_PATH', label: 'Qwen GGUF path (blank finds LocalVoiceStack or downloads the pinned Q4_K_P)', group: 'Local model', type: 'text', absolutePath: true, restartRequired: true },
+  { key: 'QWEN_MTP', label: 'Qwen multi-token prediction', description: 'Speculative decoding with the model\'s own MTP layer: faster replies with identical output. Setup downloads 0.5 GB and builds a 24 GB accelerated copy.', group: 'Local model', type: 'select', defaultValue: 'on', options: [['on', 'On'], ['off', 'Off']], restartRequired: true },
+  { key: 'QWEN_DRAFT_TOKENS', label: 'Qwen MTP draft tokens', group: 'Local model', type: 'number', defaultValue: '2', min: 1, max: 4, restartRequired: true },
+  { key: 'QWEN_THREADS', label: 'Qwen generation threads', group: 'Local model', type: 'number', defaultValue: qwenThreadDefaults().decode, min: 1, max: 128, restartRequired: true },
+  { key: 'QWEN_THREADS_BATCH', label: 'Qwen prompt threads', group: 'Local model', type: 'number', defaultValue: qwenThreadDefaults().batch, min: 1, max: 128, restartRequired: true },
+  { key: 'QWEN_CONTEXT', label: 'Qwen context size', group: 'Local model', type: 'number', defaultValue: '8192', min: 2048, max: 65536, restartRequired: true },
   { key: 'OPENAI_REALTIME_MODEL', label: 'OpenAI Realtime model', group: 'Models and endpoints', type: 'text', defaultValue: 'gpt-realtime' },
   { key: 'OPENAI_BASE_URL', label: 'OpenAI base URL', group: 'Models and endpoints', type: 'url', defaultValue: 'https://api.openai.com/v1' },
   { key: 'OPENAI_STT_MODEL', label: 'OpenAI speech recognition model', group: 'Models and endpoints', type: 'text', defaultValue: 'gpt-4o-mini-transcribe' },
@@ -39,11 +60,13 @@ const fields = Object.freeze([
   { key: 'VOICE_DIRECT_MCP_ACCESS', label: 'Direct work tools', description: 'Let chat and voice calls use approved read-only work tools without an Agency task. Requires Private work sources; tool definitions load only when needed.', group: 'Coding tools', type: 'select', defaultValue: 'disabled', options: [['disabled', 'Off'], ['read-only', 'Read-only']] },
   { key: 'AGENCY_M365_TOOLS', label: 'Microsoft 365 tools', description: 'WorkIQ covers M365 search and exact reads. Expanded also enables dedicated Teams, calendar and people tools. Does not grant access.', group: 'Coding tools', type: 'select', defaultValue: 'workiq', options: [['workiq', 'WorkIQ'], ['expanded', 'Expanded']] },
   { key: 'COPILOT_REASONING', label: 'Copilot reasoning effort', group: 'Coding tools', type: 'select', defaultValue: 'medium', options: [['low', 'Low'], ['medium', 'Medium'], ['high', 'High']] },
-  { key: 'LOCAL_ROUTER', label: 'Local routing', description: 'Raw-scored is experimental and can select incorrect actions.', group: 'Local performance', type: 'select', defaultValue: 'scored', options: [['off', 'Regular'], ['scored', 'Raw-scored (experimental)']] },
-  { key: 'LLAMA_THREADS', label: 'Local LLM threads', group: 'Local performance', type: 'number', defaultValue: localThreadDefault(8), min: 1, max: 128, restartRequired: true },
+  { key: 'LOCAL_ROUTER', label: 'Local routing', description: 'Raw-scored is experimental and can select incorrect actions. Regular is the default and recommended route for Qwen.', group: 'Local performance', type: 'select', defaultValue: 'scored', options: [['off', 'Regular'], ['scored', 'Raw-scored (experimental)']] },
+  { key: 'LOCAL_EARLY_PREFILL', label: 'Early reply preparation', description: 'With Whisper and Regular routing, prepare the local model with the provisional transcript while the end of speech is confirmed. Saves roughly 0.1-0.3 s of prompt work per turn; answers are unchanged.', group: 'Local performance', type: 'select', defaultValue: 'on', options: [['on', 'On'], ['off', 'Off']] },
+  { key: 'LLAMA_THREADS', label: 'Local LLM threads', group: 'Local performance', type: 'number', defaultValue: llamaThreadDefault(), min: 1, max: 128, restartRequired: true },
   { key: 'LLAMA_REASONING_BUDGET', label: 'Local LLM thinking tokens', description: '256 bounds long reasoning. Lower values can reduce tool accuracy. 0 disables thinking; -1 is unlimited. Tool-free summaries use 0.', group: 'Local performance', type: 'number', defaultValue: '256', min: -1, max: 512, restartRequired: true },
   { key: 'LLAMA_CONTEXT', label: 'Local LLM context size', group: 'Local performance', type: 'number', defaultValue: '4096', min: 1024, max: 131072, restartRequired: true },
   { key: 'LLAMA_PARALLEL', label: 'Local LLM parallel slots', group: 'Local performance', type: 'number', defaultValue: '1', min: 1, max: 16, restartRequired: true },
+  { key: 'LLAMA_BACKEND', label: 'Local LLM compute backend', description: 'Vulkan uses a pinned 32 MB llama.cpp GPU build for NVIDIA, AMD or Intel GPUs. With GPU layers auto, llama.cpp fits what VRAM allows and keeps the rest on the CPU. GPUs with little VRAM can be slower than CPU. Run local setup after switching.', group: 'Local performance', type: 'select', defaultValue: 'cpu', options: [['cpu', 'CPU (default)'], ['vulkan', 'Vulkan GPU offload (opt-in)']], restartRequired: true },
   { key: 'LLAMA_GPU_LAYERS', label: 'Local LLM GPU layers (auto or 0-999; GPU build required)', group: 'Local performance', type: 'text', defaultValue: 'auto', restartRequired: true },
   { key: 'LLAMA_FLASH_ATTN', label: 'Local LLM flash attention', group: 'Local performance', type: 'select', defaultValue: 'auto', options: [['auto', 'Automatic'], ['on', 'On'], ['off', 'Off']], restartRequired: true },
   { key: 'LLAMA_CACHE_TYPE_K', label: 'Local LLM key cache type', group: 'Local performance', type: 'select', defaultValue: 'f16', options: [['f16', 'F16'], ['q8_0', 'Q8_0']], restartRequired: true },
@@ -138,7 +161,8 @@ export function createRuntimeConfig({ dataDir, env = process.env } = {}) {
     }
   }
   if (!env.LOCAL_ROUTER) {
-    env.LOCAL_ROUTER = byKey.get('LOCAL_ROUTER').defaultValue;
+    // The choice router offsets slow small-model planning; Qwen's single structured pass is faster and more accurate.
+    env.LOCAL_ROUTER = env.LOCAL_LLM_PROFILE === 'qwen' ? 'off' : byKey.get('LOCAL_ROUTER').defaultValue;
     env.LOCAL_ROUTER_MIN_PROBABILITY ??= '0';
     env.LOCAL_ROUTER_MIN_MARGIN ??= '0';
   }

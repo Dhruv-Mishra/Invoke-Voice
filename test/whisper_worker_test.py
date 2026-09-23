@@ -185,6 +185,7 @@ class SchedulerTest(unittest.TestCase):
         _, _, release = self.calls.get(timeout=3)
         release.set()
         self.wait_complete()
+        self.assertEqual(self.events.get(timeout=3), {'type': 'provisional', 'text': 'complete', 'utterance_id': 1})
         self.assertTrue(self.events.empty())
         self.scheduler.submit(dict(payload))
         self.scheduler.cancel_predecode()

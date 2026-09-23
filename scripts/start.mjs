@@ -3,10 +3,11 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { localInstructions, localRequestBody, voiceInstructionsFor } from '../src/llm.mjs';
-import { localThreadDefault } from '../src/runtime-config.mjs';
+import { llamaThreadDefault, qwenThreadDefaults } from '../src/runtime-config.mjs';
 import { voiceToolsFor } from '../src/supervisor/contract.mjs';
 import net from 'node:net';
-import { stackPaths } from './models.mjs';
+import { localLlmProfile, qwenMtpEnabled, stackPaths } from './models.mjs';
+import { qwenMtpReady } from './qwen-mtp.mjs';
 import desktopLaunch from './desktop-launch.cjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -93,7 +94,8 @@ export async function ensureFrontendBuild(options = {}) {
 }
 
 export function localLlmArguments(paths, serverUrl, env = process.env) {
-  const threads = env.LLAMA_THREADS || localThreadDefault(8);
+  if (localLlmProfile(env) === 'qwen') return qwenLlmArguments(paths, serverUrl, env);
+  const threads = env.LLAMA_THREADS || llamaThreadDefault();
   return [
     '-m', paths.ling,
     '--host', serverUrl.hostname,
@@ -121,10 +123,41 @@ export function localLlmArguments(paths, serverUrl, env = process.env) {
   ];
 }
 
+// Measured on CPU: threads-batch also drives MTP verification batches, so it stays near physical cores; no-mmap avoids a second resident copy of repacked MoE weights.
+function qwenLlmArguments(paths, serverUrl, env) {
+  const defaults = qwenThreadDefaults();
+  const mtp = qwenMtpEnabled(env) && qwenMtpReady(paths);
+  return [
+    '-m', mtp ? paths.lingMtp : paths.ling,
+    '--host', serverUrl.hostname,
+    '--port', serverUrl.port || '8081',
+    '--alias', env.LOCAL_LLM_MODEL || 'ling-local',
+    '--ctx-size', env.QWEN_CONTEXT || '8192',
+    '--no-context-shift',
+    '--parallel', '1',
+    '--batch-size', '1024',
+    '--ubatch-size', '1024',
+    '--threads', env.QWEN_THREADS || defaults.decode,
+    '--threads-batch', env.QWEN_THREADS_BATCH || defaults.batch,
+    '--gpu-layers', env.LLAMA_GPU_LAYERS || 'auto',
+    '--flash-attn', 'on',
+    '--load-mode', 'none',
+    '--cache-ram', '4096',
+    '--reasoning', 'off',
+    '--reasoning-budget', '0',
+    '--no-reasoning-preserve',
+    '--cors-origins', 'localhost',
+    '--jinja',
+    '--no-ui',
+    ...(mtp ? ['--spec-type', 'draft-mtp', '--spec-draft-n-max', env.QWEN_DRAFT_TOKENS || '2'] : []),
+  ];
+}
+
 export async function ensureLocalLLM(options = {}) {
   const env = options.env || process.env;
   const paths = stackPaths(env);
   const modelPath = paths.ling;
+  const qwen = localLlmProfile(env) === 'qwen';
   const initialUrl = env.LOCAL_LLM_URL;
   let allocatedPort = null;
   if (options.privatePort) {
@@ -192,10 +225,10 @@ export async function ensureLocalLLM(options = {}) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(localRequestBody({
           model: env.LOCAL_LLM_MODEL || 'ling-local',
-          messages: [{ role: 'system', content: localInstructions(voiceInstructionsFor(env), tools) }, { role: 'user', content: 'Say hello.' }],
+          messages: [{ role: 'system', content: localInstructions(voiceInstructionsFor(env), tools, env) }, { role: 'user', content: 'Say hello.' }],
           max_tokens: 1,
         }, tools, false, undefined, env)),
-        signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(30000)]) : AbortSignal.timeout(30000),
+        signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(qwen ? 120000 : 30000)]) : AbortSignal.timeout(qwen ? 120000 : 30000),
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const result = await response.json();

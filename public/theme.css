@@ -410,6 +410,31 @@ section.conversation-pane { height: min(640px, calc(100dvh - 48px)); min-height:
 .closed-caption .btn { position: absolute; top: 50%; right: 0; width: var(--cp-caption-control-size); min-width: var(--cp-caption-control-size); height: var(--cp-caption-control-size); min-height: var(--cp-caption-control-size); padding: 0; transform: translateY(-50%); opacity: 0; pointer-events: none; background: color-mix(in srgb, var(--cp-bg) 42%, transparent); border-color: transparent; transition: opacity var(--cp-duration-fast) ease; }
 .closed-caption:hover .btn, .closed-caption .btn:focus-visible { opacity: .78; pointer-events: auto; }
 body:has(#conversation-dialog[open]) .closed-caption { visibility: hidden; }
+.thought-cloud { --emerge-x: -72px; --emerge-y: 0px; position: absolute; z-index: 3; display: flex; align-items: center; gap: 10px; width: max-content; max-width: 240px; padding: 10px 18px 10px 14px; border: 1px solid var(--cp-sheen); border-radius: 999px; color: var(--cp-caption-text); background: var(--cp-caption-assistant-bg); backdrop-filter: blur(var(--cp-caption-blur)) saturate(118%); box-shadow: var(--cp-glass-shadow); pointer-events: none; transform-origin: left center; animation: thought-emerge 520ms var(--cp-ease) both, thinking-float 3.6s ease-in-out 520ms infinite; }
+.thought-cloud[data-slot^='right'] { left: calc(100% + 10px); }
+.thought-cloud[data-slot^='left'] { --emerge-x: 72px; right: calc(100% + 10px); transform-origin: right center; }
+.thought-cloud[data-slot$='upper'] { --emerge-y: 44px; top: 4%; }
+.thought-cloud[data-slot$='middle'] { top: calc(50% - 20px); }
+.thought-cloud[data-slot$='lower'] { --emerge-y: -44px; bottom: 4%; }
+.thought-cloud::before, .thought-cloud::after { content: ""; position: absolute; border: 1px solid var(--cp-sheen); border-radius: 50%; background: var(--cp-caption-assistant-bg); animation: thinking-trail 1.8s ease-in-out infinite; }
+.thought-cloud::before { width: 10px; height: 10px; }
+.thought-cloud::after { width: 6px; height: 6px; animation-delay: .3s; }
+.thought-cloud[data-slot^='right']::before { right: calc(100% + 2px); }
+.thought-cloud[data-slot^='right']::after { right: calc(100% + 14px); }
+.thought-cloud[data-slot^='left']::before { left: calc(100% + 2px); }
+.thought-cloud[data-slot^='left']::after { left: calc(100% + 14px); }
+.thought-cloud[data-slot$='upper']::before { top: 70%; }
+.thought-cloud[data-slot$='upper']::after { top: 100%; }
+.thought-cloud[data-slot$='middle']::before { top: calc(50% - 5px); }
+.thought-cloud[data-slot$='middle']::after { top: calc(50% - 3px); }
+.thought-cloud[data-slot$='lower']::before { bottom: 70%; }
+.thought-cloud[data-slot$='lower']::after { bottom: 100%; }
+.thought-leave-active { animation: thought-vanish 260ms var(--cp-ease) forwards; }
+.thinking-dots { display: inline-flex; flex: none; gap: 4px; }
+.thinking-dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--cp-accent); animation: thinking-dot 1.2s ease-in-out infinite; }
+.thinking-dots i:nth-child(2) { animation-delay: .15s; }
+.thinking-dots i:nth-child(3) { animation-delay: .3s; }
+.thinking-text { min-width: 0; margin: 0; overflow-wrap: anywhere; font-family: var(--cp-font); font-size: var(--cp-caption-font-size); line-height: 1.4; color: transparent; background: linear-gradient(90deg, var(--cp-caption-text) 0 38%, var(--cp-accent) 50%, var(--cp-caption-text) 62% 100%) 0 0 / 260% 100%; background-clip: text; -webkit-background-clip: text; animation: thinking-line 380ms var(--cp-ease) both, thinking-shimmer 2.6s linear infinite; }
 
 .voice-strip {
   position: fixed; left: var(--voice-center);
@@ -493,6 +518,13 @@ html[data-appearance='baymax'] .voice-strip::before { top: auto; bottom: 7px; le
 @keyframes sprite-think { 0%, 100% { transform: rotate(-8deg) scale(.98); } 50% { transform: rotate(12deg) scale(1.04); } }
 @keyframes sprite-speak { 0%, 100% { transform: scale(.96) rotate(-2deg); } 45% { transform: scale(1.05, 1.025) rotate(3deg); } }
 @keyframes caption-enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes thought-emerge { from { opacity: 0; scale: .2; translate: var(--emerge-x) var(--emerge-y); } 65% { opacity: 1; scale: 1.04; } to { opacity: 1; scale: 1; translate: 0 0; } }
+@keyframes thought-vanish { to { opacity: 0; scale: .6; filter: blur(3px); } }
+@keyframes thinking-float { 0%, 100% { translate: 0 0; } 50% { translate: 0 -3px; } }
+@keyframes thinking-trail { 0%, 100% { opacity: .55; scale: .85; } 50% { opacity: 1; scale: 1; } }
+@keyframes thinking-dot { 0%, 70%, 100% { opacity: .3; translate: 0 0; } 35% { opacity: 1; translate: 0 -3px; } }
+@keyframes thinking-line { from { opacity: 0; translate: 0 6px; filter: blur(4px); } to { opacity: 1; translate: 0 0; filter: none; } }
+@keyframes thinking-shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
 @keyframes voice-presence { 0%, 100% { opacity: .4; } 50% { opacity: .85; } }
 @keyframes dock-connect { 50% { opacity: .7; transform: scale(1.08); } }
 @keyframes tool-presence { 0% { opacity: 0; transform: scaleX(.96); } 22% { opacity: .72; transform: scaleX(1); } 100% { opacity: 0; transform: scaleX(1); } }
@@ -556,6 +588,9 @@ html[data-appearance='baymax'] .voice-strip::before { top: auto; bottom: 7px; le
   .appearance-options { grid-template-columns: minmax(0, 1fr); }
   #appearance-popover { width: 400px; padding: var(--cp-space-4); }
   .caption-region { width: calc(100vw - 24px); }
+  .thought-cloud, .thought-cloud[data-slot] { --emerge-x: 0px; --emerge-y: 48px; inset: auto 0 calc(100% + 10px); margin-inline: auto; max-width: calc(100vw - 32px); transform-origin: center bottom; }
+  .thought-cloud[data-slot]::before { inset: calc(100% + 2px) auto auto calc(50% - 5px); }
+  .thought-cloud[data-slot]::after { inset: calc(100% + 14px) auto auto calc(50% - 3px); }
   .closed-caption { --cp-caption-control-size: 44px; }
   .tool-runner { padding: var(--cp-space-4); }
 }
@@ -565,7 +600,7 @@ html[data-motion='reduce'] *, html[data-motion='reduce'] *::before, html[data-mo
 @media (max-width: 420px) {
   .suggestions { grid-template-columns: minmax(0, 1fr); width: min(280px, calc(100% - 32px)); }
 }
-html[data-transparency='off'] :is(.suggestion, .closed-caption, .voice-strip, .voice-options, header.top-bar, .view-dialog-header, .view-dialog-content, .settings-view) { backdrop-filter: none; }
+html[data-transparency='off'] :is(.suggestion, .closed-caption, .thought-cloud, .voice-strip, .voice-options, header.top-bar, .view-dialog-header, .view-dialog-content, .settings-view) { backdrop-filter: none; }
 html[data-motion='reduce'] body[data-voice-active='true']:not([data-voice-activity='tool'])::before { opacity: .85; transform: none; }
 html[data-motion='reduce'] body[data-voice-active='true'][data-voice-activity='tool']::after { opacity: .54; transform: none; }
 @media (prefers-reduced-motion: reduce) {

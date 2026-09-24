@@ -59,6 +59,7 @@ export function createConversationUI(document) {
   const region = document.querySelector('.caption-region');
   const home = region.parentElement;
   const announcement = document.getElementById('caption-announcement');
+  const thinking = text => document.defaultView.dispatchEvent(new CustomEvent('voice-supervisor:thinking', { detail: { text } }));
   const captions = new Map();
   for (const caption of region.querySelectorAll('.closed-caption')) {
     const role = caption.dataset.role;
@@ -91,12 +92,17 @@ export function createConversationUI(document) {
   }, true);
   const clear = () => {
     for (const controller of captions.values()) controller.clear();
+    thinking('');
     announcement.textContent = '';
   };
   document.defaultView.addEventListener('pagehide', clear);
 
   return {
-    preview: (role, content) => captions.get(role)?.update(role, content, true),
+    preview: (role, content) => {
+      if (role === 'assistant') thinking('');
+      captions.get(role)?.update(role, content, true);
+    },
+    thinking,
     clearCaption: clear,
     finishCaption: role => captions.get(role)?.finish(),
     message: (role, content) => captions.get(role)?.update(role, content),

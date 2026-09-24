@@ -1010,7 +1010,7 @@ test('local and hybrid voice execute tools before playback and retain real answe
     const url = `http://127.0.0.1:${server.address().port}/v1`;
     const env = {
       LOCAL_LLM_URL: url, OPENAI_BASE_URL: url, OPENAI_API_KEY: 'fixture',
-      LOCAL_STT_PROVIDER: recognizer, WHISPER_MODEL_DIR: modelDir, PARAKEET_MODEL_DIR: modelDir, WHISPER_READY: '1',
+      LOCAL_STT_PROVIDER: recognizer, WHISPER_MODEL_DIR: modelDir, PARAKEET_MODEL_DIR: modelDir, WHISPER_READY: '1', SUPERVISOR_CACHE_DIR: modelDir,
       CRISPASR_BIN: process.execPath, PYTHON_BIN: process.execPath,
       MOONSHINE_MODEL: process.execPath, MOONSHINE_TOKENIZER: process.execPath, VAD_MODEL: process.execPath,
       VOICE_TEST_ENV: 'passed-to-crisp',
@@ -1083,7 +1083,10 @@ test('local and hybrid voice execute tools before playback and retain real answe
       const final = events.findLast(event => event.type === 'transcript' && event.role === 'assistant' && event.partial === false);
       assert.equal(final.text, answers[index]);
       assert.equal(final.turnId, ended.responseId);
-      assert.equal(spoken.filter(phrase => phrase.responseId === ended.responseId).map(phrase => phrase.text).join(' '), answers[index]);
+      const responsePhrases = spoken.filter(phrase => phrase.responseId === ended.responseId);
+      assert.equal(events.find(event => event.type === 'audio' && event.responseId === ended.responseId).thinking, true, 'the thinking line plays before the answer');
+      assert.ok(events.some(event => event.type === 'thinking' && event.turnId === ended.responseId && event.text));
+      assert.equal(responsePhrases.filter(phrase => !phrase.thinking).map(phrase => phrase.text).join(' '), answers[index]);
       assert.ok(events.some(event => event.type === 'audio' && event.responseId === ended.responseId));
       if (index === 1) assert.deepEqual(calls.map(call => call.name), ['list_work', 'get_work_status']);
       session.playbackDone('unrelated-response', 'played');

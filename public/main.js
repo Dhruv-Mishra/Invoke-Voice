@@ -1,4 +1,4 @@
-import { createApp, h, reactive, ref } from 'vue';
+import { Transition, createApp, h, reactive, ref } from 'vue';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 import {
@@ -86,6 +86,10 @@ if (savedTheme === 'opal') {
 window.getThemeSessionOptions = () => ({ theme: theme.value.id, themePersona: personaEnabled, themeVoice: themeVoiceEnabled });
 const state = ref('idle');
 const voiceActive = ref(false);
+const thought = ref(null);
+const thoughtSlots = ['right-upper', 'right-middle', 'right-lower', 'left-upper', 'left-middle', 'left-lower'];
+let thoughtCount = 0;
+let lastThoughtSlot;
 let soundsEnabled = savedSounds === 'true' ? true : savedSounds === 'false' ? false : null;
 let interactionAudio = null;
 let interactionKind = null;
@@ -155,6 +159,15 @@ function onSoundPreference(event) {
 function onState(event) {
   state.value = stateCopy[event.detail?.state] ? event.detail.state : 'idle';
   voiceActive.value = event.detail?.active === true;
+}
+
+function onThinking(event) {
+  const text = event.detail?.text || '';
+  if (text === (thought.value?.text || '')) return;
+  if (!text) { thought.value = null; return; }
+  const slots = thoughtSlots.filter(slot => slot !== lastThoughtSlot);
+  lastThoughtSlot = slots[Math.floor(Math.random() * slots.length)];
+  thought.value = { text, slot: lastThoughtSlot, key: ++thoughtCount };
 }
 
 function onTheme(event) {
@@ -242,6 +255,11 @@ const VoiceHome = {
             h(VoiceSprite, { state: state.value, active: voiceActive.value, source: theme.value.sprite, animations: theme.value.animations, kind: theme.value.kind, variant: theme.value.spriteId }),
           ]),
           h('button', { class: 'assistant-appearance btn btn-icon', type: 'button', popovertarget: 'appearance-popover', title: 'Change appearance', 'aria-label': 'Change appearance' }, [icon('palette')]),
+          h(Transition, { name: 'thought' }, () => thought.value ? h('div', { key: thought.value.key, class: 'thought-cloud', 'data-slot': thought.value.slot, 'aria-hidden': 'true' }, [
+            h('span', { class: 'thinking-dots' }, [h('i'), h('i'), h('i')]),
+            h('p', { class: 'thinking-text' }, thought.value.text),
+          ]) : null),
+          h('span', { class: 'sr-only', role: 'status' }, thought.value?.text || ''),
         ]),
         h('div', { class: 'presence-copy', role: 'status', 'aria-live': 'polite' }, [
           h('h1', { key: state.value }, state.value === 'idle' ? 'Invoke' : stateCopy[state.value]),
@@ -318,6 +336,7 @@ transparencyInput.addEventListener('change', () => {
   applyTheme(theme.value, { transparency: transparencyEnabled, wallpaperStrength });
 }, listenerOptions);
 window.addEventListener('voice-supervisor:agent-state', onState, listenerOptions);
+window.addEventListener('voice-supervisor:thinking', onThinking, listenerOptions);
 window.addEventListener('voice-supervisor:theme', onTheme, listenerOptions);
 window.addEventListener('voice-supervisor:voice-start', () => playSound('bootup'), listenerOptions);
 window.addEventListener('voice-supervisor:tool-activity', () => playSound('action'), listenerOptions);

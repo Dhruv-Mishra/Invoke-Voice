@@ -1,13 +1,15 @@
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { prefillLocalReply, streamReply } from './llm.mjs';
 import { themeVoicePreset } from './theme-session.mjs';
 import { createCloudRecognizer, synthesizeSpeech, validateSpeechPipeline } from './speech-pipeline.mjs';
 import { localThreadDefault } from './runtime-config.mjs';
+import { thinkingInterval, thinkingLine } from './voice-thinking.mjs';
 import { localSttProvider, stackPaths } from '../scripts/models.mjs';
 import desktopLaunch from '../scripts/desktop-launch.cjs';
 
@@ -15,6 +17,27 @@ const worker = fileURLToPath(new URL('../scripts/kokoro_worker.py', import.meta.
 const whisperWorker = fileURLToPath(new URL('../scripts/whisper_worker.py', import.meta.url));
 const bundledPython = fileURLToPath(new URL('../.venv/Scripts/python.exe', import.meta.url));
 const defaultMoonshineModel = fileURLToPath(new URL('../../LocalVoiceStack/STT_Models/moonshine-streaming-tiny-q4_k.gguf', import.meta.url));
+const thinkingAudio = new Map();
+
+function thinkingAudioFile(key, env) {
+  return path.join(stackPaths(env).home, 'cache', 'thinking-speech', `${createHash('sha256').update(key).digest('hex').slice(0, 32)}.json`);
+}
+
+function cachedThinkingAudio(key, env) {
+  if (!thinkingAudio.has(key)) {
+    try {
+      const audio = JSON.parse(readFileSync(thinkingAudioFile(key, env), 'utf8'));
+      if (Array.isArray(audio) && audio.length && audio.every(chunk => typeof chunk === 'string' && chunk)) thinkingAudio.set(key, audio);
+    } catch {}
+  }
+  return thinkingAudio.get(key);
+}
+
+function storeThinkingAudio(key, audio, env) {
+  thinkingAudio.set(key, audio);
+  const file = thinkingAudioFile(key, env);
+  mkdir(path.dirname(file), { recursive: true }).then(() => writeFile(file, JSON.stringify(audio))).catch(() => {});
+}
 let kokoroRuntimePromise;
 let sttRuntimePromise;
 let kokoroProcess;
@@ -422,6 +445,13 @@ export async function createLocalVoice({ send, callTool, provider = 'local', stt
   function pump() {
     if (closed || activePhrase || !phrases.length) return;
     activePhrase = phrases.shift();
+    const cached = activePhrase.thinking && ttsProvider === 'local' && cachedThinkingAudio(thinkingKey(activePhrase), env);
+    if (cached) {
+      const { id } = activePhrase;
+      activePhrase.replayed = true;
+      for (const data of cached) ttsLineHandler(JSON.stringify({ type: 'audio', id, data }));
+      return ttsLineHandler(JSON.stringify({ type: 'done', id }));
+    }
     if (ttsProvider !== 'local') {
       const current = activePhrase;
       activePhraseAbort = new AbortController();
@@ -439,10 +469,13 @@ export async function createLocalVoice({ send, callTool, provider = 'local', stt
     activePhraseTimer = setTimeout(() => fail('Kokoro did not finish speech synthesis. Reconnect voice to retry.'), 30000);
     activePhraseTimer.unref();
   }
-  function phrase(text, token, responseId) {
+  function thinkingKey(item) {
+    return [config.pythonBin, config.ttsModel, item.voice || config.ttsVoice, item.speed, item.pitch, item.text].join('|');
+  }
+  function phrase(text, token, responseId, thinking = false) {
     if (!text.trim() || closed || token !== turn) return;
     if (phrases.length >= 12) throw new Error('Speech queue is full; shorten the response');
-    phrases.push({ id: `${sessionId}:${token}:${randomUUID()}`, text: text.trim().slice(0, 500), token, responseId, ...(voicePreset ? { voice: voicePreset.kokoro, speed: voicePreset.speed, pitch: voicePreset.pitch } : {}) });
+    phrases.push({ id: `${sessionId}:${token}:${randomUUID()}`, text: text.trim().slice(0, 500), token, responseId, ...(thinking ? { thinking } : {}), ...(voicePreset ? { voice: voicePreset.kokoro, speed: voicePreset.speed, pitch: voicePreset.pitch } : {}) });
     pump();
   }
   function finishResponse(responseId) {
@@ -499,11 +532,29 @@ export async function createLocalVoice({ send, callTool, provider = 'local', stt
       }
     };
     send({ type: 'state', state: 'thinking' });
+    let thought = '';
+    let stage = 0;
+    const think = () => {
+      if (closed || turn !== token) return stopThinking();
+      thought = thinkingLine(stage++, thought);
+      send({ type: 'thinking', turnId: responseId, text: thought });
+      // Only speak into an idle queue so fillers never stack ahead of the answer.
+      if (!activePhrase && !phrases.length) phrase(thought, token, responseId, true);
+    };
+    let thinkingTimer = setInterval(think, thinkingInterval);
+    const stopThinking = () => {
+      if (!thinkingTimer) return;
+      clearInterval(thinkingTimer);
+      thinkingTimer = undefined;
+      if (!closed && turn === token) send({ type: 'thinking', turnId: responseId, text: '' });
+    };
+    think();
     try {
       for await (const event of streamReply({ provider, model, messages, callTool, signal, requestId: `${sessionId}:${token}`, env, profile: 'voice', persona })) {
         if (closed || signal.aborted || turn !== token) return;
         if (event.type === 'tool') send(event);
         if (event.type !== 'text') continue;
+        if (event.text.trim()) stopThinking();
         transcriptText += event.text;
         speechBuffer += event.text;
         flushSpeech(false);
@@ -525,6 +576,7 @@ export async function createLocalVoice({ send, callTool, provider = 'local', stt
       }
     }
     finally {
+      stopThinking();
       if (turn === token) {
         generating = false;
         finishResponse(responseId);
@@ -538,11 +590,15 @@ export async function createLocalVoice({ send, callTool, provider = 'local', stt
       try { event = JSON.parse(line); } catch { return; }
       if (!activePhrase || event.id !== activePhrase.id) return;
       const current = activePhrase.token === turn;
+      const { thinking } = activePhrase;
+      if (event.type === 'audio' && thinking && typeof event.data === 'string') (activePhrase.audio ||= []).push(event.data);
       if (event.type === 'audio' && current && !closed && typeof event.data === 'string' && event.data.length > 0) {
         const response = responses.get(activePhrase.responseId);
         if (response) response.audioSent = true;
-        send({ type: 'audio', data: event.data, mimeType: 'audio/pcm', sampleRate: 24000, responseId: activePhrase.responseId });
+        send({ type: 'audio', data: event.data, mimeType: 'audio/pcm', sampleRate: 24000, responseId: activePhrase.responseId, ...(thinking ? { thinking } : {}) });
       }
+      if (event.type === 'error') activePhrase.failed = true;
+      if (event.type === 'done' && thinking && ttsProvider === 'local' && !activePhrase.failed && activePhrase.audio?.length && !activePhrase.replayed) storeThinkingAudio(thinkingKey(activePhrase), activePhrase.audio, env);
       if (event.type === 'error' && current) {
         const response = responses.get(activePhrase.responseId);
         if (response) response.synthesisFailed = true;

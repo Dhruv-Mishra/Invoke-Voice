@@ -779,7 +779,7 @@ function scheduleAudioBuffer(buffer, token, responseId) {
     const idx = activeSources.indexOf(source);
     if (idx !== -1) activeSources.splice(idx, 1);
     if (responseId) maybeCompletePlayback(responseId);
-    if (isServerReady && activeSources.length === 0 && !isVoiceThinking) setAgentState('listening');
+    if (isServerReady && activeSources.length === 0) setAgentState(isVoiceThinking ? 'thinking' : 'listening');
   };
   nextPlayTime += buffer.duration;
 }
@@ -1048,9 +1048,11 @@ async function startVoiceSession() {
           sessionResetNotice.style.display = 'none';
           appendMessage('system', 'Voice session initialized & ready.');
         } else if (data.type === 'audio') {
-          isVoiceThinking = false;
+          if (!data.thinking) isVoiceThinking = false;
           setAgentState('speaking');
           queueAudioChunk(data, playbackGeneration);
+        } else if (data.type === 'thinking') {
+          conversationUI.thinking(data.text);
         } else if (data.type === 'response_end') {
           markResponseEnd(data.responseId, data.playable !== false);
         } else if (data.type === 'notify_ack') {

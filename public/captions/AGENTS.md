@@ -1,6 +1,6 @@
 # Captions
 
-- `controller.js` owns caption rendering, timing, dismissal, and accessibility announcements.
+- `controller.js` owns caption rendering, timing, dismissal, and accessibility announcements. It forwards thinking lines as `voice-supervisor:thinking` events; `VoiceHome` in `public/main.js` renders the thought cloud.
 - `voice-bridge.js` translates voice transcript events into caption and conversation actions.
 - Keep card dimensions in CSS; do not measure text, width, or height in JavaScript.
 - Preserve separate user/assistant lifecycles and ignore non-conversation roles.

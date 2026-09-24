@@ -26,7 +26,7 @@ Invoke, voice-first, agent orchestration, Agency, GitHub Copilot, local AI, huma
 
 I built Invoke as a Windows desktop application using Electron, a Vue 3/Vite interface, and a loopback-only Node.js service. The service owns task persistence, tool execution, voice sessions, and realtime UI updates over HTTP, SSE, and WebSocket.
 
-The local speech pipeline combines Moonshine Streaming Tiny or Whisper Small for recognition, Ling through llama.cpp for language and tool reasoning, and Kokoro for speech synthesis. Hosted OpenAI and Google routes are configurable alternatives. Managed setup provisions pinned, verified assets and an isolated Python environment with explicit download consent.
+The local speech pipeline combines NVIDIA Parakeet (or Whisper Small / Moonshine Tiny) for recognition, Gemma 4 E2B or the opt-in Qwen3.6 35B-A3B through llama.cpp for language and tool reasoning, and Kokoro for speech synthesis. Hosted OpenAI and Google routes are configurable alternatives. Managed setup provisions pinned, verified assets and an isolated Python environment with explicit download consent.
 
 Agency and GitHub Copilot CLI perform delegated work. Persistent FIFO follow-up queues preserve session context, pause after failures, and avoid replaying receipted actions. Compact tool contracts conserve local-model context. Text chat and local/hybrid voice separate tool rounds from final conversational output; native hosted realtime speech remains provider-controlled. Background outcomes use a deduplicated announcement queue.
 

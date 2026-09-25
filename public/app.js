@@ -679,7 +679,7 @@ function appendMessage(role, text, options = {}) {
   }
   chatMessages.appendChild(bubble);
   chatMessages.scrollTop = chatMessages.scrollHeight;
-  conversationUI.message(role, text, bubble);
+  if (options.caption !== false) conversationUI.message(role, text, bubble);
 }
 
 function notifyReset(reason) {
@@ -761,12 +761,15 @@ function markResponseEnd(responseId, playable = true) {
   });
 }
 
-function scheduleAudioBuffer(buffer, token, responseId) {
+function scheduleAudioBuffer(buffer, token, responseId, caption) {
   if (token !== undefined && token !== playbackGeneration) return;
   const ctx = getPlaybackContext();
   const now = ctx.currentTime;
   if (nextPlayTime < now) {
     nextPlayTime = now + 0.02;
+  }
+  if (caption) {
+    setTimeout(() => { if (token === playbackGeneration) voiceCaptions.spoken(responseId, caption); }, (nextPlayTime - now) * 1000);
   }
   const source = ctx.createBufferSource();
   source.buffer = buffer;
@@ -805,7 +808,7 @@ function clearPlayback() {
   }
 }
 
-async function playAudioChunk(base64Data, mimeType, sampleRate, token, responseId) {
+async function playAudioChunk(base64Data, mimeType, sampleRate, token, responseId, caption) {
   if (token !== playbackGeneration) return;
   const ctx = await getReadyPlaybackContext();
   const binary = atob(base64Data);
@@ -820,7 +823,7 @@ async function playAudioChunk(base64Data, mimeType, sampleRate, token, responseI
     try {
       const decoded = await ctx.decodeAudioData(bytes.buffer.slice(0));
       if (token !== playbackGeneration) return;
-      scheduleAudioBuffer(decoded, token, responseId);
+      scheduleAudioBuffer(decoded, token, responseId, caption);
     } catch (e) {
       if (token === playbackGeneration) throw e;
     }
@@ -837,7 +840,7 @@ async function playAudioChunk(base64Data, mimeType, sampleRate, token, responseI
     const rate = sampleRate || 24000;
     const buf = ctx.createBuffer(1, float32.length, rate);
     buf.copyToChannel(float32, 0);
-    scheduleAudioBuffer(buf, token, responseId);
+    scheduleAudioBuffer(buf, token, responseId, caption);
   }
 }
 
@@ -851,7 +854,7 @@ function queueAudioChunk(data, token) {
   }
   audioQueuePromise = audioQueuePromise.then(async () => {
     if (token !== playbackGeneration) return;
-    await playAudioChunk(data.data, data.mimeType, data.sampleRate, token, data.responseId);
+    await playAudioChunk(data.data, data.mimeType, data.sampleRate, token, data.responseId, data.caption);
   }).catch((err) => {
     if (data.responseId) playbackFailures.add(data.responseId);
     console.error('Audio playback queue error:', err);

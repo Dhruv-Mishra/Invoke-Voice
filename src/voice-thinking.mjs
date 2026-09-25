@@ -1,3 +1,4 @@
+export const thinkingDelay = 3000;
 export const thinkingInterval = 5000;
 
 // Each stage covers one interval; the last stage repeats until the answer starts.
@@ -11,4 +12,21 @@ const stages = [
 export function thinkingLine(stage, previous, random = Math.random) {
   const options = stages[Math.min(stage, stages.length - 1)].filter(line => line !== previous);
   return options[Math.floor(random() * options.length)];
+}
+
+// Answers faster than thinkingDelay never show a line. The returned stop reports once whether a line was shown.
+export function scheduleThinking(onLine) {
+  let line = '';
+  let stage = 0;
+  let timer = setTimeout(function next() {
+    line = thinkingLine(stage++, line);
+    onLine(line);
+    if (timer) timer = setTimeout(next, thinkingInterval);
+  }, thinkingDelay);
+  return () => {
+    const shown = Boolean(timer && line);
+    clearTimeout(timer);
+    timer = undefined;
+    return shown;
+  };
 }

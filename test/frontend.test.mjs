@@ -276,7 +276,7 @@ test('voice caption bridge presents partials and commits final transcripts', () 
       clearCaption: () => events.push(['clear']),
       clear: () => events.push(['reset']),
     },
-    appendMessage: (role, text) => events.push(['message', role, text]),
+    appendMessage: (role, text, options) => events.push(['message', role, text, options]),
   });
 
   bridge.transcript({ role: 'user', text: 'Working', partial: true });
@@ -287,10 +287,20 @@ test('voice caption bridge presents partials and commits final transcripts', () 
   assert.equal(partialTranscript.textContent, '');
   bridge.clear();
   bridge.reset();
+  bridge.transcript({ role: 'assistant', text: 'First phrase. Second', partial: true, audioCaptions: true });
+  assert.equal(partialTranscript.textContent, 'assistant: First phrase. Second...');
+  bridge.spoken('reply', 'First phrase.');
+  bridge.transcript({ role: 'assistant', text: 'First phrase. Second phrase.', audioCaptions: true });
+  bridge.spoken('reply', 'Second phrase.');
+  bridge.spoken('next', 'New reply.');
   assert.deepEqual(events, [
     ['preview', 'user', 'Working'],
-    ['message', 'user', 'Working now'],
+    ['message', 'user', 'Working now', undefined],
     ['clear'],
     ['reset'],
+    ['preview', 'assistant', 'First phrase.'],
+    ['message', 'assistant', 'First phrase. Second phrase.', { caption: false }],
+    ['preview', 'assistant', 'First phrase. Second phrase.'],
+    ['preview', 'assistant', 'New reply.'],
   ]);
 });

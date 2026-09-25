@@ -18,6 +18,7 @@ import { sessionThemeOptions, themedInstructions, themeVoicePreset } from '../sr
 import { providerProfiles, resolveEndpoint } from '../src/llm/provider-config.mjs';
 import { createRuntimeConfig } from '../src/runtime-config.mjs';
 import { chooseLocalRoute, compileChoices } from '../src/llm/choice-router.mjs';
+import { scheduleThinking, thinkingDelay, thinkingInterval } from '../src/voice-thinking.mjs';
 
 test('choice catalog preserves complete legal tuples and available tools', () => {
   const choices = compileChoices(voiceTools, 'Change the theme.');
@@ -365,6 +366,27 @@ test('Whisper writes bounded JSON audio and explicit commits while Moonshine ret
     writer.dispose();
     stream.destroy();
   }
+});
+
+test('thinking lines wait for slow answers, then advance on the interval', context => {
+  context.mock.timers.enable({ apis: ['setTimeout'] });
+  const fast = [];
+  const stopFast = scheduleThinking(line => fast.push(line));
+  context.mock.timers.tick(thinkingDelay - 1);
+  assert.equal(stopFast(), false, 'fast answers show nothing and need no clear event');
+  context.mock.timers.tick(thinkingDelay + thinkingInterval);
+  assert.deepEqual(fast, []);
+  const slow = [];
+  const stopSlow = scheduleThinking(line => slow.push(line));
+  context.mock.timers.tick(thinkingDelay);
+  assert.equal(slow.length, 1);
+  context.mock.timers.tick(thinkingInterval);
+  assert.equal(slow.length, 2);
+  assert.notEqual(slow[1], slow[0]);
+  assert.equal(stopSlow(), true);
+  assert.equal(stopSlow(), false, 'stop reports a shown line once');
+  context.mock.timers.tick(thinkingInterval * 2);
+  assert.equal(slow.length, 2);
 });
 
 test('PCM bounds queued plus writable bytes and cleans up on overflow or stalled input', context => {
@@ -1084,9 +1106,10 @@ test('local and hybrid voice execute tools before playback and retain real answe
       assert.equal(final.text, answers[index]);
       assert.equal(final.turnId, ended.responseId);
       const responsePhrases = spoken.filter(phrase => phrase.responseId === ended.responseId);
-      assert.equal(events.find(event => event.type === 'audio' && event.responseId === ended.responseId).thinking, true, 'the thinking line plays before the answer');
-      assert.ok(events.some(event => event.type === 'thinking' && event.turnId === ended.responseId && event.text));
-      assert.equal(responsePhrases.filter(phrase => !phrase.thinking).map(phrase => phrase.text).join(' '), answers[index]);
+      assert.equal(events.some(event => event.type === 'thinking' && event.turnId === ended.responseId), false, 'fast answers never show or speak thinking lines');
+      assert.equal(responsePhrases.map(phrase => phrase.text).join(' '), answers[index]);
+      assert.equal(events.filter(event => event.type === 'audio' && event.responseId === ended.responseId && event.caption).map(event => event.caption).join(' '), answers[index], 'each spoken phrase carries its caption once');
+      assert.equal(final.audioCaptions, true);
       assert.ok(events.some(event => event.type === 'audio' && event.responseId === ended.responseId));
       if (index === 1) assert.deepEqual(calls.map(call => call.name), ['list_work', 'get_work_status']);
       session.playbackDone('unrelated-response', 'played');

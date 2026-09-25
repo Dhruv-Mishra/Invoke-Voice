@@ -61,6 +61,20 @@ export function createConversationUI(document) {
   const announcement = document.getElementById('caption-announcement');
   const thinking = text => document.defaultView.dispatchEvent(new CustomEvent('voice-supervisor:thinking', { detail: { text } }));
   const captions = new Map();
+  // Streamed text appends only the new words so they can fade in; revisions replace the whole caption.
+  const showText = (content, text) => {
+    const previous = content.textContent;
+    if (previous === text) return;
+    if (!previous || !text.startsWith(previous)) {
+      content.textContent = text;
+      return;
+    }
+    const words = document.createElement('span');
+    words.className = 'caption-words';
+    words.textContent = text.slice(previous.length);
+    words.addEventListener('animationend', () => words.replaceWith(words.textContent), { once: true });
+    content.append(words);
+  };
   for (const caption of region.querySelectorAll('.closed-caption')) {
     const role = caption.dataset.role;
     const content = caption.querySelector('.caption-content');
@@ -68,9 +82,8 @@ export function createConversationUI(document) {
     const controller = createCaptionController(value => {
       caption.hidden = !value;
       caption.dataset.fading = String(Boolean(value?.fading));
-      if (content.textContent !== (value?.text || '')) {
-        content.textContent = value?.text || '';
-      }
+      caption.dataset.live = String(Boolean(value?.partial));
+      showText(content, value?.text || '');
       if (value && !value.partial && !value.fading && !document.getElementById('conversation-dialog').open) {
         announcement.textContent = `${speaker.textContent}: ${value.text}`;
       }

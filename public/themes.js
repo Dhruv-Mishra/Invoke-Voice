@@ -69,7 +69,7 @@ const defaultTokens = {
   '--cp-caption-max-height': 'min(126px, 16dvh)',
   '--cp-caption-stack-gap': '6px',
   '--cp-caption-padding': '12px 16px',
-  '--cp-caption-radius': '12px',
+  '--cp-caption-radius': '16px',
   '--cp-caption-blur': '14px',
   '--cp-caption-control-size': '28px',
   '--cp-caption-assistant-bg': 'rgba(250, 250, 252, 0.96)',

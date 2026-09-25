@@ -1030,7 +1030,10 @@ try {
   assert.equal(await evaluate(() => /jarvis-bootup/.test(window.fixtureCues.at(-1)?.source)), true);
   const meterAudio = Buffer.alloc(24000 * 2);
   for (let sample = 0; sample < 24000; sample++) meterAudio.writeInt16LE(Math.round(Math.sin(sample * 2 * Math.PI * 220 / 24000) * 4096), sample * 2);
-  await voice({ type: 'audio', data: meterAudio.toString('base64'), mimeType: 'audio/pcm', sampleRate: 24000, responseId: 'meter-fixture' });
+  await voice({ type: 'transcript', role: 'assistant', text: 'Spoken caption follows audio.', partial: true, audioCaptions: true });
+  assert.equal(await evaluate(() => document.getElementById('closed-caption').hidden), true, 'audio-captioned text waits for playback');
+  await voice({ type: 'audio', data: meterAudio.toString('base64'), mimeType: 'audio/pcm', sampleRate: 24000, responseId: 'meter-fixture', caption: 'Spoken caption follows audio.' });
+  await waitFor(() => document.getElementById('caption-text').textContent === 'Spoken caption follows audio.');
   await waitFor(() => Number(document.querySelector('.voice-strip').style.getPropertyValue('--cp-voice-level')) > .1);
   await voice({ type: 'interrupted' });
   assert.equal(await evaluate(() => Number(document.querySelector('.voice-strip').style.getPropertyValue('--cp-voice-level'))), 0);
@@ -1065,6 +1068,10 @@ try {
   const growingCaption = await evaluate(() => document.getElementById('user-closed-caption').getBoundingClientRect().toJSON());
   assert.equal(growingCaption.width, shortCaption.width);
   assert.ok(growingCaption.height > shortCaption.height);
+  assert.deepEqual(await evaluate(() => {
+    const caption = document.getElementById('user-closed-caption');
+    return [caption.dataset.live, [...caption.querySelectorAll('.caption-words')].map(words => words.textContent).join('|')];
+  }), ['true', ' grows smoothly as each recognized word arrives'], 'streamed captions only animate newly appended words');
   assert.equal(await evaluate(() => {
     const user = getComputedStyle(document.getElementById('user-closed-caption'));
     const assistant = getComputedStyle(document.getElementById('closed-caption'));
@@ -1073,6 +1080,7 @@ try {
   assert.equal(await evaluate(() => document.querySelectorAll('.history-entry').length), 2);
   await voice({ type: 'transcript', role: 'user', text: 'Voice final', partial: false });
   assert.equal(await evaluate(() => document.querySelectorAll('.history-entry').length), 2);
+  assert.equal(await evaluate(() => document.getElementById('user-closed-caption').dataset.live), 'false');
   assert.equal(await evaluate(() => document.getElementById('user-caption-text').getAttribute('aria-labelledby')), 'user-caption-speaker user-caption-content');
   await voice({ type: 'transcript', role: 'assistant', text: 'Agent reply', partial: true });
   assert.equal(await evaluate(() => document.querySelectorAll('.closed-caption:not([hidden])').length), 2);
@@ -1086,6 +1094,8 @@ try {
   assert.equal(await evaluate(() => getComputedStyle(document.body, '::before').animationName), 'voice-presence', 'tool pulse returns to call breathing');
   await voice({ type: 'state', state: 'speaking' });
   await waitFor(() => document.getElementById('agent-sprite').dataset.state === 'speaking');
+  assert.deepEqual(await evaluate(() => ['closed-caption', 'user-closed-caption'].map(id => getComputedStyle(document.querySelector(`#${id} .caption-voice i`)).animationName)),
+    ['caption-voice', 'none'], 'only the speaking assistant caption animates its voice bars');
   assert.equal(await evaluate(() => getComputedStyle(document.querySelector('.sprite-image')).visibility === 'visible'
     && document.querySelector('.sprite-image') === window.fixtureSpriteImage
     && getComputedStyle(document.getElementById('agent-sprite'), '::before').animationName === 'speaker-ripple'), true);
@@ -1204,7 +1214,7 @@ try {
       const longCaption = 'Supervisor a designated work area. '.repeat(24);
       await voice({ type: 'transcript', role: 'user', text: longCaption, partial: false });
       await voice({ type: 'transcript', role: 'assistant', text: longCaption, partial: true });
-      await waitFor(() => [...document.querySelectorAll('.caption-text')].every(text => !text.getAnimations().some(animation => animation.playState === 'running')));
+      await waitFor(() => [...document.querySelectorAll('.closed-caption, .caption-text')].every(element => !element.getAnimations().some(animation => animation.playState === 'running')));
       assert.deepEqual(await evaluate(() => document.querySelector('.page-views').getBoundingClientRect().toJSON()), contentBefore);
       assert.equal(await evaluate(() => document.getElementById('caption-text').textContent), longCaption.trim());
       assert.equal(await evaluate(() => [...document.querySelectorAll('.caption-text')].every(text =>
@@ -1239,9 +1249,10 @@ try {
             const caption = document.querySelectorAll('.closed-caption:not([hidden])')[index];
             const style = getComputedStyle(caption);
             const textStyle = getComputedStyle(caption.querySelector('.caption-text'));
-            return Number.parseFloat(style.borderRadius) === 12
-              && style.paddingTop === style.paddingBottom && style.paddingRight === style.paddingLeft
-              && style.backdropFilter !== 'none' && Number.parseInt(textStyle.fontWeight, 10) === 400;
+            return Number.parseFloat(style.borderRadius) === 16
+              && Number.parseFloat(style.paddingTop) + Number.parseFloat(textStyle.paddingTop) === Number.parseFloat(style.paddingBottom) && style.paddingRight === style.paddingLeft
+              && style.backdropFilter !== 'none' && Number.parseInt(textStyle.fontWeight, 10) === 400
+              && textStyle.maskImage !== 'none' && caption.querySelectorAll('.caption-voice i').length === 3;
           }),
           titlesHidden: [...document.querySelectorAll('.caption-speaker')].every(label => getComputedStyle(label).position === 'absolute' && label.getBoundingClientRect().height <= 1),
           compactCaption: captions.every(caption => caption.height <= Math.min(126, innerHeight * .16) + captionPadding),
@@ -1250,11 +1261,16 @@ try {
             && getComputedStyle(text).scrollbarWidth === 'none'
             && getComputedStyle(document.getElementById('dismiss-caption-btn')).position === 'absolute',
           captionStartVisible: firstWordBounds.left >= text.getBoundingClientRect().left && firstWordBounds.right <= text.getBoundingClientRect().right,
+          captionShowsLatest: (() => {
+            const range = document.createRange();
+            range.selectNodeContents(text.firstElementChild);
+            return range.getBoundingClientRect().bottom <= text.getBoundingClientRect().bottom + 1;
+          })(),
           modalCorrect: document.getElementById('view-dialog').matches(':modal') === (innerWidth > 760 && document.body.dataset.view !== 'home'),
           spriteCentered: document.getElementById('voice-personality-app').hidden || Math.abs((document.getElementById('agent-sprite').getBoundingClientRect().left + document.getElementById('agent-sprite').getBoundingClientRect().right - dock.left - dock.right) / 2) < 1,
         };
       });
-      assert.deepEqual(layout, { noOverflow: true, surfaceVisible: true, dockClear: true, freeFloating: true, captionFits: true, captionCentered: true, captionStacked: true, captionCardsCentered: true, speakerColors: true, premiumCaptionStyle: true, titlesHidden: true, compactCaption: true, captionScrollable: true, captionChromeOverlaid: true, captionStartVisible: true, modalCorrect: true, spriteCentered: true }, `${width}x${height} ${view}`);
+      assert.deepEqual(layout, { noOverflow: true, surfaceVisible: true, dockClear: true, freeFloating: true, captionFits: true, captionCentered: true, captionStacked: true, captionCardsCentered: true, speakerColors: true, premiumCaptionStyle: true, titlesHidden: true, compactCaption: true, captionScrollable: true, captionChromeOverlaid: true, captionStartVisible: true, captionShowsLatest: true, modalCorrect: true, spriteCentered: true }, `${width}x${height} ${view}`);
       if (view === 'settings') {
         assert.equal(await evaluate(() => {
           const settings = document.getElementById('settings-view');

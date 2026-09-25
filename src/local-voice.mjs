@@ -9,7 +9,7 @@ import { prefillLocalReply, streamReply } from './llm.mjs';
 import { themeVoicePreset } from './theme-session.mjs';
 import { createCloudRecognizer, synthesizeSpeech, validateSpeechPipeline } from './speech-pipeline.mjs';
 import { localThreadDefault } from './runtime-config.mjs';
-import { thinkingInterval, thinkingLine } from './voice-thinking.mjs';
+import { scheduleThinking } from './voice-thinking.mjs';
 import { localSttProvider, stackPaths } from '../scripts/models.mjs';
 import desktopLaunch from '../scripts/desktop-launch.cjs';
 
@@ -505,7 +505,7 @@ export async function createLocalVoice({ send, callTool, provider = 'local', stt
     const responseId = randomUUID();
     const token = turn;
     responses.set(responseId, { token, generationDone: true, ended: false, audioSent: false, synthesisFailed: false, announcement });
-    if (announcement.transcript) send({ type: 'transcript', role: 'assistant', text: announcement.text, partial: false });
+    if (announcement.transcript) send({ type: 'transcript', role: 'assistant', text: announcement.text, partial: false, audioCaptions: true });
     send({ type: 'state', state: 'speaking' });
     phrase(announcement.text, token, responseId);
     finishResponse(responseId);
@@ -532,23 +532,15 @@ export async function createLocalVoice({ send, callTool, provider = 'local', stt
       }
     };
     send({ type: 'state', state: 'thinking' });
-    let thought = '';
-    let stage = 0;
-    const think = () => {
+    const stopThinkingTimer = scheduleThinking(thought => {
       if (closed || turn !== token) return stopThinking();
-      thought = thinkingLine(stage++, thought);
       send({ type: 'thinking', turnId: responseId, text: thought });
       // Only speak into an idle queue so fillers never stack ahead of the answer.
       if (!activePhrase && !phrases.length) phrase(thought, token, responseId, true);
-    };
-    let thinkingTimer = setInterval(think, thinkingInterval);
+    });
     const stopThinking = () => {
-      if (!thinkingTimer) return;
-      clearInterval(thinkingTimer);
-      thinkingTimer = undefined;
-      if (!closed && turn === token) send({ type: 'thinking', turnId: responseId, text: '' });
+      if (stopThinkingTimer() && !closed && turn === token) send({ type: 'thinking', turnId: responseId, text: '' });
     };
-    think();
     try {
       for await (const event of streamReply({ provider, model, messages, callTool, signal, requestId: `${sessionId}:${token}`, env, profile: 'voice', persona })) {
         if (closed || signal.aborted || turn !== token) return;
@@ -558,14 +550,14 @@ export async function createLocalVoice({ send, callTool, provider = 'local', stt
         transcriptText += event.text;
         speechBuffer += event.text;
         flushSpeech(false);
-        if (transcriptText.trim()) send({ type: 'transcript', turnId: responseId, role: 'assistant', text: transcriptText.trim(), partial: true });
+        if (transcriptText.trim()) send({ type: 'transcript', turnId: responseId, role: 'assistant', text: transcriptText.trim(), partial: true, audioCaptions: true });
       }
       if (turn !== token || signal.aborted || closed) return;
       flushSpeech(true);
       messages.push({ role: 'assistant', content: transcriptText.trim() });
       messages.splice(0, Math.max(0, messages.length - 12));
       responses.get(responseId).generationDone = true;
-      send({ type: 'transcript', turnId: responseId, role: 'assistant', text: transcriptText.trim(), partial: false });
+      send({ type: 'transcript', turnId: responseId, role: 'assistant', text: transcriptText.trim(), partial: false, audioCaptions: true });
       finishResponse(responseId);
     } catch (error) {
       if (!signal.aborted && !closed) {
@@ -595,7 +587,10 @@ export async function createLocalVoice({ send, callTool, provider = 'local', stt
       if (event.type === 'audio' && current && !closed && typeof event.data === 'string' && event.data.length > 0) {
         const response = responses.get(activePhrase.responseId);
         if (response) response.audioSent = true;
-        send({ type: 'audio', data: event.data, mimeType: 'audio/pcm', sampleRate: 24000, responseId: activePhrase.responseId, ...(thinking ? { thinking } : {}) });
+        // The browser reveals this phrase in the caption when its first chunk starts playing.
+        const caption = !thinking && !activePhrase.captioned ? activePhrase.text : '';
+        activePhrase.captioned = true;
+        send({ type: 'audio', data: event.data, mimeType: 'audio/pcm', sampleRate: 24000, responseId: activePhrase.responseId, ...(thinking ? { thinking } : {}), ...(caption ? { caption } : {}) });
       }
       if (event.type === 'error') activePhrase.failed = true;
       if (event.type === 'done' && thinking && ttsProvider === 'local' && !activePhrase.failed && activePhrase.audio?.length && !activePhrase.replayed) storeThinkingAudio(thinkingKey(activePhrase), activePhrase.audio, env);
